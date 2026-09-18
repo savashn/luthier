@@ -54,7 +54,7 @@ pull request, and the schema-drift check in each has run at least once.
 
 ### 0.2 Add the licence texts — done
 
-`luthier/LICENSE.md` carries the canonical LGPL-2.1 text, which is a standalone
+`luthier/LICENSE` carries the canonical LGPL-2.1 text, which is a standalone
 licence and needs no GPL text beside it. `luthier-pkgs/LICENSE` carries MIT plus
 a scope note covering the generated schema and the fact that manifests record
 upstream licences rather than granting them.

@@ -232,7 +232,7 @@ Software Foundation, either version 2.1 of the License, or (at your option) any
 later version. It is distributed in the hope that it will be useful, but
 WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE. See the [GNU Lesser General Public
-License](LICENSE.md) for details.
+License](LICENSE) for details.
 
 "Or any later version" is load-bearing rather than boilerplate here. Several
 dependencies — `spdx`, the 7z and xz decoders, and two crates further down the
