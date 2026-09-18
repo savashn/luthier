@@ -1,0 +1,485 @@
+{
+  "$defs": {
+    "AllowedWarning": {
+      "enum": [
+        "file-extension"
+      ],
+      "type": "string"
+    },
+    "Arch": {
+      "enum": [
+        "x86_64",
+        "aarch64"
+      ],
+      "type": "string"
+    },
+    "ArchiveFormat": {
+      "enum": [
+        "tar.gz",
+        "tar.xz",
+        "zip",
+        "7z",
+        "none"
+      ],
+      "type": "string"
+    },
+    "ArchivePath": {
+      "description": "Path relative to the archive root. Must not be absolute or contain '..'.",
+      "examples": [
+        "Surge XT.clap",
+        "lib/vst3/Dexed.vst3"
+      ],
+      "minLength": 1,
+      "type": "string"
+    },
+    "Artifact": {
+      "description": "A single downloadable file and the rules for what to take out of it.\n\nA release carries a *list* of artifacts rather than a map keyed by format,\nbecause upstream reality does not line up one-archive-per-format: Surge XT\nships a single tarball containing both its CLAP and its VST3, and also\npublishes a much larger tarball with the full content set. The manifest\npicks which one to use; the client never guesses.",
+      "properties": {
+        "archive": {
+          "$ref": "#/$defs/ArchiveFormat",
+          "description": "Container format. Also sniffed from the downloaded bytes; a mismatch is\nan error rather than something we silently work around."
+        },
+        "checksum": {
+          "$ref": "#/$defs/Checksum"
+        },
+        "derive_install": {
+          "description": "Read the install rules from the archive instead of from here.\n\nSet by a registry provider whose source carries no rules — the Open\nAudio Stack registry says which *formats* an archive holds, never which\n*entry* is which. A manifest may not request it: `validate` refuses the\nfield, because a curated bench earns its precedence by carrying rules a\nperson looked at.",
+          "type": "boolean"
+        },
+        "install": {
+          "description": "What to extract and install. Declarative only — there is deliberately\nno way to express \"run this script\" (§42).",
+          "items": {
+            "$ref": "#/$defs/InstallRule"
+          },
+          "type": "array"
+        },
+        "provides": {
+          "description": "Formats this artifact can deliver.",
+          "items": {
+            "$ref": "#/$defs/Format"
+          },
+          "type": "array"
+        },
+        "size": {
+          "description": "Expected size in bytes, used for progress reporting and as an early\nmismatch signal. Advisory: the checksum is what decides.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "target",
+        "source",
+        "archive",
+        "checksum"
+      ],
+      "type": "object"
+    },
+    "Category": {
+      "enum": [
+        "instrument",
+        "effect",
+        "utility",
+        "sample-library",
+        "preset-pack",
+        "pack"
+      ],
+      "type": "string"
+    },
+    "Checksum": {
+      "description": "The integrity information attached to an artifact.\n\nA struct rather than a bare string so that additional algorithms (or an\nEd25519 signature, §14) can be added without a schema break.",
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/Sha256Hash"
+        }
+      },
+      "required": [
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "Content": {
+      "enum": [
+        "sfz",
+        "sf2",
+        "drumgizmo"
+      ],
+      "type": "string"
+    },
+    "Dependency": {
+      "description": "A dependency on another package.\n\nAccepts both the shorthand `- sfizz` and the full `- {id: sfizz, version:\n\">=1.2, <2.0\"}` (§22). Version requirements are optional in v1; when absent\nany release satisfies the edge.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PackageId"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "DetectRule": {
+      "description": "How to recognise an already-present `external` package.",
+      "properties": {
+        "format": {
+          "$ref": "#/$defs/Format",
+          "description": "Which format root to look in."
+        },
+        "name": {
+          "$ref": "#/$defs/FileName",
+          "description": "The entry to look for, e.g. `sfizz.vst3`."
+        }
+      },
+      "required": [
+        "format",
+        "name"
+      ],
+      "type": "object"
+    },
+    "EntryKind": {
+      "enum": [
+        "file",
+        "bundle"
+      ],
+      "type": "string"
+    },
+    "FileName": {
+      "description": "A single filename with no path separators.",
+      "minLength": 1,
+      "type": "string"
+    },
+    "Format": {
+      "enum": [
+        "clap",
+        "vst3",
+        "lv2",
+        "library"
+      ],
+      "type": "string"
+    },
+    "InstallRule": {
+      "description": "One thing to take out of an artifact and install.\n\nDeliberately absent: a `destination` field. §17's example writes an absolute\ndestination into the manifest, which would hand any registry contributor an\narbitrary-write primitive against the user's home directory. The\ndestination is derived by the installer from `format` plus the resolved\n[`Layout`](../../luthier_core/layout/struct.Layout.html); `rename` can change the\nleaf name and nothing else.",
+      "properties": {
+        "allow": {
+          "description": "Warnings this rule deliberately accepts, so that `--strict` stays usable.\n\nNever a safety escape: the values name naming conventions, and there is\nno value that relaxes a check on where a file may be written.",
+          "items": {
+            "$ref": "#/$defs/AllowedWarning"
+          },
+          "type": "array"
+        },
+        "format": {
+          "$ref": "#/$defs/Format",
+          "description": "Which plugin format this produces, selecting the destination root."
+        },
+        "kind": {
+          "$ref": "#/$defs/EntryKind",
+          "description": "Whether `source` is a file or a bundle directory."
+        },
+        "rename": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional replacement leaf name. A single filename, never a path."
+        },
+        "source": {
+          "$ref": "#/$defs/ArchivePath",
+          "description": "Path inside the extracted archive."
+        }
+      },
+      "required": [
+        "format",
+        "source",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "License": {
+      "description": "The licence a package is distributed under.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/LicenseKind",
+          "description": "The category, which the manager surfaces to the user."
+        },
+        "name": {
+          "description": "Human-readable name, for licences with no SPDX identifier.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spdx": {
+          "description": "An SPDX licence expression, e.g. `GPL-3.0-or-later` or `MIT OR Apache-2.0`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "description": "Where the full licence text can be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "LicenseKind": {
+      "enum": [
+        "open-source",
+        "freeware",
+        "proprietary",
+        "custom"
+      ],
+      "type": "string"
+    },
+    "Os": {
+      "enum": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "type": "string"
+    },
+    "PackageId": {
+      "description": "Immutable package identifier; never contains a version.",
+      "examples": [
+        "surge-xt",
+        "dexed",
+        "dragonfly-reverb"
+      ],
+      "maxLength": 64,
+      "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$",
+      "type": "string"
+    },
+    "PackageKind": {
+      "enum": [
+        "plugin",
+        "library",
+        "preset-pack",
+        "application",
+        "pack",
+        "external"
+      ],
+      "type": "string"
+    },
+    "Release": {
+      "description": "One published version of a package.",
+      "properties": {
+        "artifacts": {
+          "description": "Downloadable artifacts, one or more per target.",
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          },
+          "type": "array"
+        },
+        "dependencies": {
+          "description": "Packages that must be installed for this one to work.",
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          },
+          "type": "array"
+        },
+        "optional_dependencies": {
+          "description": "Packages that enhance this one but are not required.",
+          "items": {
+            "$ref": "#/$defs/Dependency"
+          },
+          "type": "array"
+        },
+        "release_notes": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "string"
+        },
+        "yanked": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
+    },
+    "Sha256Hash": {
+      "description": "Lowercase hex SHA-256 digest of the artifact.",
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "type": "string"
+    },
+    "Source": {
+      "description": "Where an artifact comes from.",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "SourceType": {
+      "enum": [
+        "http",
+        "file"
+      ],
+      "type": "string"
+    },
+    "Target": {
+      "description": "The platform an artifact is built for.",
+      "properties": {
+        "arch": {
+          "$ref": "#/$defs/Arch"
+        },
+        "os": {
+          "$ref": "#/$defs/Os"
+        }
+      },
+      "required": [
+        "os",
+        "arch"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://luthier.dev/schemas/package-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A package as described by the registry.\n\nStatic identity and metadata live at the top level; everything that changes\nbetween versions lives in [`Release`]. Keeping every release in one document\nis what lets `luthier pin <pkg> <old-version>` and future lock files resolve\nto something that still exists (§25, §27, §51).",
+  "properties": {
+    "authors": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "category": {
+      "$ref": "#/$defs/Category",
+      "description": "The single primary classification. Required: every package is filed\nunder exactly one, from a closed vocabulary (§5)."
+    },
+    "content": {
+      "description": "What the package holds that only an engine can play, e.g. `sfz`.\n\nOnly meaningful for [`PackageKind::Library`]. Installing is refused\nunless something on the system plays every value listed; which\npackages count as engines for each is the bench's `engines.toml`, not\nthis manifest. Named after the format rather than an engine because a\nkit that DrumCraker plays as well as DrumGizmo needs neither by name.",
+      "items": {
+        "$ref": "#/$defs/Content"
+      },
+      "type": "array"
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "detect": {
+      "description": "How to recognise an `external` package that is already present.\n\nOnly meaningful for [`PackageKind::External`]: software with no\nredistributable Linux binary, which the manager can depend on and\ndetect but never downloads or installs.",
+      "items": {
+        "$ref": "#/$defs/DetectRule"
+      },
+      "type": "array"
+    },
+    "documentation": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "homepage": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "$ref": "#/$defs/PackageId",
+      "description": "Immutable identifier. Never contains a version (§5)."
+    },
+    "kind": {
+      "$ref": "#/$defs/PackageKind",
+      "description": "What this package fundamentally is."
+    },
+    "license": {
+      "$ref": "#/$defs/License"
+    },
+    "name": {
+      "description": "Display name, e.g. `Surge XT`.",
+      "type": "string"
+    },
+    "provisioning_hint": {
+      "description": "Where to obtain an `external` package, shown when it is missing.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "releases": {
+      "description": "Known releases. Order in the file is not significant; the resolver\nsorts by version so results do not depend on how the file was written.",
+      "items": {
+        "$ref": "#/$defs/Release"
+      },
+      "type": "array"
+    },
+    "repository": {
+      "description": "Where the source lives. Note this is frequently *not* where the release\nartifacts live — Surge XT builds from `surge-synthesizer/surge` but\npublishes stable artifacts from `surge-synthesizer/releases-xt`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "schema": {
+      "description": "Manifest schema revision. See [`SCHEMA_VERSION`].",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "tags": {
+      "description": "Free-form refinements used by `search`, e.g. `synthesizer`, `fm`.\n\nUnlike [`Manifest::category`] this stays open, because the useful\ndescriptors are long-tailed and a controlled list would either be\nenormous or block contributions.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "kind",
+    "category",
+    "license"
+  ],
+  "title": "Luthier package manifest v1",
+  "type": "object"
+}

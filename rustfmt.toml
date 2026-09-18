@@ -1,0 +1,4 @@
+# Two spaces rather than Rust's customary four. Deliberate, and enforced here
+# so nobody has to remember it: `cargo fmt` is what settles the question, and
+# CI runs `cargo fmt --all --check`.
+tab_spaces = 2

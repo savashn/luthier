@@ -1,0 +1,40 @@
+[package]
+name = "luthier-registry-tool"
+description = "Validation and authoring helpers for the Luthier registry."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "luthier-registry"
+path = "src/main.rs"
+
+[features]
+default = ["authoring"]
+# Everything that needs the network or an archive decoder: `hash-url`,
+# `inspect`, `check-updates` and `validate --check-urls`.
+#
+# Off, the crate builds `validate` and `schema` from `luthier-manifest` alone —
+# no tokio, no reqwest, no zip/tar/7z/xz. That is what the registry's CI runs on
+# every pull request, and it is why manifest discovery lives in
+# `luthier-manifest` rather than here.
+authoring = ["dep:luthier-core", "dep:reqwest", "dep:tokio", "dep:semver", "dep:serde_json"]
+
+[dependencies]
+luthier-manifest.workspace = true
+luthier-core = { workspace = true, optional = true }
+
+clap.workspace = true
+url.workspace = true
+semver = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true
+assert_cmd.workspace = true
+tokio.workspace = true

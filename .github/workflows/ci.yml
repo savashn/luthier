@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The suite is fully offline: artifacts are generated at test time and
+      # served over file://, and every test confines its paths to a temporary
+      # root, so nothing can reach a real plugin directory.
+      - name: Test
+        run: cargo test --workspace
+
+      # The registry's CI builds the tool this way on every pull request. Without
+      # a check here, an import added under the default features would break it
+      # silently and only surface in the other repository.
+      - name: Registry tool builds without the authoring features
+        run: cargo build -p luthier-registry-tool --no-default-features
+
+      - name: Schema is up to date
+        run: |
+          cargo run -q -p luthier-registry-tool -- schema > /tmp/generated.json
+          diff -u schemas/package-v1.json /tmp/generated.json

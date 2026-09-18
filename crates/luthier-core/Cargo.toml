@@ -1,0 +1,38 @@
+[package]
+name = "luthier-core"
+description = "Package management core for Luthier: registry, resolver, downloader, installer and state."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+luthier-manifest.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+semver.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+zip.workspace = true
+tar.workspace = true
+flate2.workspace = true
+liblzma.workspace = true
+sevenz-rust2.workspace = true
+tracing.workspace = true
+jiff.workspace = true
+dirs.workspace = true
+rustix.workspace = true
+url.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
+sevenz-rust2 = { version = "0.20", default-features = false, features = ["compress"] }

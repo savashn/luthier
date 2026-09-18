@@ -1,0 +1,35 @@
+[package]
+name = "luthier-cli"
+description = "Command-line interface for the Luthier package manager."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "luthier"
+path = "src/main.rs"
+
+[dependencies]
+luthier-core.workspace = true
+luthier-manifest.workspace = true
+
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+indicatif.workspace = true
+
+[dev-dependencies]
+tar.workspace = true
+flate2.workspace = true
+url.workspace = true
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "luthier-manifest"
+description = "Package manifest schema, parsing and validation for Luthier."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+schemars.workspace = true
+semver.workspace = true
+spdx.workspace = true
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
