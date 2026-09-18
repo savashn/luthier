@@ -2,8 +2,10 @@ name: ci
 
 on:
   pull_request:
+    paths-ignore: ['**.md', 'docs/**']
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
 
 env:
   CARGO_TERM_COLOR: always
