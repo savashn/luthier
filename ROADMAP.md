@@ -426,6 +426,47 @@ Concrete content gaps, in order of how visible they are:
 **Done when:** at least one preset pack and one IR collection are listed, and
 the README's claims match what the registry actually carries.
 
+### 3.5 Declarative application, and Nix
+
+This is the use the whole design points at, so it is recorded as work rather
+than as an aspiration.
+
+`env export` and `env import` are already the declarative half: a file that
+pins every version, and a command that installs what it names. What is missing
+is *convergence*. Import is additive — it installs what the file lists and
+leaves everything else alone — so the file describes a lower bound on the
+environment rather than the environment itself. A declaration has to be able
+to say what is not there, or applying it twice from different starting points
+gives two different machines.
+
+**Done when:** `env import --prune` removes packages the file does not name,
+and importing the same file into the resulting environment reports no work.
+
+Then the Nix-facing work, in order of what unblocks what:
+
+1. **A nixpkgs package.** A user who must `cargo build` before they can manage
+   plugins declaratively has not gained much. Depends on 3.1.
+2. **A Home Manager module.** `programs.luthier.environments.<name>.packages`
+   writes the file and runs a converging import during activation. This is
+   the thing a Nix user actually wants; 3 below is an alternative to it, not a
+   prerequisite.
+3. **`luthier nix export`.** Emit a derivation set instead of installing one.
+   Every artifact already carries a URL, a `sha256` and a size; no manifest can
+   run a command; no manifest can name a destination. So a package translates
+   to a fixed-output `fetchurl` plus a copy, with no impure step anywhere.
+   Those properties came from the security model and happen to be exactly what
+   a derivation requires — which is the reason to think this is a good fit
+   rather than a fashionable one.
+
+**Why it is worth doing at all**, stated plainly because the obvious objection
+is that nixpkgs already has these plugins: it does. It carries the engines and
+most of the plugin binaries, and it carries them well. What it does not carry,
+and reasonably never will, is the content — kits, sample libraries and impulse
+responses, redistributable but measured in gigabytes. Nor does Home Manager
+have any notion of a plugin *set* for a DAW to scan. That is the gap, and it
+is the same gap on every distribution; Nix is only where its absence is
+felt most, because everything else on that machine is already declared.
+
 ---
 
 ## Phase 4 — Other platforms
