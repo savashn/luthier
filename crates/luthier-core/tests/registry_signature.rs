@@ -8,6 +8,9 @@
 //!
 //! Benches are served over `file://`, which is what the suite does wherever
 //! the behaviour under test is not HTTP itself (§55).
+//!
+//! The last two cases are about refreshing rather than signing, and share
+//! these fixtures: one bench failing must leave the others refreshed.
 
 mod support;
 
@@ -342,4 +345,68 @@ async fn a_signature_file_that_cannot_be_read_is_refused_not_ignored() {
     .to_string();
   assert!(err.contains("cannot be read"), "{err}");
   assert_eq!(client.installed_manifest().as_deref(), Some("sfizz.toml"));
+}
+
+// ------------------------------------------------------------------ refresh --
+
+/// A bench nobody can reach must not cost the user the ones they can.
+///
+/// The default configuration alone lists two benches, and until this the
+/// first one failing aborted the command before the second was asked — so an
+/// unpublished or briefly unreachable bench made `refresh` useless rather
+/// than partial.
+#[tokio::test]
+async fn one_unreachable_bench_does_not_stop_the_others() {
+  use luthier_core::api::Session;
+  use luthier_core::config::{Config, RegistryConfig, RegistrySource};
+
+  let published = Published::new();
+  published.publish("sfizz");
+  let client = Client::new();
+
+  let config = Config {
+    registries: vec![
+      RegistryConfig::new(
+        "gone",
+        RegistrySource::Snapshot {
+          url: Url::parse("file:///nonexistent/bench.tar.gz").unwrap(),
+        },
+      ),
+      RegistryConfig::new(
+        "reachable",
+        RegistrySource::Snapshot {
+          url: published.url(),
+        },
+      ),
+    ],
+  };
+
+  let session = Session::new(client.layout.clone(), config).unwrap();
+  let outcomes = session.refresh(false).await.unwrap();
+
+  assert_eq!(outcomes.len(), 2);
+  assert!(outcomes[0].failure.is_some(), "{:?}", outcomes[0]);
+  assert_eq!(outcomes[0].registry, "gone");
+  assert_eq!(outcomes[1].failure, None);
+  assert_eq!(outcomes[1].packages, 1);
+}
+
+#[tokio::test]
+async fn a_refresh_that_updated_nothing_at_all_is_an_error() {
+  // Partial is a warning; total failure is what a script has to see.
+  use luthier_core::api::Session;
+  use luthier_core::config::{Config, RegistryConfig, RegistrySource};
+
+  let client = Client::new();
+  let config = Config {
+    registries: vec![RegistryConfig::new(
+      "gone",
+      RegistrySource::Snapshot {
+        url: Url::parse("file:///nonexistent/bench.tar.gz").unwrap(),
+      },
+    )],
+  };
+
+  let session = Session::new(client.layout.clone(), config).unwrap();
+  assert!(session.refresh(false).await.is_err());
 }

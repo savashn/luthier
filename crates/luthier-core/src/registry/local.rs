@@ -49,6 +49,7 @@ impl RegistryProvider for LocalRegistry {
       registry: self.name.clone(),
       packages: index.len(),
       updated: false,
+      failure: None,
     })
   }
 

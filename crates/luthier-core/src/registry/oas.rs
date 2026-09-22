@@ -199,6 +199,7 @@ impl RegistryProvider for OasRegistry {
       registry: self.name.clone(),
       packages,
       updated: true,
+      failure: None,
     })
   }
 

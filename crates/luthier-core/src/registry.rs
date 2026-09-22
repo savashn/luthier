@@ -246,6 +246,34 @@ pub struct RefreshOutcome {
   pub packages: usize,
   /// False when the snapshot was already current.
   pub updated: bool,
+  /// Why this bench was not refreshed, when it was not.
+  ///
+  /// A bench that cannot be reached must not cost a user the ones that can:
+  /// the default configuration alone lists two, and an unpublished or
+  /// unreachable first one used to abort the whole command before the second
+  /// was asked. Each bench therefore reports for itself, and the snapshot
+  /// already on disk is what a failed one keeps.
+  pub failure: Option<String>,
+}
+
+impl RefreshOutcome {
+  pub fn refreshed(registry: &str, packages: usize) -> Self {
+    Self {
+      registry: registry.to_owned(),
+      packages,
+      updated: true,
+      failure: None,
+    }
+  }
+
+  pub fn failed(registry: &str, reason: String) -> Self {
+    Self {
+      registry: registry.to_owned(),
+      packages: 0,
+      updated: false,
+      failure: Some(reason),
+    }
+  }
 }
 
 /// A source of package manifests.

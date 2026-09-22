@@ -157,6 +157,12 @@ the crate map keeps that out of `luthier-manifest`.
 - **A `.part` is never held by a package.** Its digest names what the finished
   file will hash to, so matching it against installed artifacts reports a
   truncated download as in use and keeps `cache clean` from ever collecting it.
+- **One bench failing does not fail `refresh`.** Each provider reports for
+  itself (`RefreshOutcome::failure`), the snapshot already on disk survives a
+  failed fetch, and only *every* bench failing is an error. The default
+  configuration lists two, so the old behaviour — `?` on the first provider —
+  meant an unpublished or briefly unreachable bench cost the user the one that
+  was working.
 - **A signature file names its own key, and that is the point.** A first
   fetch has nothing to check against, so the key it carries is pinned exactly
   as the origin is and every later refresh must match it. Verifying a file

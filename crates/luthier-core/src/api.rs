@@ -150,13 +150,28 @@ impl Session {
   /// consent belongs to the operation a user asked for.
   pub async fn refresh(&self, allow_unsigned: bool) -> Result<Vec<RefreshOutcome>> {
     let mut outcomes = Vec::new();
+    let mut first_error = None;
     for provider in self
       .config
       .providers(&self.layout, self.offline, allow_unsigned)
     {
-      outcomes.push(provider.refresh().await?);
+      match provider.refresh().await {
+        Ok(outcome) => outcomes.push(outcome),
+        // One bench that cannot be reached does not cost a user the others.
+        // A failed refresh leaves that bench's previous snapshot alone, so
+        // the command answers with what it could update and says what it
+        // could not; only nothing at all is an error.
+        Err(error) => {
+          outcomes.push(RefreshOutcome::failed(provider.name(), error.to_string()));
+          first_error.get_or_insert(error);
+        }
+      }
     }
-    Ok(outcomes)
+
+    match first_error {
+      Some(error) if outcomes.iter().all(|o| o.failure.is_some()) => Err(error),
+      _ => Ok(outcomes),
+    }
   }
 
   // --------------------------------------------------------------- search --

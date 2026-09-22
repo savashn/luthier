@@ -47,6 +47,9 @@ The first release: everything below is new.
   discarding the pin, and a signature that fails to verify is refused
   whatever any flag says. `luthier-registry keygen` and `sign` are the
   publishing side.
+- **A bench that cannot be reached costs only itself.** `refresh` asks every
+  configured bench, reports per bench, and keeps the snapshot a failed one
+  already had; only a run where nothing could be refreshed is an error.
 - **A bundle in the wrong shape is left alone, not taken apart.** A directory
   whose name claims a plugin format is listed and skipped rather than
   descended into: DPF's `ProM.clap` holds a binary next to the presets it

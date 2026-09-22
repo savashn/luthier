@@ -222,6 +222,7 @@ impl RegistryProvider for HttpSnapshotRegistry {
       registry: self.name.clone(),
       packages,
       updated: true,
+      failure: None,
     })
   }
 

@@ -714,6 +714,8 @@ impl Reporter {
       registry: String,
       packages: usize,
       updated: bool,
+      #[serde(skip_serializing_if = "Option::is_none")]
+      failed: Option<String>,
     }
     let rows: Vec<Row> = outcomes
       .iter()
@@ -721,13 +723,19 @@ impl Reporter {
         registry: o.registry.clone(),
         packages: o.packages,
         updated: o.updated,
+        failed: o.failure.clone(),
       })
       .collect();
     if self.json {
       return self.emit(&rows);
     }
     for row in &rows {
-      println!("{}: {} packages", row.registry, row.packages);
+      match &row.failed {
+        // On stderr and as a warning: the command did refresh something,
+        // and a piped stdout should carry that rather than the failure.
+        Some(reason) => self.warn(format!("{}: not refreshed: {reason}", row.registry)),
+        None => println!("{}: {} packages", row.registry, row.packages),
+      }
     }
   }
 
