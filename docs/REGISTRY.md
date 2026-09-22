@@ -1,12 +1,12 @@
 # The registry
 
-Packages live in a separate repository, [`luthier-pkgs`][registry]. The
+Packages live in a separate repository, [`luthier-extras`][registry]. The
 manager consumes it as data; it has no built-in package list.
 
-[registry]: https://github.com/savashn/luthier-pkgs
+[registry]: https://github.com/savashn/luthier-extras
 
 ```
-luthier-pkgs/
+luthier-extras/
 ├── plugins/        lsp-plugins.toml, sfizz.toml, ...
 ├── libraries/      sample libraries
 ├── presets/        preset packs
@@ -32,7 +32,7 @@ behind the same `RegistryProvider` trait.
 During development, skip fetching entirely:
 
 ```console
-$ luthier --registry-path ../luthier-pkgs search synth
+$ luthier --registry-path ../luthier-extras search synth
 ```
 
 ## Adding a package
@@ -101,7 +101,7 @@ which is free-form. See [MANIFEST.md](MANIFEST.md#category-and-tags).
 ### Validate
 
 ```console
-$ cargo run -p luthier-registry-tool -- validate ../luthier-pkgs
+$ cargo run -p luthier-registry-tool -- validate ../luthier-extras
 Checked 9 manifest(s): 0 error(s), 0 warning(s).
 ```
 
@@ -149,8 +149,8 @@ code actually accepts.
 ## Keeping the registry current
 
 ```console
-$ luthier-registry check-updates ../luthier-pkgs
-$ luthier-registry check-updates ../luthier-pkgs --all --json
+$ luthier-registry check-updates ../luthier-extras
+$ luthier-registry check-updates ../luthier-extras --all --json
 ```
 
 Asks each package's forge for its newest tag and reports what is behind. It
@@ -192,7 +192,7 @@ records for audit.
 
 ```console
 $ luthier-registry keygen --out luthier-bench.key
-$ luthier-registry sign luthier-pkgs-2026.09.22.tar.gz --key luthier-bench.key
+$ luthier-registry sign luthier-extras-2026.09.22.tar.gz --key luthier-bench.key
 ```
 
 `keygen` writes a secret key only its owner can read and prints the public

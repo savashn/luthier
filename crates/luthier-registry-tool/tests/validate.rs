@@ -316,7 +316,7 @@ fn the_committed_schema_can_be_printed_without_a_bench() {
 /// repository should still get a green suite.
 #[test]
 fn the_real_bench_passes_strict_validation() {
-  let bench = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../luthier-pkgs");
+  let bench = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../luthier-extras");
   if !bench.join("plugins").is_dir() {
     eprintln!("skipping: {} is not checked out", bench.display());
     return;

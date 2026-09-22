@@ -140,7 +140,7 @@ mod tests {
 
   #[test]
   fn a_missing_root_names_the_path() {
-    let err = manifest_files(Path::new("/nonexistent-luthier-pkgs")).unwrap_err();
-    assert!(err.to_string().contains("nonexistent-luthier-pkgs"));
+    let err = manifest_files(Path::new("/nonexistent-luthier-extras")).unwrap_err();
+    assert!(err.to_string().contains("nonexistent-luthier-extras"));
   }
 }

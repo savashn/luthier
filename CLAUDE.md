@@ -12,10 +12,10 @@ cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
 ```
 
-Manual run against the registry (a **sibling** repo, `../luthier-pkgs`):
+Manual run against the registry (a **sibling** repo, `../luthier-extras`):
 
 ```console
-cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path ../luthier-pkgs \
+cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path ../luthier-extras \
   --yes install dexed
 ```
 
@@ -249,7 +249,7 @@ the crate map keeps that out of `luthier-manifest`.
   network.
 - `crates/luthier-registry-tool/tests/validate.rs` drives the `validate`
   binary the way the bench's CI does, including `--strict`. It also validates
-  the real `../../../luthier-pkgs` when that is checked out, and skips rather
+  the real `../../../luthier-extras` when that is checked out, and skips rather
   than fails when it is not.
 - `crates/luthier-core/tests/archive_security.rs` is the malicious-archive corpus.
   Archives are *generated in code*, not committed as blobs, so a reviewer can
@@ -315,7 +315,7 @@ installers are Linux-only); reading OAS's `presets/` and
 `projects/` indexes, which is blocked on deciding where a preset installs
 given that a manifest may not name a destination; a released binary; aarch64;
 a `GitRegistry` backend. A *bench* is the kind —
-any collection of manifests, the official one included; `luthier-pkgs` is
+any collection of manifests, the official one included; `luthier-extras` is
 just the default bench's name, as `homebrew-core` names the default tap.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 

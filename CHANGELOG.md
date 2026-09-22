@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to the manager. The registry has
-[its own](https://github.com/savashn/luthier-pkgs/blob/main/CHANGELOG.md),
+[its own](https://github.com/savashn/luthier-extras/blob/main/CHANGELOG.md),
 because a package being added is not a change to this program.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and

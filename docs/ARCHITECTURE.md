@@ -215,7 +215,7 @@ archive, never where to put it.
 ### Benches are ordered, and their origins are pinned
 
 More than one registry is read at once — a *bench* is the kind, and
-`luthier-pkgs` is the default one's name, as `homebrew-core` names the default
+`luthier-extras` is the default one's name, as `homebrew-core` names the default
 tap. `Session::index()` merges what each configured bench carries into one
 `RegistryIndex`, memoised because building it three times in one `install` was
 a real regression rather than a hypothetical one.

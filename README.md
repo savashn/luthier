@@ -182,7 +182,7 @@ error: not installing crocellkit: nothing on this system can play its DrumGizmo 
 Until the registry repository is published, point at a local checkout:
 
 ```console
-$ luthier --registry-path ../luthier-pkgs search synth
+$ luthier --registry-path ../luthier-extras search synth
 ```
 
 ## Where things go
@@ -274,7 +274,7 @@ version-2 licences and compatible with version 3. The option to take this
 under LGPL-3.0-or-later is what keeps a build of Luthier distributable.
 
 The package manifests live in a separate repository,
-[luthier-pkgs](https://github.com/savashn/luthier-pkgs), under the MIT
+[luthier-extras](https://github.com/savashn/luthier-extras), under the MIT
 licence: the tool stays free, the data stays maximally reusable.
 
 Two things follow for anyone integrating with it.

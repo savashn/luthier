@@ -115,7 +115,7 @@ pub struct Config {
 /// `--registry-path` (or a `path` entry in `config.json`) to point at a local
 /// checkout in the meantime.
 pub const DEFAULT_REGISTRY_URL: &str =
-  "https://github.com/savashn/luthier-pkgs/archive/refs/heads/main.tar.gz";
+  "https://github.com/savashn/luthier-extras/archive/refs/heads/main.tar.gz";
 
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///
@@ -135,7 +135,7 @@ pub const DEFAULT_OAS_URL: &str = "https://open-audio-stack.github.io/open-audio
 fn default_registries() -> Vec<RegistryConfig> {
   vec![
     RegistryConfig::new(
-      "luthier-pkgs",
+      "luthier-extras",
       RegistrySource::Snapshot {
         url: Url::parse(DEFAULT_REGISTRY_URL).expect("the built-in URL is valid"),
       },
@@ -254,14 +254,14 @@ mod tests {
     // than only counting: the bench must come first or it cannot correct
     // anything.
     let names: Vec<&str> = config.registries.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, vec!["luthier-pkgs", "oas"]);
+    assert_eq!(names, vec!["luthier-extras", "oas"]);
   }
 
   #[test]
   fn config_round_trips_through_disk() {
     let dir = tempfile::tempdir().unwrap();
     let layout = Layout::rooted_at(dir.path());
-    let config = from_path("/srv/luthier-pkgs");
+    let config = from_path("/srv/luthier-extras");
     config.save(&layout).unwrap();
     assert_eq!(Config::load(&layout).unwrap(), config);
   }
