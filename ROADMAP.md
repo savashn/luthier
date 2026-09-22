@@ -194,11 +194,22 @@ written from `inspect` silently lost the format most Linux plugins ship. The
 rendering is tested in the tool and the walking in `luthier-core::install::derive`,
 which is where the rules live.
 
-What is left is `hash-url`, still untested. It needs fixture archives, which
-`luthier-core`'s test suite already knows how to build.
+`hash-url` has cases now, against a release served by `wiremock` on localhost:
+the four fields it prints in the shape they are pasted into a manifest, the
+container inferred from the URL for each archive format the registry uses, a
+URL that names no container printing no `archive` line at all, and — the one
+that matters — a failed download printing no digest. An error page hashes to
+something, and a digest printed for one would end up in a manifest and verify
+forever against 404 bytes.
 
-**Done when:** `hash-url` has cases, and `inspect` covers the flat and
-format-nested layouts as well as the version-nested one it already has.
+`inspect` now covers all three layouts a release ships in: version-nested,
+flat, and one directory per format. The rule rendering moved into a function
+of its own so the assertion is against the exact line a contributor pastes,
+and two more cases pin down what must *not* produce a rule — a `.clap` inside
+a `.vst3` bundle, and DPF's `ProM.clap`, which is a directory.
+
+**Done when:** ~~`hash-url` has cases, and `inspect` covers the flat and
+format-nested layouts as well as the version-nested one it already has~~.
 
 ### 1.3 Split the tool so registry CI stops building the world — done
 

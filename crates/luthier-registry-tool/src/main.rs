@@ -495,15 +495,26 @@ fn cmd_inspect(
     println!("\nSuggested install rules:\n");
     println!("        install:");
     for rule in &derived.rules {
-      println!(
-        "          - {{ format: {}, source: \"{}\", kind: {} }}",
-        rule.format,
-        rule.source.as_str(),
-        rule.kind
-      );
+      println!("{}", render_rule(rule));
     }
   }
   Ok(true)
+}
+
+#[cfg(feature = "authoring")]
+/// One install rule, in the shape it is pasted into a manifest.
+///
+/// A rule names a format, a path *inside the archive* and what kind of entry
+/// that path is. It never names a destination: that is derived from the
+/// format's root, and a manifest that could name one would be an
+/// arbitrary-write primitive for anyone with a merged pull request (§14).
+fn render_rule(rule: &luthier_manifest::InstallRule) -> String {
+  format!(
+    "          - {{ format: {}, source: \"{}\", kind: {} }}",
+    rule.format,
+    rule.source.as_str(),
+    rule.kind
+  )
 }
 
 #[cfg(feature = "authoring")]
@@ -744,7 +755,7 @@ fn print_table(headers: &[&str; 4], rows: &[[String; 4]]) {
 
 #[cfg(all(test, feature = "authoring"))]
 mod tests {
-  use super::render_entry;
+  use super::{render_entry, render_rule};
   use luthier_core::install::{Listed, derive};
   use luthier_manifest::Format;
   use std::fs;
@@ -759,6 +770,42 @@ mod tests {
     fs::write(root.join("WSTD_EQ.lv2/manifest.ttl"), b"").unwrap();
     fs::write(root.join("WSTD_EQ.clap"), b"").unwrap();
     fs::write(root.join("WSTD_EQ-vst.so"), b"").unwrap();
+  }
+
+  /// Everything at the archive root, which is how a single-plugin release
+  /// with nothing else to ship is usually packed.
+  fn flat(base: &std::path::Path) {
+    fs::create_dir_all(base.join("Fire.vst3/Contents/x86_64-linux")).unwrap();
+    fs::write(base.join("Fire.vst3/Contents/x86_64-linux/Fire.so"), b"").unwrap();
+    fs::create_dir_all(base.join("Fire.lv2")).unwrap();
+    fs::write(base.join("Fire.lv2/manifest.ttl"), b"").unwrap();
+    fs::write(base.join("Fire.clap"), b"").unwrap();
+    fs::write(base.join("README.md"), b"").unwrap();
+  }
+
+  /// One directory per format, which is how a release carrying several
+  /// plugins in each format is usually sorted.
+  fn format_nested(base: &std::path::Path) {
+    for (dir, plugin) in [("clap", "ZamEQ2.clap"), ("clap", "ZamComp.clap")] {
+      fs::create_dir_all(base.join(dir)).unwrap();
+      fs::write(base.join(dir).join(plugin), b"").unwrap();
+    }
+    fs::create_dir_all(base.join("vst3/ZamEQ2.vst3/Contents")).unwrap();
+    fs::create_dir_all(base.join("lv2/ZamEQ2.lv2")).unwrap();
+    fs::write(base.join("lv2/ZamEQ2.lv2/manifest.ttl"), b"").unwrap();
+    // Not a format this manager installs: it is listed and no rule is made.
+    fs::create_dir_all(base.join("vst2")).unwrap();
+    fs::write(base.join("vst2/ZamEQ2-vst.so"), b"").unwrap();
+  }
+
+  /// The rules `inspect` would print for a tree, in printed order.
+  fn rules_for(base: &std::path::Path) -> Vec<String> {
+    derive::from_tree(base)
+      .unwrap()
+      .rules
+      .iter()
+      .map(render_rule)
+      .collect()
   }
 
   /// `inspect` renders whatever the shared derivation reports, so the check
@@ -776,6 +823,89 @@ mod tests {
     assert!(lines.contains(&"  wstd-eq-v1.1.1/WSTD_EQ.clap".to_string()));
     assert!(lines.contains(&"  wstd-eq-v1.1.1/WSTD_EQ.vst3/".to_string()));
     assert!(lines.contains(&"  wstd-eq-v1.1.1/WSTD_EQ.lv2/  (LV2 bundle)".to_string()));
+  }
+
+  #[test]
+  fn a_version_nested_release_suggests_a_rule_per_format() {
+    let dir = tempfile::tempdir().unwrap();
+    version_nested(dir.path());
+
+    assert_eq!(
+      rules_for(dir.path()),
+      vec![
+        "          - { format: clap, source: \"wstd-eq-v1.1.1/WSTD_EQ.clap\", kind: file }",
+        "          - { format: vst3, source: \"wstd-eq-v1.1.1/WSTD_EQ.vst3\", kind: bundle }",
+        // The LV2 arm once listed the bundle and suggested nothing, so
+        // every manifest written with `inspect` silently lost the format
+        // most Linux plugins ship.
+        "          - { format: lv2, source: \"wstd-eq-v1.1.1/WSTD_EQ.lv2\", kind: bundle }",
+      ]
+    );
+  }
+
+  #[test]
+  fn a_flat_release_suggests_rules_at_the_archive_root() {
+    let dir = tempfile::tempdir().unwrap();
+    flat(dir.path());
+
+    assert_eq!(
+      rules_for(dir.path()),
+      vec![
+        "          - { format: clap, source: \"Fire.clap\", kind: file }",
+        "          - { format: vst3, source: \"Fire.vst3\", kind: bundle }",
+        "          - { format: lv2, source: \"Fire.lv2\", kind: bundle }",
+      ]
+    );
+
+    // Everything else in the archive is listed and left alone. A rule is
+    // produced for what a format installer recognises, never for what
+    // happens to sit beside it.
+    let listing: Vec<String> = derive::from_tree(dir.path())
+      .unwrap()
+      .listing
+      .iter()
+      .map(render_entry)
+      .collect();
+    assert!(listing.contains(&"  README.md".to_string()), "{listing:?}");
+  }
+
+  #[test]
+  fn a_format_nested_release_suggests_one_rule_per_plugin() {
+    let dir = tempfile::tempdir().unwrap();
+    format_nested(dir.path());
+
+    assert_eq!(
+      rules_for(dir.path()),
+      vec![
+        "          - { format: clap, source: \"clap/ZamComp.clap\", kind: file }",
+        "          - { format: clap, source: \"clap/ZamEQ2.clap\", kind: file }",
+        "          - { format: vst3, source: \"vst3/ZamEQ2.vst3\", kind: bundle }",
+        "          - { format: lv2, source: \"lv2/ZamEQ2.lv2\", kind: bundle }",
+      ]
+    );
+  }
+
+  #[test]
+  fn a_bundle_is_not_descended_into_and_its_contents_get_no_rules() {
+    // A `.vst3` installs whole, so the shared object inside it is not a
+    // second thing to install — and a `.clap` that ships *inside* another
+    // bundle is not a CLAP to copy into `~/.clap`.
+    let dir = tempfile::tempdir().unwrap();
+    flat(dir.path());
+    fs::write(dir.path().join("Fire.vst3/Contents/Inner.clap"), b"").unwrap();
+
+    let rules = rules_for(dir.path());
+    assert_eq!(rules.len(), 3, "{rules:?}");
+    assert!(!rules.iter().any(|r| r.contains("Inner.clap")), "{rules:?}");
+  }
+
+  #[test]
+  fn a_directory_named_like_a_clap_produces_no_rule() {
+    // DPF-Plugins ships `ProM.clap` as a directory. Relaxing this would
+    // install something no host is guaranteed to load.
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("ProM.clap")).unwrap();
+    assert!(rules_for(dir.path()).is_empty());
   }
 
   #[test]
