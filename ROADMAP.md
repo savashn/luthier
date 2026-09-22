@@ -172,13 +172,29 @@ Three decisions worth keeping:
   and a rate limit is named rather than passing as "up to date" — the two ways
   this command could be confidently wrong.
 
-Still to do: only GitHub is implemented, which covers all but four of the
-manifests that have an artifact at all. The
-three DrumGizmo kits are served from a plain website with no API and are
-reported as such; GitLab and SourceForge would each be a small addition to
-`upstream.rs`.
+**GitHub is the whole list, and that is now a decision rather than a gap.**
+This once read "GitLab and SourceForge would each be a small addition to
+`upstream.rs`". Both were written, and both came back out.
 
-### 1.2 Test the rest of `luthier-registry-tool`
+The data is the first half of the reason: of the bench's nine manifests, the
+six with an artifact point at GitHub three times and at drumgizmo.org three
+times. Nothing uses either forge, and this command never sees the Open Audio
+Stack registry at all — it walks a directory of manifests.
+
+The second half is that the two are not equally cheap. SourceForge has no tags
+to ask for: `best_release.json` names a *file*, so a version has to be inferred
+from a path like `/qtractor/1.6.4/qtractor-1.6.4.tar.gz` — inference, in the
+one command whose whole discipline is not guessing. And the projects that would
+benefit mostly publish source only, which makes them `external` packages here,
+which this command skips by design. Self-hosted GitLab cannot be recognised
+from a URL at all, so `gitlab.example.org` would have stayed unsupported
+anyway; only `gitlab.com` was ever covered.
+
+So a host this command does not know is reported as having no API, the three
+DrumGizmo kits included, and a forge gets an arm on the day a manifest points
+at it.
+
+### 1.2 Test the rest of `luthier-registry-tool` — done
 
 The tool went from zero tests to 33: ten unit tests, ten for `check-updates`
 and thirteen in `tests/validate.rs`, which drives the binary the way registry

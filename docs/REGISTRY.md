@@ -164,8 +164,21 @@ package fail the run; without it the command succeeds, which is what the
 weekly CI job wants so it can file an issue instead of going red.
 
 Set `GITHUB_TOKEN` to raise the API rate limit from 60 requests an hour to
-5000. Only GitHub is implemented; other hosts are reported as unsupported
-rather than guessed at.
+5000. GitHub is asked for `releases/latest` and falls back to `tags` for a
+project that only tags.
+
+Only GitHub is implemented, and that is a decision rather than a gap. Every
+manifest here that has an artifact points at GitHub; the three DrumGizmo kits
+are served from a plain website with no API and are reported as such. A host
+this command does not know is reported rather than guessed at, which is the
+same rule that makes it report an unreadable tag instead of coercing one.
+
+GitLab and SourceForge were built and taken back out. SourceForge has no tags
+to ask for — `best_release.json` names a *file* — so a version has to be
+inferred from a filename, and a project that publishes only source becomes an
+`external` package here, which this command skips anyway. Self-hosted GitLab
+cannot be recognised from a URL at all. Either is a small addition to
+`upstream.rs` on the day a manifest needs one.
 
 ## Sample libraries
 

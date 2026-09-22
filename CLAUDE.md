@@ -243,7 +243,9 @@ behaves like a pin but is fatal when the version is gone.
 `luthier-registry check-updates` reports what upstream has moved past. It reads
 the repo from the **artifact URL**, not `repository` — those disagree (Surge XT
 publishes from `releases-xt`). Tests point it at a `wiremock` server through the
-hidden `--api` flag, so the suite stays offline.
+hidden `--api` flag, so the suite stays offline. GitHub is the only forge, by
+decision: nothing in the bench points anywhere else, and SourceForge would mean
+inferring a version from a filename (ROADMAP 1.1).
 
 `luthier cache list` / `cache clean` prune the content-addressed artifact
 cache; an entry is kept when some installed package recorded its digest.

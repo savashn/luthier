@@ -16,6 +16,20 @@
 //! Nothing here writes a manifest. A new version means a new checksum, and a
 //! checksum must come from the real file (§26) — so this reports, and a human
 //! runs `hash-url`.
+//!
+//! One forge is understood, and that is a decision rather than a gap. Every
+//! manifest with an artifact points at GitHub; the rest point at a plain
+//! website with a directory of downloads, which has no API to ask. A host
+//! this module does not know is reported as having no API rather than guessed
+//! at, because the two ways this command could be confidently wrong are
+//! inventing a version and passing a failure off as "up to date".
+//!
+//! GitLab and SourceForge were tried and taken back out. SourceForge has no
+//! tags to ask for — `best_release.json` names a *file* — so a version has to
+//! be inferred from a filename, and a project that publishes only source
+//! becomes an `external` package here, which this command skips anyway.
+//! Self-hosted GitLab cannot be recognised from a URL at all. Neither earned
+//! its place against a bench where nothing uses them.
 
 use luthier_manifest::Manifest;
 use semver::Version;
@@ -44,6 +58,8 @@ impl std::fmt::Display for Upstream {
 /// Recognises the two shapes GitHub actually serves:
 /// `/{owner}/{repo}/releases/download/{tag}/{file}` for an uploaded asset, and
 /// `/{owner}/{repo}/archive/refs/tags/{tag}.zip` for a generated tag archive.
+///
+/// Any other host is [`Upstream::Unsupported`] — an answer, not a guess.
 pub fn upstream_of(url: &Url) -> Upstream {
   let host = url.host_str().unwrap_or("").to_owned();
   if host != "github.com" {
@@ -185,7 +201,7 @@ impl GitHub {
     Self {
       client: reqwest::Client::new(),
       base,
-      token,
+      token: token.filter(|t| !t.is_empty()),
     }
   }
 
@@ -414,6 +430,27 @@ mod tests {
     assert_eq!(
       version_from_tag("v2.0.0-rc.1"),
       Some(Version::parse("2.0.0-rc.1").unwrap())
+    );
+  }
+
+  #[test]
+  fn an_upstream_prints_as_the_forge_it_is() {
+    // The source column is what tells a maintainer where to look, so the
+    // forge is named rather than left as a bare path.
+    assert_eq!(
+      Upstream::GitHub {
+        owner: "owner".into(),
+        repo: "proj".into()
+      }
+      .to_string(),
+      "github:owner/proj"
+    );
+    assert_eq!(
+      Upstream::Unsupported {
+        host: "drumgizmo.org".into()
+      }
+      .to_string(),
+      "drumgizmo.org"
     );
   }
 
