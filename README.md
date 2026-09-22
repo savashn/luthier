@@ -81,8 +81,8 @@ One statically linked binary, no runtime to install and no toolchain to build
 it with:
 
 ```console
-$ curl -LO https://github.com/luthier/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
-$ curl -LO https://github.com/luthier/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz.sha256
+$ curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
+$ curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz.sha256
 $ sha256sum -c luthier-x86_64-linux.tar.gz.sha256
 $ tar xzf luthier-x86_64-linux.tar.gz
 $ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
@@ -274,7 +274,7 @@ version-2 licences and compatible with version 3. The option to take this
 under LGPL-3.0-or-later is what keeps a build of Luthier distributable.
 
 The package manifests live in a separate repository,
-[luthier-pkgs](https://github.com/luthier/luthier-pkgs), under the MIT
+[luthier-pkgs](https://github.com/savashn/luthier-pkgs), under the MIT
 licence: the tool stays free, the data stays maximally reusable.
 
 Two things follow for anyone integrating with it.

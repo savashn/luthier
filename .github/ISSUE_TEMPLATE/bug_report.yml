@@ -8,7 +8,7 @@ body:
         A package that fails to install is often a manifest problem rather
         than a manager problem. If the error names a checksum, an archive
         layout or a missing artifact for your target, the
-        [registry](https://github.com/luthier/luthier-pkgs/issues) is the
+        [registry](https://github.com/savashn/luthier-pkgs/issues) is the
         place for it.
 
   - type: textarea

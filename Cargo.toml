@@ -12,8 +12,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "LGPL-2.1-or-later"
-repository = "https://github.com/luthier/luthier"
-homepage = "https://github.com/luthier/luthier"
+repository = "https://github.com/savashn/luthier"
+homepage = "https://github.com/savashn/luthier"
 
 [workspace.dependencies]
 luthier-manifest = { path = "crates/luthier-manifest" }

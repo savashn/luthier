@@ -46,13 +46,18 @@ they are the difference between a local working directory and a project.
 
 ### 0.1 Put both repositories under version control — half done
 
-`luthier/` is a git repository now. `luthier-pkgs/` is not, and neither has a
-remote. Two consequences follow: `.github/workflows/ci.yml` and
-`.github/workflows/validate.yml` have never executed, and the TOML migration
-and category system were verified only on one machine.
+`luthier/` is a git repository and lives at `savashn/luthier`, privately.
+`luthier-pkgs/` is neither: no repository, no remote. Two consequences
+follow: `.github/workflows/ci.yml` and `.github/workflows/validate.yml` have
+never executed, and the TOML migration and category system were verified only
+on one machine.
 
-The registry workflow checks out `luthier/luthier` and builds the validator
-from source, so the manager repository has to exist first.
+The registry workflow checks out `savashn/luthier` and builds the validator
+from source, so the manager repository has to exist first — and has to be
+*readable* from the registry's CI. A workflow's default token reaches only its
+own repository, so while the manager stays private that checkout needs a
+personal access token in the registry's secrets. Making the manager public is
+the cheaper answer, and the one this project's licence assumes.
 
 **Done when:** both repositories are pushed, both workflows are green on a
 pull request, and the schema-drift check in each has run at least once.
@@ -91,7 +96,7 @@ default.
 
 ### 0.3 Publish a release, and make the default registry resolve
 
-`config.rs` points at `https://github.com/luthier/luthier-pkgs/archive/refs/heads/main.tar.gz`.
+`config.rs` points at `https://github.com/savashn/luthier-pkgs/archive/refs/heads/main.tar.gz`.
 Until that URL resolves, `luthier refresh` fails out of the box and every user
 must pass `--registry-path`. The comment in the source says so; it stops being
 true the moment 0.1 lands.

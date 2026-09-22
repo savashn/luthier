@@ -9,7 +9,7 @@ body:
         install scripts, manifests never name a destination, there is no
         DAW-specific integration, nothing is installed system-wide, and this
         is not a DAW. Those are recorded under *Deliberate ceilings* in
-        [ROADMAP.md](https://github.com/luthier/luthier/blob/main/ROADMAP.md)
+        [ROADMAP.md](https://github.com/savashn/luthier/blob/main/ROADMAP.md)
         with the reasoning, and a request to lift one needs to answer it.
 
   - type: textarea

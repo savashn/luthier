@@ -115,7 +115,7 @@ pub struct Config {
 /// `--registry-path` (or a `path` entry in `config.json`) to point at a local
 /// checkout in the meantime.
 pub const DEFAULT_REGISTRY_URL: &str =
-  "https://github.com/luthier/luthier-pkgs/archive/refs/heads/main.tar.gz";
+  "https://github.com/savashn/luthier-pkgs/archive/refs/heads/main.tar.gz";
 
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///

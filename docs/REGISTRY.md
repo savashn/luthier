@@ -3,7 +3,7 @@
 Packages live in a separate repository, [`luthier-pkgs`][registry]. The
 manager consumes it as data; it has no built-in package list.
 
-[registry]: https://github.com/luthier/luthier-pkgs
+[registry]: https://github.com/savashn/luthier-pkgs
 
 ```
 luthier-pkgs/

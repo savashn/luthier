@@ -1,7 +1,7 @@
 # Changelog
 
 Notable changes to the manager. The registry has
-[its own](https://github.com/luthier/luthier-pkgs/blob/main/CHANGELOG.md),
+[its own](https://github.com/savashn/luthier-pkgs/blob/main/CHANGELOG.md),
 because a package being added is not a change to this program.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
@@ -64,4 +64,4 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
-[0.1.0]: https://github.com/luthier/luthier/releases/tag/v0.1.0
+[0.1.0]: https://github.com/savashn/luthier/releases/tag/v0.1.0
