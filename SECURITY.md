@@ -131,10 +131,9 @@ and refetched rather than trusted.
 
 An artifact is verified against a checksum in a manifest. The document carrying
 that checksum — a bench tarball, an Open Audio Stack index — arrives on the
-strength of HTTPS alone, which makes it the weakest link in the chain. Until
-signatures close it (ROADMAP 2.2), `registry/provenance.rs` applies trust on
-first use to the part of a snapshot that should never change rather than the
-part that always does.
+strength of HTTPS alone, which makes it the weakest link in the chain.
+`registry/provenance.rs` applies trust on first use to the part of a snapshot
+that should never change rather than the part that always does.
 
 A snapshot's *contents* change on every refresh; that is what a refresh is for,
 so pinning its digest would reject every genuine update. Its *origin* should
@@ -144,12 +143,56 @@ is refused — before the fetch, so nothing is downloaded from the new host. A
 path that moves within one origin is upstream reorganising itself, which is
 theirs to do.
 
-The digest and byte count are recorded for audit rather than enforced. There is
-no way to accept a new origin in place: `bench remove` forgets the record and
-re-adding pins afresh, which makes accepting one a deliberate act rather than a
-flag on an ordinary refresh. A record that is missing or unreadable is treated
-as absent — it caches a previous observation, and refusing to work because it
-was corrupted would turn a hint into an outage.
+The digest and byte count are recorded for audit. Where the bench is signed,
+that record is also what the signature covers — see below. There is no way to
+accept a new origin in place: `bench remove` forgets the record and re-adding
+pins afresh, which makes accepting one a deliberate act rather than a flag on
+an ordinary refresh. A record that is missing or unreadable is treated as
+absent — it caches a previous observation, and refusing to work because it was
+corrupted would turn a hint into an outage.
+
+## Registry signatures
+
+A bench may publish a detached Ed25519 signature beside its snapshot, at the
+snapshot's own URL with `.sig` on the end. What it signs is the snapshot's
+SHA-256 — the digest the manager computes as it downloads and records in the
+provenance file — prefixed with a context string so a signature over a
+snapshot can never be replayed as a signature over anything else. The file is
+plain text and carries the public key as well as the signature.
+
+Verification happens **between the download and the extractor**, so a snapshot
+nothing vouched for is never opened, and a refusal always leaves the previous
+snapshot in place.
+
+Which key counts is decided the same way the origin is:
+
+- A key in `config.json` — written there by `luthier bench add --key` or
+  `luthier bench trust` — is required from the very first fetch, which is the
+  fetch an attacker would otherwise aim at.
+- With no key configured, the first signature a bench serves pins the key it
+  names. That first fetch proves nothing by itself; what it buys is that every
+  refresh after it has something to check against, including the case where
+  the bench simply stops signing.
+- With neither a key nor a pin, the bench is unsigned and says so. This is
+  every bench today, and refusing it would mean refusing to read any registry
+  that has not started signing yet.
+
+Three refusals follow from that, and only one of them can be overridden:
+
+| | |
+|---|---|
+| No signature, but one was expected | `refresh --allow-unsigned` accepts it for **one run**. The pinned key is kept, so the next refresh asks again; `bench untrust <name>` is how to stop being asked. |
+| A signature that does not verify | Refused. No flag relaxes this: it is a claim that did not hold up, not an absent one. |
+| A signature from a key this bench is not trusted to use | Refused, and the key is named so it can be checked against the bench's own announcement before `bench trust` accepts it. This is also what a key rotation looks like from the outside. |
+
+An unreadable signature file is refused rather than treated as no signature,
+or publishing garbage would be a way to turn verification off. The signing
+side is `luthier-registry keygen` and `luthier-registry sign`; the procedure,
+including rotation, is in [docs/REGISTRY.md](docs/REGISTRY.md#signing-a-snapshot).
+
+A generated branch tarball has no signature beside it and cannot have one, so
+a bench that signs publishes a snapshot it uploaded itself. That is a change
+to how a bench is published, not to how it is read.
 
 ## Installation
 
@@ -178,12 +221,12 @@ installation is reported and kept, not deleted.
 
 ## Not yet implemented
 
-- **Signature verification.** The manifest format reserves room for Ed25519
-  signatures over metadata (§14) and the registry format does not preclude it,
-  but no signatures are checked today. Integrity rests on HTTPS, the pinned
-  origin described under *Registry provenance*, and the reviewed checksum in
-  the manifest. A snapshot's recorded digest is what a signature will be
-  checked against when there is one.
+- **Per-manifest signatures.** A snapshot is verified as a whole (see
+  *Registry signatures*); an individual manifest inside one is not signed
+  separately, though the format reserves room for it (§14). In practice the
+  snapshot signature covers every manifest it carries, so what is missing is
+  the ability for one package's author to sign their own entry independently
+  of the bench that publishes it.
 - **System-wide installation.** Everything is user-local; root is never
   required and system directories are never written.
 

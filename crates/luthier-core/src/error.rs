@@ -168,6 +168,26 @@ pub enum RegistryError {
     previous: String,
     current: String,
   },
+
+  #[error("bench {registry} has been signed before and this snapshot is unsigned")]
+  SignatureMissing { registry: String },
+
+  #[error("the signature published for bench {registry} cannot be read: {reason}")]
+  SignatureMalformed { registry: String, reason: String },
+
+  #[error(
+    "the signature published for bench {registry} does not verify under {key}, the key it names"
+  )]
+  SignatureInvalid { registry: String, key: String },
+
+  #[error(
+    "bench {registry} was signed with {key}, which is not one of the keys it is trusted to use"
+  )]
+  SignatureUntrusted {
+    registry: String,
+    key: String,
+    trusted: Vec<String>,
+  },
 }
 
 impl RegistryError {
@@ -187,6 +207,30 @@ impl RegistryError {
                  noticing, since the checksums it carries are what everything else is \
                  verified against. If this was you, run `luthier bench remove {registry}` \
                  and add it again."
+      )),
+      RegistryError::SignatureMissing { registry } => Some(format!(
+        "Nothing was downloaded into place. If the bench has genuinely stopped \
+                 signing, `luthier refresh --allow-unsigned` accepts this one refresh \
+                 without forgetting the key, and `luthier bench untrust {registry}` \
+                 gives up on signatures for it for good."
+      )),
+      RegistryError::SignatureInvalid { .. } => Some(
+        "The snapshot and the signature published beside it do not agree. Either one \
+                 of them is truncated or the bytes are not the ones that were signed; \
+                 nothing was extracted either way. Try again, and report it to the bench's \
+                 maintainers if it persists."
+          .into(),
+      ),
+      RegistryError::SignatureUntrusted {
+        registry,
+        key,
+        trusted,
+      } => Some(format!(
+        "A new signing key is a deliberate change, and this is what a rotation looks \
+                 like from the outside. Check {key} against the bench's own announcement \
+                 and then run `luthier bench trust {registry} {key}`; the keys it \
+                 currently accepts are {}.",
+        trusted.join(", ")
       )),
       _ => None,
     }

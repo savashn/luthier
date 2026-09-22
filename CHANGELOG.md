@@ -19,7 +19,7 @@ The first release: everything below is new.
 
 - **Commands.** `refresh`, `search`, `info`, `install`, `list`, `verify`,
   `update`, `remove`, `cleanup`, `pin`/`unpin`, `cache list`/`clean`,
-  `bench list`/`add`/`remove`, `env` (create, list,
+  `bench list`/`add`/`remove`/`trust`/`untrust`, `env` (create, list,
   activate, deactivate, show, path, remove, export, import), `completions`
   and a man page the binary generates itself. Every command speaks `--json`,
   and every destructive one needs `--yes` when stdin is not a terminal —
@@ -38,6 +38,14 @@ The first release: everything below is new.
 - **Registry provenance.** A bench's origin — scheme, host and port — is
   pinned on first fetch, and one that later answers from somewhere else is
   refused before anything is downloaded from the new host.
+- **Registry signatures.** A bench may publish a detached Ed25519 signature
+  beside its snapshot; it is verified between the download and the extractor,
+  and the signing key is pinned exactly as the origin is. `bench add --key`
+  and `bench trust` require a key from the first fetch, `refresh
+  --allow-unsigned` accepts a missing signature for one run without
+  discarding the pin, and a signature that fails to verify is refused
+  whatever any flag says. `luthier-registry keygen` and `sign` are the
+  publishing side.
 - **A hardened extractor.** One extraction policy for every container, with a
   38-case malicious-archive corpus that asserts both the refusal and that
   nothing was written outside the extraction directory.

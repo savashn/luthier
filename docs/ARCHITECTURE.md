@@ -68,7 +68,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | Module | Holds |
 |---|---|
 | `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import — and `Environments`, which manages environments from outside one |
-| `registry` | Merging benches into one `RegistryIndex`, in configured order; `local`, `http` and `oas` providers; `provenance` for origin pinning |
+| `registry` | Merging benches into one `RegistryIndex`, in configured order; `local`, `http` and `oas` providers; `provenance` for origin and key pinning; `signature` for Ed25519 over a snapshot |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -217,7 +217,19 @@ whether it is the same document's author answering. Scheme, host and port are
 recorded on first fetch, and a bench that later answers from a different origin
 is refused before anything is downloaded from the new host. The digest is
 recorded for audit rather than enforced, because a snapshot's contents change
-on every refresh by design. See [SECURITY.md](../SECURITY.md).
+on every refresh by design.
+
+What turns that record into more than an audit trail is
+`registry/signature.rs`. A bench may publish a detached Ed25519 signature
+beside its snapshot, over the same SHA-256 the record carries, and
+`HttpSnapshotRegistry::refresh` checks it between the download and the
+extractor — so a snapshot nothing vouched for is never opened. The key is
+pinned the same way the origin is: the first signature to arrive names the key
+every later refresh must match, and a key written into `config.json` covers
+the first fetch as well. `--allow-unsigned` accepts the *absence* of a
+signature for one run and never discards the pin; a signature that fails to
+verify, or one from a key this bench is not trusted to use, is refused
+whatever any flag says. See [SECURITY.md](../SECURITY.md).
 
 ### Environments vary the layout, not the code
 

@@ -33,6 +33,12 @@ tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "io-u
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream", "charset", "http2", "system-proxy"] }
 futures-util = "0.3"
 sha2 = "0.10.9"
+# Ed25519 over a registry snapshot (§14). MSRV 1.85, below the workspace's
+# 1.89, so verification does not move the toolchain floor.
+ed25519-dalek = "3.0.0"
+# Only `keygen` needs randomness, and only 32 bytes of it. Reading the
+# platform's CSPRNG directly keeps the `rand` stack out of the tree.
+getrandom = "0.4"
 zip = { version = "8.6.0", default-features = false, features = ["deflate", "bzip2"] }
 tar = "0.4.46"
 flate2 = "1.1.10"

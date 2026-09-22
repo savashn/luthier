@@ -1436,6 +1436,74 @@ fn benches_can_be_added_removed_and_ordered() {
 }
 
 #[test]
+fn a_signing_key_can_be_trusted_and_given_up_on() {
+  // The user-facing half of registry signatures: the key a bench must be
+  // signed with is configuration, and changing it is a deliberate act.
+  let fixture = Fixture::new();
+  let key = "e0f2de1fa607bf5692013c9f18e6160f71826317444cec8590395b7d407949e0";
+
+  // A local directory publishes nothing to check a signature against, and
+  // saying so beats accepting a key that would never be used.
+  let local = fixture.dir.path().join("second");
+  std::fs::create_dir_all(local.join("plugins")).unwrap();
+  fixture
+    .luthier()
+    .args(["bench", "add", "second", local.to_str().unwrap()])
+    .assert()
+    .success();
+  let refused = fixture
+    .luthier()
+    .args(["bench", "trust", "second", key])
+    .output()
+    .unwrap();
+  assert!(!refused.status.success());
+  assert!(
+    String::from_utf8_lossy(&refused.stderr).contains("carries a signature"),
+    "{}",
+    String::from_utf8_lossy(&refused.stderr)
+  );
+
+  // A snapshot bench does. The key is shown in full: truncating the one
+  // thing a user compares against an announcement would make it useless.
+  fixture
+    .luthier()
+    .args([
+      "bench",
+      "add",
+      "signed",
+      "https://example.invalid/bench.tar.gz",
+      "--key",
+      key,
+    ])
+    .assert()
+    .success();
+  let listed = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
+  assert!(listed.contains(key), "{listed}");
+
+  // Nonsense is refused where it is written, not at the next refresh.
+  let bad = fixture
+    .luthier()
+    .args(["bench", "trust", "signed", "not-a-key"])
+    .output()
+    .unwrap();
+  assert!(!bad.status.success());
+  assert!(
+    String::from_utf8_lossy(&bad.stderr).contains("not an Ed25519 public key"),
+    "{}",
+    String::from_utf8_lossy(&bad.stderr)
+  );
+
+  fixture
+    .luthier()
+    .args(["bench", "untrust", "signed", key])
+    .assert()
+    .success();
+  let after = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
+  assert!(!after.contains(key), "{after}");
+  assert!(after.contains("signed"), "{after}");
+}
+
+#[test]
 fn info_says_whether_the_install_rules_were_reviewed() {
   // Over four hundred packages arrive with rules read out of the archive
   // and no human in the loop. That trade is fine; hiding it is not.

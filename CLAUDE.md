@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 351 tests, fully offline
+cargo test --workspace                     # 386 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -27,7 +27,7 @@ real `~/.clap` and `~/.vst3`.
 | Crate | Contains | Must not contain |
 |---|---|---|
 | `luthier-manifest` | schema types, parse, validate, SPDX, path/hash newtypes, manifest discovery | async, HTTP, *installation* policy |
-| `luthier-core` | registry, resolver, download, archive, install, state, scan, `api::{Session, Environments}` | anything CLI-shaped |
+| `luthier-core` | registry, resolver, download, archive, install, state, scan, signature verification, `api::{Session, Environments}` | anything CLI-shaped |
 | `luthier-cli` | `luthier` binary: clap args, rendering | **any business logic** |
 | `luthier-registry-tool` | `luthier-registry` binary: validator + authoring helpers | dependency on `luthier-cli` |
 
@@ -86,7 +86,10 @@ the crate map keeps that out of `luthier-manifest`.
    `tar::Archive::unpack` or `ZipArchive::extract` — they apply their own
    policy. Per-format modules decide only *what entries exist*.
 4. **Verify before extract, extract before install.** `Downloader::fetch`
-   cannot return a file that failed its checksum.
+   cannot return a file that failed its checksum. The same order holds one
+   level up: `HttpSnapshotRegistry::refresh` checks a bench's signature
+   between the download and the extractor, so a snapshot nothing vouched for
+   is never opened and every refusal leaves the previous snapshot in place.
 5. **`Layout` is injected everywhere.** Nothing deep in the call graph reads
    `$HOME` or calls `dirs::home_dir()`. This is what makes the suite hermetic.
 6. **State is authoritative for ownership; scanning is advisory.** Never delete
@@ -152,6 +155,18 @@ the crate map keeps that out of `luthier-manifest`.
 - **A `.part` is never held by a package.** Its digest names what the finished
   file will hash to, so matching it against installed artifacts reports a
   truncated download as in use and keeps `cache clean` from ever collecting it.
+- **A signature file names its own key, and that is the point.** A first
+  fetch has nothing to check against, so the key it carries is pinned exactly
+  as the origin is and every later refresh must match it. Verifying a file
+  under the key it names is not trust; `signature::check` decides that
+  separately, which is why `SignatureFile::verifies` says nothing about it.
+- **An unreadable signature is a refusal, not an absence.** Treating a
+  malformed `.sig` as "unsigned" would make publishing garbage a way to turn
+  verification off.
+- **`provenance::record` never lowers protection.** It keeps a previously
+  pinned key when a refresh was accepted unsigned, or one `--allow-unsigned`
+  would disable verification permanently. `bench untrust` is the deliberate
+  way to drop it.
 - **Only the workspace copy is transient.** `space_needed` charges the cache
   and the install root the plan's total but the workspace only its largest
   single package, because `InstallTransaction::commit` deletes the workspace
@@ -174,6 +189,13 @@ the crate map keeps that out of `luthier-manifest`.
   and `into_env` redirects the per-installation parts. Code that builds a path
   from `$HOME` or from `data_dir()` by hand is the bug.
 
+- **A signing decision** → `registry/signature.rs` holds the policy and the
+  file format; `provenance.rs` holds what is pinned. Keep them apart: a
+  signature file that verifies under the key it names proves only that the
+  file is internally consistent, and whether that key is one to trust is a
+  separate question with a separate answer. `--allow-unsigned` covers the
+  *absence* of a signature for one run and never discards a pin; nothing
+  should ever make it cover a signature that failed.
 - **A registry backend** → implement `RegistryProvider` (see `registry/local.rs`)
   and a `RegistrySource` variant in `config.rs`. `registry/oas/` is the worked
   example of a backend whose source has a different schema: every difference
@@ -247,6 +269,14 @@ hidden `--api` flag, so the suite stays offline. GitHub is the only forge, by
 decision: nothing in the bench points anywhere else, and SourceForge would mean
 inferring a version from a filename (ROADMAP 1.1).
 
+A bench may publish a detached Ed25519 signature at its snapshot's URL with
+`.sig` on the end. It is verified before extraction, over the same digest
+`provenance.rs` records; the key is pinned on first use, or required from the
+first fetch when one is configured (`bench add --key`, `bench trust`,
+`bench untrust`). `refresh --allow-unsigned` accepts a missing signature for
+one run without discarding the pin. `luthier-registry keygen` / `sign` are the
+publishing side, and `docs/REGISTRY.md` carries the rotation procedure.
+
 `luthier cache list` / `cache clean` prune the content-addressed artifact
 cache; an entry is kept when some installed package recorded its digest.
 `luthier bench list` / `bench add` / `bench remove` edit the registry list in
@@ -258,8 +288,7 @@ change on every refresh by design.
 
 Deferred, roughly in order of value: macOS and
 Windows layouts (the schema and resolver already model them; `Layout` and the
-installers are Linux-only); Ed25519 signature verification (schema reserves
-room, and `provenance.rs` is where it goes); reading OAS's `presets/` and
+installers are Linux-only); reading OAS's `presets/` and
 `projects/` indexes, which is blocked on deciding where a preset installs
 given that a manifest may not name a destination; a released binary; aarch64;
 a `GitRegistry` backend. A *bench* is the kind —

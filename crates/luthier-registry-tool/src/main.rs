@@ -59,6 +59,36 @@ enum Command {
     format: Option<String>,
   },
 
+  /// Generate an Ed25519 key pair for signing this bench's snapshots.
+  ///
+  /// The secret key is written to a file only its owner can read; the public
+  /// key is printed, to publish where users can find it and to hand to
+  /// `luthier bench trust`.
+  #[cfg(feature = "authoring")]
+  Keygen {
+    /// Where to write the secret key. Never overwritten.
+    #[arg(long, default_value = "luthier-bench.key")]
+    out: PathBuf,
+  },
+
+  /// Sign a snapshot, writing the detached signature beside it.
+  ///
+  /// What is signed is the snapshot's SHA-256, which is what the manager
+  /// records and what it checks the signature against.
+  #[cfg(feature = "authoring")]
+  Sign {
+    /// The snapshot tarball to sign.
+    snapshot: PathBuf,
+
+    /// The secret key file written by `keygen`.
+    #[arg(long)]
+    key: PathBuf,
+
+    /// Write the signature here instead of <snapshot>.sig.
+    #[arg(long)]
+    out: Option<PathBuf>,
+  },
+
   /// Report which manifests are behind their upstream project.
   ///
   /// Asks each package's forge for its newest tag and compares. Reports
@@ -122,6 +152,12 @@ fn main() -> ExitCode {
 
     #[cfg(feature = "authoring")]
     Command::Inspect { archive, format } => cmd_inspect(&archive, format.as_deref()),
+
+    #[cfg(feature = "authoring")]
+    Command::Keygen { out } => cmd_keygen(&out),
+
+    #[cfg(feature = "authoring")]
+    Command::Sign { snapshot, key, out } => cmd_sign(&snapshot, &key, out.as_deref()),
 
     #[cfg(feature = "authoring")]
     Command::CheckUpdates {
@@ -529,6 +565,77 @@ fn render_entry(entry: &install::Listed) -> String {
     ""
   };
   format!("  {}{slash}{note}", entry.path)
+}
+
+// ------------------------------------------------------------------ signing --
+
+/// Writes a new key pair.
+///
+/// Refuses to overwrite: a key file is the one thing here that cannot be
+/// regenerated, and replacing one silently would retire a bench's identity
+/// without anybody deciding to.
+#[cfg(feature = "authoring")]
+fn cmd_keygen(out: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+  use luthier_core::registry::signature::SecretKey;
+
+  if out.exists() {
+    return Err(format!("{} already exists; move it aside first", out.display()).into());
+  }
+
+  let secret = SecretKey::generate()?;
+  std::fs::write(out, format!("{}\n", secret.to_hex()))?;
+  restrict(out)?;
+
+  println!("Secret key written to {}", out.display());
+  println!("Public key:  {}", secret.public());
+  println!(
+    "\nPublish the public key where users can check it against a signature, and keep \n\
+     the secret key off the machine that builds snapshots if you can. Users pin it with\n\
+     \n    luthier bench trust <bench> {}\n",
+    secret.public()
+  );
+  Ok(true)
+}
+
+/// Signs a snapshot, writing `<snapshot>.sig` beside it.
+#[cfg(feature = "authoring")]
+fn cmd_sign(
+  snapshot: &Path,
+  key_file: &Path,
+  out: Option<&Path>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+  use luthier_core::registry::signature::SecretKey;
+
+  let secret = SecretKey::parse(&std::fs::read_to_string(key_file)?)?;
+  // The digest the manager computes as it downloads, and records: signing
+  // the same thing is what ties the audit trail to a key.
+  let digest = luthier_core::fsutil::hash_file(snapshot)?;
+
+  let destination = match out {
+    Some(path) => path.to_path_buf(),
+    // `.sig` appended to the whole name, not to the stem: the manager
+    // looks for it beside the snapshot under exactly this name.
+    None => PathBuf::from(format!("{}.sig", snapshot.display())),
+  };
+  std::fs::write(&destination, secret.sign(&digest).render())?;
+
+  println!("sha256 {digest}");
+  println!("key    {}", secret.public());
+  println!("Signature written to {}", destination.display());
+  println!("\nPublish it beside the snapshot, at the snapshot's own URL with `.sig` on the end.");
+  Ok(true)
+}
+
+/// Owner-read-only, for a file that is the bench's identity.
+#[cfg(all(feature = "authoring", unix))]
+fn restrict(path: &Path) -> std::io::Result<()> {
+  use std::os::unix::fs::PermissionsExt;
+  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(all(feature = "authoring", not(unix)))]
+fn restrict(_path: &Path) -> std::io::Result<()> {
+  Ok(())
 }
 
 #[cfg(feature = "authoring")]

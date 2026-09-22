@@ -180,6 +180,64 @@ inferred from a filename, and a project that publishes only source becomes an
 cannot be recognised from a URL at all. Either is a small addition to
 `upstream.rs` on the day a manifest needs one.
 
+## Signing a snapshot
+
+A bench may publish a detached Ed25519 signature beside its snapshot. The
+manager checks it between the download and the extractor, and pins the key, so
+a snapshot from a compromised forge account is refused rather than extracted.
+Nothing here is required: an unsigned bench is read as it always was.
+
+What is signed is the snapshot's SHA-256, which is also what the manager
+records for audit.
+
+```console
+$ luthier-registry keygen --out luthier-bench.key
+$ luthier-registry sign luthier-pkgs-2026.09.22.tar.gz --key luthier-bench.key
+```
+
+`keygen` writes a secret key only its owner can read and prints the public
+key; `sign` writes `<snapshot>.sig`. Publish the signature at the snapshot's
+own URL with `.sig` on the end — that convention is where the manager looks,
+and it is not configurable, because a signature URL in a configuration file is
+exactly the thing an attacker who could edit that file would point elsewhere.
+
+**A signed bench publishes an uploaded snapshot, not a branch tarball.** A
+forge generates `archive/refs/heads/main.tar.gz` on demand and there is
+nowhere to put a signature beside it — so signing means cutting a release,
+attaching the tarball, and pointing the bench's URL at that asset.
+
+Users pin the key, or let the first signature pin itself:
+
+```console
+$ luthier bench add mine https://example.org/bench.tar.gz --key <public key>
+$ luthier bench trust mine <public key>      # an existing bench
+$ luthier bench list                         # shows what each bench is trusted to use
+```
+
+### Rotating a key
+
+Overlap, never a gap. Retiring the old key first would leave a window in which
+no refresh can succeed, and telling users to run `--allow-unsigned` through it
+teaches exactly the wrong reflex.
+
+1. `luthier-registry keygen --out new.key`, and publish the new public key
+   where users already look for the old one.
+2. Sign the next snapshots with the **old** key while users add the new one:
+   `luthier bench trust <bench> <new public key>`. Both are accepted, so
+   nothing breaks in either order.
+3. Once the new key is widely trusted, sign with it instead. Users who have
+   not added it see the key named in the refusal, which is what tells them a
+   rotation happened.
+4. Announce the retirement, and tell users to run
+   `luthier bench untrust <bench> <old public key>`.
+
+A key that has leaked is not a rotation, it is an incident: say so plainly,
+publish the new key through whatever channel the old one did not compromise,
+and expect users to check it against more than one source. A user who never
+pinned a key is still protected against a *change* of signer — the pin from
+their first fetch is what makes the change visible — but not against a
+compromise that happened before they ever fetched.
+
 ## Sample libraries
 
 Content — sample libraries, preset packs, soundfonts — uses `format = "library"`

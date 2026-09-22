@@ -129,7 +129,17 @@ pub enum Command {
   },
 
   /// Fetch the latest registry metadata.
-  Refresh,
+  Refresh {
+    /// Accept a snapshot from a bench that was signed before and is not now.
+    ///
+    /// For one run, and for that case only: a signature that does not verify,
+    /// or one made with a key the bench is not trusted to use, is refused
+    /// whatever this says. The pinned key is kept, so the next refresh asks
+    /// the same question again; `luthier bench untrust <name>` is how to stop
+    /// asking it.
+    #[arg(long)]
+    allow_unsigned: bool,
+  },
 
   /// Check installed files still match what was recorded.
   Verify {
@@ -196,10 +206,36 @@ pub enum BenchCommand {
     /// Consult this bench before every other one.
     #[arg(long)]
     first: bool,
+    /// An Ed25519 public key, in hex, this bench must be signed with.
+    ///
+    /// Repeat for more than one. Without any, the first signature the bench
+    /// serves pins the key it names — which is enough for every refresh
+    /// after the first, and a key here is what covers the first as well.
+    #[arg(long = "key", value_name = "HEX")]
+    keys: Vec<String>,
   },
 
   /// Remove a bench and delete its cached snapshot.
   Remove { name: String },
+
+  /// Trust a signing key for a bench.
+  ///
+  /// Rotating a key means trusting the new one before the old one stops
+  /// being used; `untrust` retires the old one once the bench has published
+  /// under the new.
+  Trust {
+    name: String,
+    /// The Ed25519 public key, in hex.
+    key: String,
+  },
+
+  /// Stop trusting a signing key.
+  Untrust {
+    name: String,
+    /// Leave empty to stop requiring signatures from this bench at all,
+    /// which also forgets the key pinned on the first fetch.
+    key: Option<String>,
+  },
 }
 
 #[derive(Debug, Subcommand)]

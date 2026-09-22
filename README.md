@@ -32,6 +32,12 @@ never required and system directories are never written to. Distribution and
 container-provided plugins are detected in the conventional system search paths
 (and whatever `CLAP_PATH`, `VST3_PATH` and `LV2_PATH` name), never modified.
 
+Registry metadata is checked as well as package archives. A bench that starts
+answering from a different host is refused, and one that publishes an Ed25519
+signature has it verified before the snapshot is ever opened — with the key
+pinned on first use, so a bench that quietly stops signing is noticed too.
+See [SECURITY.md](SECURITY.md).
+
 ## What it will not do, and why some plugins are missing
 
 Installing a package here means: download it, check it against the checksum in
@@ -122,6 +128,8 @@ luthier cache clean             # delete archives nothing installed needs
 luthier bench list              # registries, in the order they are consulted
 luthier bench add <name> <url|path>
 luthier bench remove <name>
+luthier bench trust <name> <key>   # require a signing key for a bench
+luthier bench untrust <name> [key]
 
 luthier completions <shell>     # bash, elvish, fish, powershell or zsh
 

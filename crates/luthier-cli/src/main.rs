@@ -302,8 +302,8 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       _ => unreachable!("dispatched earlier"),
     },
 
-    Command::Refresh => {
-      let outcomes = session.refresh().await?;
+    Command::Refresh { allow_unsigned } => {
+      let outcomes = session.refresh(*allow_unsigned).await?;
       reporter.refresh(&outcomes);
     }
 
@@ -428,12 +428,19 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         location,
         r#type,
         first,
+        keys,
       } => {
         let source = RegistrySource::parse(location, r#type.as_deref())?;
-        reporter.benches(&session.add_bench(name, source, *first)?);
+        reporter.benches(&session.add_bench(name, source, keys, *first)?);
       }
       BenchCommand::Remove { name } => {
         reporter.benches(&session.remove_bench(name)?);
+      }
+      BenchCommand::Trust { name, key } => {
+        reporter.benches(&session.trust_bench(name, key)?);
+      }
+      BenchCommand::Untrust { name, key } => {
+        reporter.benches(&session.untrust_bench(name, key.as_deref())?);
       }
     },
 

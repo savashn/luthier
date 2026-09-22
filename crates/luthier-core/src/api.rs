@@ -129,7 +129,10 @@ impl Session {
     if let Some(index) = self.index.get() {
       return Ok(index);
     }
-    let providers = self.config.providers(&self.layout, self.offline);
+    // Nothing is being accepted here: `load_index` reads the snapshot that
+    // a previous refresh already verified, so there is no signature for an
+    // override to relax.
+    let providers = self.config.providers(&self.layout, self.offline, false);
     let built = RegistryIndex::merge(providers.iter().map(|provider| provider.load_index()))?;
     Ok(self.index.get_or_init(|| built))
   }
@@ -137,9 +140,20 @@ impl Session {
   // -------------------------------------------------------------- refresh --
 
   /// Updates every configured registry (§31 `refresh`).
-  pub async fn refresh(&self) -> Result<Vec<RefreshOutcome>> {
+  ///
+  /// `allow_unsigned` accepts a snapshot from a bench that was signed before
+  /// and is not this time — and nothing else. A signature that fails to
+  /// verify, or one made with a key the bench is not trusted to use, is
+  /// refused whatever the caller passes: those are claims that did not hold
+  /// up rather than absent ones. The flag is a parameter rather than a
+  /// setting on the session for the same reason `install` takes `force`:
+  /// consent belongs to the operation a user asked for.
+  pub async fn refresh(&self, allow_unsigned: bool) -> Result<Vec<RefreshOutcome>> {
     let mut outcomes = Vec::new();
-    for provider in self.config.providers(&self.layout, self.offline) {
+    for provider in self
+      .config
+      .providers(&self.layout, self.offline, allow_unsigned)
+    {
       outcomes.push(provider.refresh().await?);
     }
     Ok(outcomes)
@@ -1017,6 +1031,7 @@ impl Session {
     &self,
     name: &str,
     source: RegistrySource,
+    keys: &[String],
     first: bool,
   ) -> Result<Vec<BenchSummary>> {
     let name = validate_bench_name(name)?;
@@ -1026,7 +1041,10 @@ impl Session {
         "a bench named {name:?} is already configured; remove it first"
       )));
     }
-    let entry = RegistryConfig { name, source };
+    let mut entry = RegistryConfig::new(name, source);
+    for key in keys {
+      entry.keys.push(parse_key(&entry, key)?);
+    }
     if first {
       config.registries.insert(0, entry);
     } else {
@@ -1072,6 +1090,66 @@ impl Session {
     Ok(Self::summarise(&config))
   }
 
+  /// Trusts a key for a bench, so a snapshot it signs is accepted and one
+  /// anybody else signs is not.
+  ///
+  /// Adding a key without removing the old one is what a rotation is: both
+  /// are accepted until the bench has published under the new key, and
+  /// `untrust` retires the old one afterwards. Doing it the other way round
+  /// leaves a window where no refresh can succeed.
+  pub fn trust_bench(&self, name: &str, key: &str) -> Result<Vec<BenchSummary>> {
+    let mut config = Config::load(&self.layout)?;
+    let entry = config
+      .registries
+      .iter_mut()
+      .find(|r| r.name == name)
+      .ok_or_else(|| Error::InvalidArgument(format!("no bench named {name:?} is configured")))?;
+
+    let key = parse_key(entry, key)?;
+    if entry.keys.contains(&key) {
+      return Err(Error::InvalidArgument(format!(
+        "bench {name:?} already trusts {key}"
+      )));
+    }
+    entry.keys.push(key);
+    config.save(&self.layout)?;
+    Ok(Self::summarise(&config))
+  }
+
+  /// Stops trusting a key, or every key when none is named.
+  ///
+  /// Dropping the last key also forgets the key pinned on the first fetch.
+  /// Otherwise "this bench is one I read unsigned" would be a decision the
+  /// user made and the pin quietly overruled.
+  pub fn untrust_bench(&self, name: &str, key: Option<&str>) -> Result<Vec<BenchSummary>> {
+    let mut config = Config::load(&self.layout)?;
+    let entry = config
+      .registries
+      .iter_mut()
+      .find(|r| r.name == name)
+      .ok_or_else(|| Error::InvalidArgument(format!("no bench named {name:?} is configured")))?;
+
+    match key {
+      Some(raw) => {
+        let key = parse_key(entry, raw)?;
+        let before = entry.keys.len();
+        entry.keys.retain(|k| k != &key);
+        if entry.keys.len() == before {
+          return Err(Error::InvalidArgument(format!(
+            "bench {name:?} does not trust {key}"
+          )));
+        }
+      }
+      None => entry.keys.clear(),
+    }
+
+    if entry.keys.is_empty() && validate_bench_name(name).is_ok() {
+      crate::registry::provenance::forget_key(&self.layout.registries_dir(), name);
+    }
+    config.save(&self.layout)?;
+    Ok(Self::summarise(&config))
+  }
+
   fn summarise(config: &Config) -> Vec<BenchSummary> {
     config
       .registries
@@ -1080,6 +1158,7 @@ impl Session {
       .map(|(i, registry)| BenchSummary {
         priority: i + 1,
         name: registry.name.clone(),
+        keys: registry.keys.iter().map(ToString::to_string).collect(),
         kind: match registry.source {
           RegistrySource::Path { .. } => "path",
           RegistrySource::Snapshot { .. } => "snapshot",
@@ -1727,6 +1806,35 @@ pub struct BenchSummary {
   pub name: String,
   pub kind: String,
   pub location: String,
+  /// Keys this bench is trusted to be signed with, as hex.
+  ///
+  /// Empty means "whatever signs it first", which is what every bench
+  /// starts as. It is reported rather than left implicit because the
+  /// difference between a pinned key and no key at all is the difference
+  /// between the two threat models this answers.
+  pub keys: Vec<String>,
+}
+
+/// Reads a key for a bench that could actually use one.
+///
+/// Refusing it where it is written beats accepting a key that would never be
+/// checked: a path bench is a directory the user already controls, and an
+/// Open Audio Stack site publishes no signature to check it against.
+fn parse_key(bench: &RegistryConfig, raw: &str) -> Result<crate::registry::signature::PublicKey> {
+  if !bench.can_be_signed() {
+    return Err(Error::InvalidArgument(format!(
+      "bench {:?} is a {} bench, and nothing published there carries a signature to check",
+      bench.name,
+      match bench.source {
+        RegistrySource::Path { .. } => "local directory",
+        RegistrySource::Oas { .. } => "Open Audio Stack",
+        RegistrySource::Snapshot { .. } => "snapshot",
+      }
+    )));
+  }
+  raw
+    .parse()
+    .map_err(|e| Error::InvalidArgument(format!("{raw:?} is not an Ed25519 public key: {e}")))
 }
 
 /// Rejects a bench name that could not be a directory.

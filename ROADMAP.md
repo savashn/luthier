@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 351 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 386 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -28,9 +28,14 @@ an `engines.toml` naming what plays SFZ, SoundFont 2 and DrumGizmo content from
 either registry. A library is refused before download when none of its engines
 is present. Where both carry an ID, the bench wins.
 
-What it is *not*: published. Neither repository is under version control, so
-neither CI workflow has ever run, and nobody but its author can install it.
-That is what Phase 0 is about.
+A bench's origin is pinned on first fetch, and a bench that publishes an
+Ed25519 signature has it verified between the download and the extractor, with
+the signing key pinned the same way. Nothing is signed yet, because nothing is
+published yet.
+
+What it is *not*: published. The manager repository is now a git repository;
+the registry is not, neither has a remote, so neither CI workflow has ever
+run and nobody but its author can install it. That is what Phase 0 is about.
 
 ---
 
@@ -261,12 +266,12 @@ configuration cannot rot silently in the other repository.
 
 ---
 
-## Phase 2 — Close the trust gaps
+## Phase 2 — Close the trust gaps — done
 
-Neither item below is a live vulnerability. Both are places where the security
-model rests on something narrower than it should.
+Neither item below was a live vulnerability. Both were places where the
+security model rested on something narrower than it should.
 
-### 2.1 Verify the registry snapshot — partly done
+### 2.1 Verify the registry snapshot — done
 
 Package artifacts are checksummed against the manifest. The *registry itself* —
 the document carrying those checksums — is fetched by `download_unverified` in
@@ -289,23 +294,54 @@ change auditable and gives a signature something to be checked against later.
 Enforcing them is 2.2's job, not this one's: without a signature there is
 nothing to say which digest is the right one.
 
-**Done when:** the recorded digest is checked against a signature over the
-snapshot — which is to say, when 2.2 lands. The origin half is in
-`SECURITY.md` under *Registry provenance*.
+**Done when:** ~~the recorded digest is checked against a signature over the
+snapshot — which is to say, when 2.2 lands~~. It is, and it does: the digest
+`provenance.rs` records is exactly what a signature covers, so the two halves
+are statements about the same bytes rather than two separate records. Both are
+in `SECURITY.md`, under *Registry provenance* and *Registry signatures*.
 
-### 2.2 Ed25519 signature verification
+### 2.2 Ed25519 signature verification — done
 
-The manifest schema reserves room for it (§14) and `SECURITY.md` already
-records it as absent. Signing registry snapshots gives an answer to "a forge
-account was compromised" that HTTPS does not.
+A bench may publish a detached signature beside its snapshot, at the
+snapshot's own URL with `.sig` on the end. `registry/signature.rs` verifies it
+between the download and the extractor, so a snapshot nothing vouched for is
+never opened and a refusal always leaves the previous one in place.
 
-Worth doing after 2.1, not instead of it: TOFU is cheap and helps immediately,
-signing needs a key-distribution story that only makes sense once there is a
-published registry to sign.
+Four decisions worth keeping:
 
-**Done when:** the manager verifies a detached signature over the registry
-snapshot, refuses an unsigned or badly-signed one unless explicitly overridden,
-and the key rotation procedure is written down.
+- **What is signed is the digest, not the bytes.** It is the digest
+  `provenance.rs` already records, so verification needs no second pass over a
+  tarball and 2.1's audit trail becomes the thing a key vouches for. A context
+  string is prefixed before signing, so a signature over a snapshot can never
+  be replayed as a signature over anything else this project signs later.
+- **The signature file carries the public key.** That is what makes a first
+  fetch worth anything: there is nothing yet to check against, so the key it
+  names is pinned exactly as the origin is, and every refresh after it has
+  something to match. A key configured with `bench add --key` or `bench trust`
+  covers the first fetch too, which is the fetch an attacker would aim at.
+- **The override covers absence and nothing else.** `refresh
+  --allow-unsigned` accepts a bench that was signed before and is not now, for
+  one run, and never discards the pin — otherwise using it once would turn
+  verification off for good. A signature that fails to verify, or one from a
+  key the bench is not trusted to use, is refused whatever any flag says:
+  those are claims that did not hold up rather than absent ones. So is an
+  unreadable signature file, or publishing garbage would be a way to turn
+  verification off.
+- **A signed bench publishes an uploaded snapshot.** A forge generates a
+  branch tarball on demand and there is nowhere to put a signature beside it.
+  That is a change to how a bench is published, not to how it is read, and it
+  is why nothing here forces a bench to sign.
+
+`luthier-registry keygen` and `sign` are the publishing side. Key
+distribution remains what it always was — publish the public key where users
+already look — and the rotation procedure is in `docs/REGISTRY.md`: trust the
+new key before retiring the old one, because the other order leaves a window
+in which no refresh can succeed and teaches users to reach for
+`--allow-unsigned`.
+
+**Done when:** ~~the manager verifies a detached signature over the registry
+snapshot, refuses an unsigned or badly-signed one unless explicitly
+overridden, and the key rotation procedure is written down~~.
 
 ---
 
@@ -351,8 +387,14 @@ removed.
 ### 3.3 A `GitRegistry` backend
 
 Branch tarballs were the right call for the MVP: no git dependency, and forges
-publish them. A `gix`-based backend would make incremental refresh cheap and
-give a natural place to hang signature verification.
+publish them. A `gix`-based backend would make incremental refresh cheap.
+
+It would need its own answer on signatures rather than inheriting 2.2's. A
+snapshot is one file, so a detached signature can sit beside it; a repository
+is a history, and what gets signed there is a tag or a commit. The policy —
+which key, pinned how, and what a refusal leaves in place — should be the
+same, which is why it lives in `registry/signature.rs` rather than inside the
+snapshot provider.
 
 **Done when:** `RegistrySource::Git` exists and `refresh` updates without
 re-downloading the whole tree.
