@@ -133,14 +133,24 @@ pub fn content_of(root: &Path) -> Result<Option<ContentSource>> {
   }
 }
 
+/// The format an entry's *name* claims, whatever shape it turns out to be.
+///
+/// Kept apart from [`recognise`] because the two answers differ for exactly
+/// the entries that matter: a name that claims a format and a shape that does
+/// not deliver one is a bundle this build will not install, not a folder to
+/// look inside.
+fn claimed_format(path: &Path) -> Option<Format> {
+  match path.extension().and_then(|e| e.to_str())? {
+    "clap" => Some(Format::Clap),
+    "vst3" => Some(Format::Vst3),
+    "lv2" => Some(Format::Lv2),
+    _ => None,
+  }
+}
+
 /// The format an entry is, judged by its extension *and* its shape on disk.
 fn recognise(path: &Path, is_dir: bool) -> Option<Format> {
-  let format = match path.extension().and_then(|e| e.to_str())? {
-    "clap" => Format::Clap,
-    "vst3" => Format::Vst3,
-    "lv2" => Format::Lv2,
-    _ => return None,
-  };
+  let format = claimed_format(path)?;
   // A CLAP is a file and a VST3 or LV2 is a directory. An entry with the
   // right name in the wrong shape is not that format.
   let expected = format.entry_kind()?;
@@ -194,6 +204,21 @@ fn walk(base: &Path, dir: &Path, out: &mut Derived) -> Result<()> {
       out.rules.push(rule);
       // Recognised bundles install whole; their contents are not
       // separate packages.
+      continue;
+    }
+
+    // A name that claims a format in the wrong shape is a bundle this build
+    // will not install — DPF ships `ProM.clap` as a directory — and it is
+    // not a folder to look inside either. Descending found the binary within
+    // and produced a rule for it, which installed a CLAP stripped of the
+    // `resources/presets/*.milk` sitting beside it in the bundle. Listed, so
+    // a contributor sees it and can decide; never installed in pieces.
+    if claimed_format(&path).is_some() {
+      out.listing.push(Listed {
+        path: relative.to_owned(),
+        is_dir,
+        format: None,
+      });
       continue;
     }
 
@@ -381,17 +406,31 @@ mod tests {
 
   #[test]
   fn a_clap_shipped_as_a_directory_is_not_a_clap() {
+    // DPF-Plugins ships `ProM.clap` as a directory. Installing it would put
+    // something in `~/.clap` no host is guaranteed to load, so the extension
+    // alone must not decide — and neither is it a folder to look inside.
+    // Descending found the binary within and produced a rule for it, which
+    // installed a CLAP stripped of the presets sitting beside it in the
+    // bundle. A sibling plugin in the same archive is unaffected.
     let dir = tempfile::tempdir().unwrap();
-    // DPF-Plugins ships `ProM.clap` as a directory. Installing it would
-    // put something in `~/.clap` no host is guaranteed to load, so the
-    // extension alone must not decide.
-    fs::create_dir_all(dir.path().join("ProM.clap")).unwrap();
+    fs::create_dir_all(dir.path().join("ProM.clap/resources")).unwrap();
     fs::write(dir.path().join("ProM.clap/ProM.clap"), b"").unwrap();
+    fs::write(dir.path().join("ProM.clap/resources/soma.milk"), b"").unwrap();
+    fs::write(dir.path().join("Kars.clap"), b"").unwrap();
 
-    let derived = rules(dir.path());
+    assert_eq!(
+      rules(dir.path()),
+      vec![("clap".into(), "Kars.clap".into(), "file".into())]
+    );
 
-    assert_eq!(derived.len(), 1);
-    assert_eq!(derived[0].1, "ProM.clap/ProM.clap");
+    // Listed, so a contributor writing rules by hand sees it and decides.
+    let listed: Vec<String> = from_tree(dir.path())
+      .unwrap()
+      .listing
+      .into_iter()
+      .map(|entry| entry.path)
+      .collect();
+    assert_eq!(listed, vec!["Kars.clap", "ProM.clap"]);
   }
 
   #[test]

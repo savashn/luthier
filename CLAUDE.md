@@ -117,10 +117,12 @@ the crate map keeps that out of `luthier-manifest`.
 - **Pin `sevenz-rust2` to 0.20** — 0.21+ raises its MSRV to 1.93. The library
   dependency takes no default features; the dev-dependency adds `compress`
   because only the test fixtures write archives.
-- **DPF-Plugins ships `ProM.clap` as a directory**, not a shared object, so it
-  is deliberately absent from that manifest's CLAP rules. Relaxing
-  `ClapInstaller` to accept it would install something no host is guaranteed
-  to load.
+- **DPF-Plugins ships `ProM.clap` as a directory**, not a shared object, so no
+  rule is derived for it and `ClapInstaller` would refuse one: relaxing that
+  would install something no host is guaranteed to load. Derivation does not
+  look *inside* it either — the binary in there sits beside the
+  `resources/presets/*.milk` it loads, and installing the two apart is worse
+  than installing neither. This is what retired the `dpf-plugins` shadow.
 - **MSRV is 1.89** because `File::try_lock` is used instead of an `fs4` dep.
 - **A download ceiling is per artifact, not global.** `Downloader::ceiling`
   reads the manifest's `size`; the fixed 4 GiB default applies only when a
