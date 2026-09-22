@@ -481,6 +481,17 @@ Import currently fails, which is right for reproducibility and unhelpful when a
 project simply moved. A `--skip-missing` flag is the obvious answer; whether it
 should also record what it skipped is not settled.
 
+**Where does a derived library install?** Rules read out of an archive cover
+plugins, because a plugin announces itself with an extension and a shape and a
+folder of samples announces nothing. So the ~25 sample libraries the Open Audio
+Stack registry carries are listed, refused before download, and told why, while
+the four in the bench install from hand-written rules. Deriving one means
+choosing the directory it lands in, and the archives make that concrete: a
+GitHub source tarball unpacks to `basic-harmonica-4b8d698a…`, a name that
+changes every release. The package ID is the obvious stable answer and is data
+rather than invention, but it is still the manager naming a destination, which
+is the line §14 draws. The same question blocks reading OAS's `presets/` index.
+
 **Should libraries be shared between environments?** They are per-environment
 today, which duplicates multi-gigabyte content. Hardlinking from a shared
 content-addressed store needs no format change and is the obvious optimisation,

@@ -480,7 +480,7 @@ impl Session {
               && entry.manifest.releases.iter().any(|release| {
                 release
                   .artifacts_for(&self.target)
-                  .any(|artifact| artifact.is_installable())
+                  .any(install::installable)
               }),
             provisioning_hint: entry.manifest.provisioning_hint.clone(),
           },

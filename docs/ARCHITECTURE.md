@@ -144,6 +144,13 @@ archive by `install::derive`, the same code behind `luthier-registry inspect`.
 rules someone reviewed. See [SECURITY.md](../SECURITY.md) for why that
 distinction is the one that matters.
 
+Derivation reads plugins and only plugins, so an artifact whose rules must be
+derived can promise no more than `install::derive::DERIVABLE_FORMATS` covers.
+`install::installable` is what checks that *before* a download: a release
+declaring nothing on the list — a VST2 build, a standalone program, a folder of
+samples — is refused by the resolver rather than fetched in full and turned
+down by the installer afterwards.
+
 **`ArtifactSource`** — expressed as the `type` field on a manifest's `source`.
 `http` covers GitHub and GitLab release assets, which are ordinary URLs; `file`
 serves the test suite. A future `github-release` variant naming owner, repo, tag

@@ -46,6 +46,13 @@ The first release: everything below is new.
   discarding the pin, and a signature that fails to verify is refused
   whatever any flag says. `luthier-registry keygen` and `sign` are the
   publishing side.
+- **Refusal before the download.** A release is checked against what this
+  build can actually install while the plan is being made: an artifact whose
+  rules must be derived from its archive is refused unless it declares a
+  format derivation can read. The Open Audio Stack registry carries
+  standalone programs, VST2 builds and sample content, and each of those used
+  to be downloaded in full — up to gigabytes — before the installer turned it
+  down with a message about the archive.
 - **A hardened extractor.** One extraction policy for every container, with a
   38-case malicious-archive corpus that asserts both the refusal and that
   nothing was written outside the extraction directory.

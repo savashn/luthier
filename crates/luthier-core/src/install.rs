@@ -19,9 +19,41 @@ use crate::error::{Error, InstallError, Result};
 use crate::fsutil;
 use crate::layout::Layout;
 use crate::state::{BundleFile, InstalledEntry, State};
-use luthier_manifest::{EntryKind, Format, InstallRule, PackageId};
+use luthier_manifest::{Artifact, EntryKind, Format, InstallRule, PackageId};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Whether this build could install `artifact` at all, judged before fetching
+/// a byte of it.
+///
+/// An artifact that declares its rules is installable by definition: the
+/// validator has already refused any rule naming a format with no installer.
+/// One whose rules must be derived is a different matter — derivation reads
+/// only what [`derive::DERIVABLE_FORMATS`] lists, so a release that holds
+/// nothing on that list has nothing to install, and the only way to discover
+/// that after the fact is to download it first.
+///
+/// That is what this exists to avoid. The Open Audio Stack registry carries
+/// standalone programs and VST2 builds alongside plugins; before this, both
+/// were fetched in full — up to gigabytes for a sample library — and then
+/// refused by the installer with a message about the archive. The artifact
+/// said what it held all along.
+///
+/// It takes upstream's claim at its word in the refusing direction, which is
+/// a real cost: a release whose metadata under-reports what it ships is now
+/// unreachable rather than merely wasteful. The alternative is to download
+/// everything on the chance that a claim is wrong, and a claim that is wrong
+/// is a thing to fix where it is published.
+pub fn installable(artifact: &Artifact) -> bool {
+  if !artifact.install.is_empty() {
+    return true;
+  }
+  artifact.derive_install
+    && artifact
+      .provides
+      .iter()
+      .any(|format| derive::DERIVABLE_FORMATS.contains(format))
+}
 
 /// One thing to install, with its source and destination resolved.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -441,6 +473,66 @@ fn transaction_id() -> String {
 
 #[cfg(test)]
 mod tests {
+  /// An artifact as a source that carries no rules of its own produces one.
+  fn derived(provides: &[Format]) -> luthier_manifest::Artifact {
+    let text = format!(
+      "schema = 1\nid = \"x\"\nname = \"x\"\nkind = \"plugin\"\ncategory = \"effect\"\n\
+       license = {{ kind = \"open-source\", spdx = \"MIT\" }}\n\n[[releases]]\n\
+       version = \"1.0.0\"\n\n[[releases.artifacts]]\n\
+       target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+       source = {{ type = \"http\", url = \"https://e.invalid/x.zip\" }}\narchive = \"zip\"\n\
+       checksum = {{ sha256 = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\" }}\n\
+       provides = [{}]\nderive_install = true\n",
+      provides
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+    );
+    luthier_manifest::from_toml(&text, "x", luthier_manifest::ParseMode::Strict)
+      .unwrap()
+      .manifest
+      .releases
+      .remove(0)
+      .artifacts
+      .remove(0)
+  }
+
+  #[test]
+  fn derived_rules_can_only_promise_what_a_tree_can_be_read_for() {
+    // A claim this build can act on.
+    assert!(installable(&derived(&[Format::Clap])));
+    assert!(installable(&derived(&[Format::Vst3, Format::Lv2])));
+
+    // A VST2 build or a standalone program: the source says the archive
+    // holds something, and names nothing this build installs.
+    assert!(!installable(&derived(&[])));
+
+    // Sample content. The installer can place a library; no derivation can
+    // say which directory in a tree is one.
+    assert!(!installable(&derived(&[Format::Library])));
+    // Mixed is enough, because the plugin half is derivable.
+    assert!(installable(&derived(&[Format::Library, Format::Clap])));
+  }
+
+  #[test]
+  fn declared_rules_answer_for_themselves() {
+    // What a manifest declares has already been through the validator,
+    // which refuses a rule naming a format with no installer. `provides` is
+    // upstream's summary and does not get a veto over it.
+    let mut artifact = derived(&[]);
+    artifact.derive_install = false;
+    artifact.install = vec![InstallRule {
+      format: Format::Library,
+      source: luthier_manifest::ArchivePath::new("Kit").unwrap(),
+      kind: EntryKind::Bundle,
+      rename: None,
+      allow: Vec::new(),
+      extra: Default::default(),
+    }];
+    assert!(installable(&artifact));
+  }
+
   use super::*;
   use crate::install::formats::{elf_shared_object, lv2_bundle, vst3_bundle};
   use crate::state::State;

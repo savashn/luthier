@@ -358,6 +358,26 @@ fn select_version(
     }));
   }
 
+  // "Nothing for this target" and "something for this target that this build
+  // does not install" are different answers, and only the second one tells a
+  // user why. The newest release that publishes anything at all is the one
+  // worth naming: it is what they would have got.
+  if let Some(artifact) = candidates
+    .iter()
+    .filter(|release| {
+      constraints
+        .iter()
+        .all(|(_, req)| req.matches(&release.version))
+    })
+    .find_map(|release| release.artifacts_for(target).next())
+  {
+    return Err(Error::Resolve(ResolveError::NothingInstallable {
+      id: manifest.id.clone(),
+      target: target.clone(),
+      declared: artifact.provides.clone(),
+    }));
+  }
+
   Err(Error::Resolve(ResolveError::NoReleaseForTarget {
     id: manifest.id.clone(),
     target: target.clone(),
@@ -373,7 +393,7 @@ fn select_version(
 fn select_artifact<'a>(release: &'a Release, target: &Target) -> Option<&'a Artifact> {
   release
     .artifacts_for(target)
-    .find(|artifact| artifact.is_installable())
+    .find(|artifact| crate::install::installable(artifact))
 }
 
 /// Orders packages so dependencies come first, reporting any cycle.
@@ -506,6 +526,45 @@ mod tests {
       );
       self
     }
+
+    /// Adds a package whose rules must be derived from its archive, as
+    /// everything from a source that carries none arrives.
+    fn add_derived(mut self, id: &str, provides: &[&str]) -> Self {
+      let quoted: Vec<String> = provides.iter().map(|p| format!("\"{p}\"")).collect();
+      let text = [
+        "schema = 1".to_string(),
+        format!("id = \"{id}\""),
+        format!("name = \"{id}\""),
+        "kind = \"plugin\"".to_string(),
+        "category = \"instrument\"".to_string(),
+        "license = { kind = \"open-source\", spdx = \"MIT\" }".to_string(),
+        "\n[[releases]]".to_string(),
+        "version = \"1.0.0\"".to_string(),
+        "\n[[releases.artifacts]]".to_string(),
+        "target = { os = \"linux\", arch = \"x86_64\" }".to_string(),
+        format!("source = {{ type = \"http\", url = \"https://e.invalid/{id}.zip\" }}"),
+        "archive = \"zip\"".to_string(),
+        "checksum = { sha256 = \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\" }".to_string(),
+        format!("provides = [{}]", quoted.join(", ")),
+        "derive_install = true".to_string(),
+      ]
+      .join("\n");
+      let manifest = luthier_manifest::from_toml(&text, id, ParseMode::Strict)
+        .unwrap_or_else(|e| panic!("fixture {id} should parse: {e}"))
+        .manifest;
+      self.packages.insert(
+        manifest.id.clone(),
+        IndexEntry {
+          manifest,
+          path: PathBuf::from(format!("{id}.toml")),
+          digest: Sha256Hash::from_bytes([0; 32]),
+          unknown_fields: vec![],
+          registry: "test".into(),
+          notes: Vec::new(),
+        },
+      );
+      self
+    }
   }
 
   /// The artifact stanza every fixture release shares.
@@ -519,6 +578,49 @@ mod tests {
             "provides = [\"clap\"]".to_string(),
             format!("install = [{{ format = \"clap\", source = \"{id}.clap\", kind = \"file\" }}]"),
         ]
+  }
+
+  /// Resolving one package on its own, for the error rather than the order.
+  fn resolve_one(fixture: &Fixture, id_: &str) -> Result<Vec<String>> {
+    resolve_ids(fixture, &[id_])
+  }
+
+  #[test]
+  fn a_release_with_nothing_derivable_is_refused_before_it_is_fetched() {
+    // The case this exists for: the Open Audio Stack registry says a
+    // release's Linux archive holds an `elf` or a `so`, which is a VST2
+    // build or a standalone program. Neither yields a rule, so the install
+    // used to download the whole thing and then refuse it.
+    let fixture = Fixture::new().add_derived("standalone", &[]);
+    let err = resolve_one(&fixture, "standalone").unwrap_err();
+
+    assert!(err.to_string().contains("nothing"), "{err}");
+    assert!(err.to_string().contains("standalone"), "{err}");
+    // And it says why, rather than leaving the user to guess at a flag.
+    let hint = err.hint().unwrap_or_default();
+    assert!(hint.contains("VST2"), "{hint}");
+  }
+
+  #[test]
+  fn sample_content_is_refused_the_same_way_and_says_so() {
+    // A library declares `library` and nothing else. Rules for content
+    // cannot be read out of a tree, so this is the same refusal with a
+    // different reason — and the alternative is fetching gigabytes of
+    // samples to find that out.
+    let fixture = Fixture::new().add_derived("kit", &["library"]);
+    let err = resolve_one(&fixture, "kit").unwrap_err();
+
+    let hint = err.hint().unwrap_or_default();
+    assert!(hint.contains("sample content"), "{hint}");
+  }
+
+  #[test]
+  fn a_release_that_declares_a_derivable_format_resolves() {
+    // The claim is upstream's and unverified, which is the point: it is
+    // enough to plan on, and the derivation checks it against the real
+    // archive once the bytes are there.
+    let fixture = Fixture::new().add_derived("plug", &["clap"]);
+    assert_eq!(resolve_one(&fixture, "plug").unwrap(), vec!["plug"]);
   }
 
   fn id(s: &str) -> PackageId {

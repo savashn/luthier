@@ -497,6 +497,18 @@ pub enum ResolveError {
     target: Target,
   },
 
+  /// The release publishes something for this target, and none of it is
+  /// anything this build installs. Raised before the download, which is the
+  /// point: the alternative is fetching a standalone program or a VST2 build
+  /// in full and refusing it afterwards.
+  #[error("{id} publishes nothing for {target} that this build can install")]
+  NothingInstallable {
+    id: PackageId,
+    target: Target,
+    /// What the artifact says it holds. Empty means it says nothing.
+    declared: Vec<Format>,
+  },
+
   #[error("dependency cycle: {}", .0.iter().map(|p| p.as_str()).collect::<Vec<_>>().join(" -> "))]
   Cycle(Vec<PackageId>),
 
@@ -578,6 +590,31 @@ impl ResolveError {
             .collect::<Vec<_>>()
             .join(", ")
         )
+      }),
+      ResolveError::NothingInstallable { declared, .. } => Some(match declared.as_slice() {
+        [] => "Its metadata does not say what the archive holds, so the install rules \
+               would have to be read out of it — and a release that says nothing is \
+               usually a standalone program or a VST2 build. Neither is something this \
+               manager installs; your distribution's package manager is the answer for \
+               the first, and there is no second answer for VST2."
+          .into(),
+        [Format::Library] => "It is sample content, and rules for content cannot be read \
+               out of an archive: nothing in a tree says which directory is the library. \
+               A bench manifest that declares the rules by hand installs it today."
+          .into(),
+        other => format!(
+          "It declares {}, and rules read out of an archive can only cover {}.",
+          other
+            .iter()
+            .map(Format::to_string)
+            .collect::<Vec<_>>()
+            .join(", "),
+          crate::install::derive::DERIVABLE_FORMATS
+            .iter()
+            .map(Format::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+        ),
       }),
       ResolveError::Cycle(_) => {
         Some("This is a registry bug; please report the packages involved.".into())

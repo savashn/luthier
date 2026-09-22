@@ -22,6 +22,20 @@ use crate::error::{Error, Result};
 use luthier_manifest::{ArchivePath, EntryKind, Format, InstallRule};
 use std::path::Path;
 
+/// The formats a rule can be *derived* for.
+///
+/// Narrower than `validate::INSTALLABLE_FORMATS`, and deliberately so. The
+/// installer can place a `library`, but nothing in a tree says which directory
+/// *is* the library: a plugin announces itself with an extension and a shape,
+/// and a folder of samples announces nothing. So a source that carries no
+/// rules of its own can offer plugins and not content, and this is the list
+/// that says which is which.
+///
+/// Read before downloading, by [`crate::install::installable`]. A release that
+/// declares nothing on it is refused at that point rather than after its bytes
+/// are on disk.
+pub const DERIVABLE_FORMATS: &[Format] = &[Format::Clap, Format::Vst3, Format::Lv2];
+
 /// One entry seen while walking an extracted archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Listed {
@@ -167,6 +181,26 @@ mod tests {
         )
       })
       .collect()
+  }
+
+  #[test]
+  fn the_derivable_list_and_the_recogniser_agree() {
+    // The list is what `installable` reads before a download and the
+    // recogniser is what runs after one. If they drift, a release is
+    // either refused for something that would have worked or downloaded
+    // for something that never could.
+    for format in DERIVABLE_FORMATS {
+      let is_dir = format.entry_kind() == Some(EntryKind::Bundle);
+      let path = std::path::PathBuf::from(format!("Thing.{format}"));
+      assert_eq!(
+        recognise(&path, is_dir).as_ref(),
+        Some(format),
+        "{format} is listed as derivable and is not recognised"
+      );
+    }
+    // The one installable format that cannot be derived, which is the
+    // whole reason this list exists.
+    assert!(!DERIVABLE_FORMATS.contains(&Format::Library));
   }
 
   #[test]
