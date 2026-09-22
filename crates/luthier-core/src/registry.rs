@@ -52,11 +52,11 @@ pub struct RegistryIndex {
   /// The registry this index came from, or every one it was merged from.
   pub name: String,
   pub packages: BTreeMap<PackageId, IndexEntry>,
-  /// Which packages play which content, from every registry's
-  /// `engines.toml`. An entry may name a package from any registry, which is
-  /// the point: the bench knows DrumCraker plays DrumGizmo kits, and the
-  /// Open Audio Stack registry, which carries DrumCraker, has no field to say
-  /// so.
+  /// Which packages play which content: the built-in list every build
+  /// carries, plus every registry's `engines.toml`. An entry may name a
+  /// package from any registry, which is the point: the bench knows
+  /// DrumCraker plays DrumGizmo kits, and the Open Audio Stack registry,
+  /// which carries DrumCraker, has no field to say so.
   pub engines: Vec<luthier_manifest::EngineEntry>,
   /// Registries that could not be read. Kept rather than raised so that one
   /// bench a user has not fetched yet does not cost them every command, and
@@ -114,6 +114,13 @@ impl RegistryIndex {
           .unwrap_or_else(|| Error::Registry(RegistryError::NoSuchRegistry("default".into()))),
       );
     }
+
+    // Last, so a registry entry for the same engine wins the dedup in
+    // `engines_for`: a bench refines what this list already names — a
+    // detect rule for a filename that changes, say — rather than being
+    // shadowed by it. What a bench cannot do is *remove* one, which is why
+    // the built-in list is narrow.
+    engines.extend(luthier_manifest::builtin_engines());
 
     Ok(RegistryIndex {
       name: names.join(", "),
@@ -455,21 +462,78 @@ mod tests {
       .iter()
       .map(|e| e.package.as_str())
       .collect();
-    assert_eq!(ids, vec!["drumgizmo", "drumcraker"]);
-    assert!(merged.engines_for(&Content::Sf2).is_empty());
+    // The bench's entries come first; the built-in list follows, and here
+    // it names the same two.
+    assert_eq!(&ids[..2], &["drumgizmo", "drumcraker"]);
   }
 
   #[test]
   fn an_engine_two_registries_both_name_is_listed_once() {
     let mut first = index_of("bench", &[]);
-    first.engines = vec![engine("sfizz", &["sfz"])];
+    first.engines = vec![engine("only-here", &["sfz"])];
     let mut second = index_of("other", &[]);
-    second.engines = vec![engine("sfizz", &["sfz", "sf2"])];
+    second.engines = vec![engine("only-here", &["sfz", "sf2"])];
 
     let merged = RegistryIndex::merge([Ok(first), Ok(second)]).unwrap();
-    assert_eq!(merged.engines_for(&Content::Sfz).len(), 1);
+    let named = |content| {
+      merged
+        .engines_for(content)
+        .iter()
+        .filter(|e| e.package.as_str() == "only-here")
+        .count()
+    };
+    assert_eq!(named(&Content::Sfz), 1);
     // A later registry can still add content an earlier one did not list.
-    assert_eq!(merged.engines_for(&Content::Sf2).len(), 1);
+    assert_eq!(named(&Content::Sf2), 1);
+  }
+
+  #[test]
+  fn the_built_in_engines_are_known_without_any_registry_saying_so() {
+    // The reason this list is not a bench's alone: a user who configures
+    // only the Open Audio Stack registry — which has no field for what
+    // plays what — would otherwise be told nothing can play a library
+    // while sfizz sits installed on their machine.
+    let merged = RegistryIndex::merge([Ok(index_of("oas", &["dexed"]))]).unwrap();
+
+    for (content, expected) in [
+      (Content::Sfz, "sfizz"),
+      (Content::Sf2, "fluida-lv2"),
+      (Content::Drumgizmo, "drumgizmo"),
+    ] {
+      let ids: Vec<&str> = merged
+        .engines_for(&content)
+        .iter()
+        .map(|e| e.package.as_str())
+        .collect();
+      assert!(ids.contains(&expected), "{content:?}: {ids:?}");
+    }
+  }
+
+  #[test]
+  fn a_registry_refines_a_built_in_engine_rather_than_colliding_with_it() {
+    // sfzq stamps its release date into its filename, so the built-in
+    // entry carries no detect rule and a bench supplies one. The bench's
+    // entry has to win, or the rule it added would never be read.
+    let mut bench = index_of("bench", &[]);
+    bench.engines = vec![luthier_manifest::EngineEntry {
+      package: PackageId::new("sfzq").unwrap(),
+      plays: vec![Content::Sfz],
+      detect: vec![luthier_manifest::DetectRule {
+        format: luthier_manifest::Format::Clap,
+        name: luthier_manifest::FileName::new("sfzq.2024.12.3.clap").unwrap(),
+        extra: Default::default(),
+      }],
+      extra: Default::default(),
+    }];
+
+    let merged = RegistryIndex::merge([Ok(bench)]).unwrap();
+    let sfzq: Vec<_> = merged
+      .engines_for(&Content::Sfz)
+      .into_iter()
+      .filter(|e| e.package.as_str() == "sfzq")
+      .collect();
+    assert_eq!(sfzq.len(), 1);
+    assert_eq!(sfzq[0].detect.len(), 1);
   }
 
   #[test]

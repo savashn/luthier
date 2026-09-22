@@ -56,7 +56,7 @@ policy. Everything a registry's CI needs and nothing it does not.
 | `parse` | Reading TOML, strictly for CI and leniently for clients |
 | `validate` | Every semantic rule, plus `INSTALLABLE_FORMATS` and `SUPPORTED_ARCHIVES` |
 | `id`, `path`, `hash`, `license` | Constrained newtypes: a `PackageId` is one path segment, an `ArchivePath` is checked textually, a `Sha256Hash` is 64 hex characters, a licence is a parsed SPDX expression |
-| `engines` | `engines.toml`: which packages play which content |
+| `engines` | `engines.toml` and the built-in list: which packages play which content |
 | `discover` | `manifest_files`, the walk that finds manifests in a tree |
 | `macros` | `string_enum!`, which gives every string enum its `Other(String)` arm |
 
@@ -288,7 +288,8 @@ package manager: it only looks for files, and never invokes anything.
 
 A sample library is the one package that installs correctly and still does
 nothing. Its manifest says what it holds (`content = ["drumgizmo"]`, read from
-`contains` for the Open Audio Stack registry); a bench's `engines.toml` says
+`contains` for the Open Audio Stack registry); the built-in engine list and
+any bench's `engines.toml` say
 which packages play that. After resolution and before any download,
 `engine::unplayable` looks for one engine per content value — detected on disk,
 recorded in state, or in the plan being executed — and reports the ones it
@@ -299,9 +300,19 @@ produces an empty list for every library it carries.
 
 It is not modelled as a dependency because a dependency names one package and
 engines are interchangeable: a DrumGizmo kit plays in DrumGizmo or DrumCraker,
-and depending on either would refuse the other's users. Nor is the engine list
-in code: engines appear in registries far more often than the manager is
-released.
+and depending on either would refuse the other's users.
+
+The list starts in code — `luthier_manifest::builtin_engines` — and any bench
+adds to it. That split took two goes to get right. Keeping it out of code
+entirely was the first answer, on the grounds that engines appear faster than
+this manager is released, and it put general knowledge in an optional place: a
+user who configures only the Open Audio Stack registry, which has no field for
+what plays what, was told nothing could play a library while sfizz sat
+installed on their machine. Built-in entries carry detect rules where the
+installed name is stable, which is what makes that user's copy count; a bench
+still adds engines the day they appear, and registry entries come first so a
+bench refines rather than collides. What a bench cannot do is remove one, which
+is why the built-in list is narrow.
 
 ### Determinism
 

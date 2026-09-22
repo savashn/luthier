@@ -245,8 +245,11 @@ fn a_rule_may_accept_a_warning_so_strict_stays_usable() {
 }
 
 #[test]
-fn content_with_no_engine_is_an_error_even_though_each_file_is_valid() {
-  // The cross-check the whole bench needs and no single manifest can do.
+fn content_every_build_knows_needs_no_engines_file() {
+  // The cross-check the whole bench needs and no single manifest can do —
+  // and which a bench now rarely has to answer, because every build carries
+  // engines for the content types it knows. A bench adds to that list; it no
+  // longer has to restate it.
   let bench = Bench::new();
   let library = good_manifest("kit")
     .replace(
@@ -261,21 +264,19 @@ fn content_with_no_engine_is_an_error_even_though_each_file_is_valid() {
     );
   bench.write("libraries/kit.toml", &library);
 
-  let without = bench.validate(&[]);
-  assert!(!without.status.success(), "{}", text_of(&without));
-  assert!(
-    text_of(&without).contains("has no engine in engines.toml"),
-    "{}",
-    text_of(&without)
-  );
+  // DrumGizmo kits are played by engines this build already knows, so the
+  // bench needs no `engines.toml` to ship one.
+  let without = bench.validate(&["--strict"]);
+  assert!(without.status.success(), "{}", text_of(&without));
 
-  // Naming an engine that plays it settles the whole question.
+  // Naming another engine still works, and is how a bench covers one that
+  // appeared after this build was released.
   bench.good("plugins/drumcraker.toml", "drumcraker");
   bench.write(
     "engines.toml",
     "schema = 1\n\n[[engine]]\npackage = \"drumcraker\"\nplays = [\"drumgizmo\"]\n",
   );
-  let with = bench.validate(&[]);
+  let with = bench.validate(&["--strict"]);
   assert!(with.status.success(), "{}", text_of(&with));
 }
 

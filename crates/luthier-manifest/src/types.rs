@@ -28,9 +28,11 @@ string_enum! {
     ///
     /// The values are the Open Audio Stack registry's `contains` vocabulary
     /// for the same things, so a package read from there needs no
-    /// translation. Which engines play each one is registry data, listed in a
-    /// bench's `engines.toml` rather than here: engines come and go far more
-    /// often than a binary is released.
+    /// translation. Which engines play each one is listed in
+    /// [`builtin_engines`](crate::builtin_engines) and in any bench's
+    /// `engines.toml` rather than on this enum: engines come and go far more
+    /// often than a binary is released, which is why a bench can add one
+    /// without waiting for a release.
     pub enum Content {
         /// An SFZ instrument: `.sfz` text files and the samples they map.
         Sfz => "sfz",

@@ -223,11 +223,17 @@ the crate map keeps that out of `luthier-manifest`.
   security corpus**.
 - **A package** → see `docs/REGISTRY.md`. Never hand-write a checksum or install
   rule; derive both with `luthier-registry hash-url` and `luthier-registry inspect`.
-- **An engine** → one `[[engine]]` entry in the bench's `engines.toml`, nothing
-  in code. Add `detect` there only when the engine's own registry carries no
-  rules (anything from OAS). **New content** (a value like `sfz`) → add it to
-  `Content` in `types.rs`, then regenerate the schema; the OAS translator picks
-  it up from `contains` without further change.
+- **An engine** → `builtin_engines()` in `luthier-manifest/src/engines.rs` when
+  it is the reference implementation for its format or otherwise worth every
+  build knowing, with a `detect` rule only if the installed name is stable;
+  otherwise one `[[engine]]` entry in a bench's `engines.toml`, which merges on
+  top. Nothing else in code. A `detect` rule is what finds a copy this manager
+  did not install, so it is needed wherever the engine's own manifest carries
+  none — everything from OAS. **New content** (a value like `sfz`) → add it to
+  `Content` in `types.rs`, give it an engine in `builtin_engines()` (a test
+  fails otherwise) and a sentence in `Content::played_by`, then regenerate the
+  schema; the OAS translator picks it up from `contains` without further
+  change.
 - **A category** → add the variant to `Category` in `luthier-manifest/src/types.rs`,
   then regenerate the schema. Validation refuses unknown values, parsing keeps
   them (§7), so an older client reads a newer registry without installing from
@@ -264,8 +270,9 @@ as copies; `external` detection searches the system plugin directories as well
 as the managed roots; environments (`luthier env`, `--env`, `LUTHIER_ENV`)
 redirect the per-installation parts of a `Layout`.
 
-A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`); `engines.toml` at a
-bench's root maps content to engine package IDs from any registry. Installing
+A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
+`builtin_engines()` maps content to engine package IDs, and an `engines.toml`
+at a bench's root adds to it — from any registry. Installing
 content with no engine present, installed, or in the same plan is refused
 before download (`engine::unplayable`, `ResolveError::NoEngine`). This replaced
 `requires.toml`, which pinned every SFZ library to sfizz alone. Deliberately

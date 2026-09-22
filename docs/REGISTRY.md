@@ -12,7 +12,7 @@ luthier-pkgs/
 ├── presets/        preset packs
 ├── packs/          curated dependency sets
 ├── schemas/        package-v1.json
-├── engines.toml    which packages play which content
+├── engines.toml    engines beyond the ones every build knows (optional)
 └── README.md
 ```
 
@@ -138,7 +138,7 @@ than being ignored:
 - `external` packages declare detect rules and no artifacts; packs declare
   dependencies and no artifacts
 - `content` appears only on a `library`, uses known values, and every value is
-  played by some engine in `engines.toml`
+  played by something — a built-in engine, or an entry in `engines.toml`
 - `engines.toml` names each engine once, with known content, and detect rules
   only for formats that have a plugin directory
 
@@ -269,7 +269,8 @@ soundfont file — because both are what upstreams actually ship.
 
 A library that needs an engine declares what it holds with `content = ["sfz"]`
 (or `sf2`, `drumgizmo`), never which engine plays it. Before downloading, the
-manager looks for one of the engines `engines.toml` lists for that content —
+manager looks for one of the engines it knows for that content — the built-in
+list, plus anything a bench's `engines.toml` adds —
 detected on the machine, installed, or arriving in the same command — and says
 so in the plan when it finds none. It installs either way: a format implies
 its player without any registry saying so, and refusing because *this*

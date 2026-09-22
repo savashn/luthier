@@ -168,7 +168,7 @@ distribution-provided engine as satisfying a dependency, unless
 
 A sample library is refused before it is downloaded when nothing on the system
 can play it. The library says what it holds (`content = ["sfz"]`), the bench's
-`engines.toml` says what plays that, and any one engine — detected, already
+A built-in list and any bench's `engines.toml` say what plays that, and any one engine — detected, already
 installed, or named in the same command — is enough:
 
 ```console

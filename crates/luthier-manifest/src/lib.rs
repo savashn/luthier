@@ -25,7 +25,7 @@ pub mod types;
 pub mod validate;
 
 pub use discover::{DiscoveryError, manifest_files};
-pub use engines::{ENGINES_FILE, EngineEntry, EnginesFile};
+pub use engines::{ENGINES_FILE, EngineEntry, EnginesFile, builtin_content, builtin_engines};
 pub use hash::{Checksum, HashError, Sha256Hash};
 pub use id::{IdError, PackageId};
 pub use license::{License, LicenseError, LicenseKind};

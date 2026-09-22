@@ -391,7 +391,7 @@
       "description": "The single primary classification. Required: every package is filed\nunder exactly one, from a closed vocabulary (§5)."
     },
     "content": {
-      "description": "What the package holds that only an engine can play, e.g. `sfz`.\n\nOnly meaningful for [`PackageKind::Library`]. Installing is refused\nunless something on the system plays every value listed; which\npackages count as engines for each is the bench's `engines.toml`, not\nthis manifest. Named after the format rather than an engine because a\nkit that DrumCraker plays as well as DrumGizmo needs neither by name.",
+      "description": "What the package holds that only an engine can play, e.g. `sfz`.\n\nOnly meaningful for [`PackageKind::Library`]. Content nothing on the\nsystem can play is reported before the download rather than refused;\nwhich packages count as engines for each is the built-in engine list\nplus any bench's `engines.toml`, not this manifest. Named after the\nformat rather than an engine because a kit that DrumCraker plays as\nwell as DrumGizmo needs neither by name.",
       "items": {
         "$ref": "#/$defs/Content"
       },

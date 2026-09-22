@@ -17,7 +17,8 @@
 //!
 //! What a package holds comes from its manifest (`content`, or `contains` in
 //! the Open Audio Stack registry), and that much needs no curation. What
-//! *plays* it comes from `engines.toml`, where any one engine is enough —
+//! *plays* it comes from the built-in engine list and any bench's
+//! `engines.toml`, where any one engine is enough —
 //! which is exactly what a dependency could not say, since a kit that
 //! depended on DrumGizmo would refuse a DrumCraker user. Without it the note
 //! still names what the format needs (`Content::played_by`); with it, the

@@ -29,9 +29,10 @@ The first release: everything below is new.
   derived from the format, never named by a manifest.
 - **Two registries read together.** The curated bench and the Open Audio
   Stack registry, merged in configured order so a local manifest can correct
-  a derived one. `engines.toml` says which packages play `sfz`, `sf2` and
-  `drumgizmo` content from either registry, and a library whose engine is
-  nowhere to be found is refused before anything is downloaded.
+  a derived one. Which packages play `sfz`, `sf2` and `drumgizmo` content is
+  a list every build carries, which any bench's `engines.toml` adds to, so a
+  library read from a registry with no field for that still knows what it
+  needs — and an engine installed by a distribution still counts.
 - **Environments.** `--env` and `LUTHIER_ENV` redirect the per-installation
   parts of a layout; `env export` and `env import` reproduce an installation
   elsewhere, pinning every version including dependencies.

@@ -285,7 +285,8 @@ category = "sample-library"
 content = ["drumgizmo"]
 ```
 
-Which packages play each kind of content is registry data, in `engines.toml`
+Which packages play each kind of content is in the manager's built-in engine
+list and in any bench's `engines.toml`
 at the root of a bench:
 
 ```toml
@@ -313,7 +314,8 @@ kit that depended on `drumgizmo` would refuse a user who plays it in DrumCraker.
 library read from there needs no translation: its `contains` becomes its
 `content`. A package that also ships a plugin plays its own content and
 declares none — `validate` refuses `content` outside `kind = "library"`, and
-`luthier-registry validate` refuses a value no engine in `engines.toml` plays.
+`luthier-registry validate` refuses a value nothing plays: neither a built-in
+engine nor an entry in the bench's `engines.toml`.
 
 ## Forward compatibility
 

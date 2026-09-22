@@ -6,7 +6,7 @@
 //! edges — is not invented: rules are marked for derivation from the archive
 //! (see [`crate::install::derive`]), and edges stay absent. Sample content
 //! needs no edge: its `contains` says what it is, and which engines play that
-//! is the bench's `engines.toml`.
+//! is the built-in engine list, which a bench's `engines.toml` adds to.
 //!
 //! Anything that cannot be represented is dropped with a reason rather than
 //! guessed at, because a package that resolves and then fails to install is

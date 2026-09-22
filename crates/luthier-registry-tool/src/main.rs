@@ -371,16 +371,19 @@ fn check_engines(
   warnings: &mut usize,
 ) -> Result<BTreeSet<Content>, Box<dyn std::error::Error>> {
   let name = luthier_manifest::ENGINES_FILE;
+  // Every build carries engines for the formats it knows, so a bench needs
+  // an `engines.toml` only to add to them.
+  let mut played = luthier_manifest::builtin_content();
   let path = root.join(name);
   if !path.is_file() {
-    return Ok(BTreeSet::new());
+    return Ok(played);
   }
   let file = match EnginesFile::parse(&std::fs::read_to_string(&path)?) {
     Ok(file) => file,
     Err(e) => {
       println!("error: {name}: {e}");
       *errors += 1;
-      return Ok(BTreeSet::new());
+      return Ok(played);
     }
   };
 
@@ -409,13 +412,13 @@ fn check_engines(
     }
   }
 
-  Ok(
+  played.extend(
     file
       .entries
       .iter()
-      .flat_map(|entry| entry.plays.iter().cloned())
-      .collect(),
-  )
+      .flat_map(|entry| entry.plays.iter().cloned()),
+  );
+  Ok(played)
 }
 
 /// What validation found, plus the artifact URLs a reachability sweep would

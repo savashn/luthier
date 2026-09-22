@@ -128,8 +128,9 @@ pub fn locate_external(layout: &Layout, manifest: &Manifest) -> Option<PathBuf> 
   locate(layout, &manifest.detect)
 }
 
-/// Engines from the registry's `engines.toml` that are present on this
-/// machine, found by their detect rules.
+/// Engines the merged index knows — the built-in list plus any bench's
+/// `engines.toml` — that are present on this machine, found by their detect
+/// rules.
 ///
 /// An entry's own rules are tried alongside any its package's manifest
 /// carries: sfizz's live in `sfizz.toml`, while DrumCraker's registry has no

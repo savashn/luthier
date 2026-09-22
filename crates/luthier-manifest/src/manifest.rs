@@ -75,11 +75,12 @@ pub struct Manifest {
   pub tags: Vec<String>,
   /// What the package holds that only an engine can play, e.g. `sfz`.
   ///
-  /// Only meaningful for [`PackageKind::Library`]. Installing is refused
-  /// unless something on the system plays every value listed; which
-  /// packages count as engines for each is the bench's `engines.toml`, not
-  /// this manifest. Named after the format rather than an engine because a
-  /// kit that DrumCraker plays as well as DrumGizmo needs neither by name.
+  /// Only meaningful for [`PackageKind::Library`]. Content nothing on the
+  /// system can play is reported before the download rather than refused;
+  /// which packages count as engines for each is the built-in engine list
+  /// plus any bench's `engines.toml`, not this manifest. Named after the
+  /// format rather than an engine because a kit that DrumCraker plays as
+  /// well as DrumGizmo needs neither by name.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub content: Vec<Content>,
   #[serde(default, skip_serializing_if = "Option::is_none")]

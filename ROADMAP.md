@@ -24,8 +24,9 @@ translate, 293 of them installable on Linux x86_64 — and its install rules are
 derived from the verified archive rather than declared. The curated bench is
 down to 6 manifests: what OAS cannot express — two `external` engines, three
 DrumGizmo kits it does not carry, and one shadow for an install rule nothing
-can derive — plus an `engines.toml` naming what plays SFZ, SoundFont 2 and
-DrumGizmo content from either registry. A library whose engines are all absent
+can derive. What plays SFZ, SoundFont 2 and DrumGizmo content is no longer
+its business: that list ships with the manager, and a bench's `engines.toml`
+adds to it. A library whose engines are all absent
 is reported before the download and installed anyway; the confirmation is where
 the user decides. Where both registries carry an ID, the bench wins.
 
