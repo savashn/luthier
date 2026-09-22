@@ -216,7 +216,8 @@ archive, never where to put it.
 
 More than one registry is read at once — a *bench* is the kind, and
 `luthier-extras` is the default one's name, as `homebrew-core` names the default
-tap. `Session::index()` merges what each configured bench carries into one
+tap. That one ships in this repository under `bench/`; the name is the bench's,
+not a directory's. `Session::index()` merges what each configured bench carries into one
 `RegistryIndex`, memoised because building it three times in one `install` was
 a real regression rather than a hypothetical one.
 

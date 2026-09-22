@@ -1,0 +1,40 @@
+schema = 1
+
+id = "crocellkit"
+name = "CrocellKit"
+kind = "library"
+category = "sample-library"
+# Played by DrumGizmo or DrumCraker; engines.toml lists both, and either one
+# satisfies the check. A dependency could only have named one of them.
+content = ["drumgizmo"]
+tags = ["drums", "drumgizmo"]
+
+description = """
+Large multi-microphone acoustic kit, the most deeply sampled of the \
+DrumGizmo kits. Plays in DrumGizmo or DrumCraker, both of which load the \
+kit's XML file."""
+
+homepage = "https://drumgizmo.org/wiki/doku.php?id=kits:crocellkit"
+repository = "https://drumgizmo.org/wiki/doku.php?id=kits"
+
+authors = ["The DrumGizmo project"]
+
+# Creative Commons Attribution 4.0, as stated on the kit's own wiki page.
+[license]
+kind = "open-source"
+spdx = "CC-BY-4.0"
+
+# Upstream calls this "1.1"; semver needs the patch component.
+[[releases]]
+version = "1.1.0"
+
+[[releases.artifacts]]
+target = { os = "linux", arch = "x86_64" }
+source = { type = "http", url = "https://drumgizmo.org/kits/CrocellKit/CrocellKit1_1.zip" }
+archive = "zip"
+size = 5646502341
+checksum = { sha256 = "341d1f23e5867fd9d465bbcf3e4cd2f805bb7d7c4f519ba9ec73daae8161d5c6" }
+provides = ["library"]
+install = [
+  { format = "library", source = "CrocellKit", kind = "bundle" },
+]

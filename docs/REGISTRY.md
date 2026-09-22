@@ -1,38 +1,73 @@
-# The registry
+# The bench
 
-Packages live in a separate repository, [`luthier-extras`][registry]. The
-manager consumes it as data; it has no built-in package list.
-
-[registry]: https://github.com/savashn/luthier-extras
+The default bench lives in this repository, under `bench/`. The manager
+consumes it as data; nothing is compiled in, and `bench/` is the one directory
+here that is MIT rather than LGPL — see `bench/LICENSE`.
 
 ```
-luthier-extras/
-├── plugins/        lsp-plugins.toml, sfizz.toml, ...
+bench/
+├── plugins/        lsp-plugins.toml, sfizz.toml, drumgizmo.toml
 ├── libraries/      sample libraries
 ├── presets/        preset packs
 ├── packs/          curated dependency sets
-├── schemas/        package-v1.json
 ├── engines.toml    engines beyond the ones every build knows (optional)
-└── README.md
+└── LICENSE
 ```
 
 Layout is for humans; the loader walks the whole tree. Two rules are enforced:
 a manifest must be filed as `<id>.toml`, and an ID may appear only once.
-`engines.toml` at the root is registry data rather than a package, and is
-skipped by the walk.
+`engines.toml` at the root is bench data rather than a package, and is skipped
+by the walk. The JSON Schema is not here — it is generated from the manager's
+types and lives at `schemas/package-v1.json` in the repository root, so there
+is one copy rather than two to keep in step.
+
+## Most packages do not belong here
+
+**If the project publishes a Linux binary you can download, it belongs in the
+[Open Audio Stack registry][oas] instead.** Luthier reads that too, an entry
+there serves every OAS client rather than only this one, and a copy here would
+be a second record of the same release to keep current — by hand, including
+the checksum, on every upstream version. The bench also wins any ID collision,
+so a stale copy here silently overrides a maintained entry there.
+
+[oas]: https://github.com/open-audio-stack/open-audio-stack-registry
+
+That is why this bench is six manifests against OAS's several hundred, and the
+count is meant to fall rather than grow. What earns a place is what OAS cannot
+express:
+
+| | |
+|---|---|
+| `external` | Software packaged only by distributions, and only where something here needs it. `drumgizmo` and `sfizz` are engines that sample content plays in; the entry is what lets the manager say "install this from your distribution" rather than failing to resolve. If nothing needs it, it does not go here yet. |
+| Sample content OAS does not carry | A DrumGizmo kit, until `contains` has a value for one. Declare what it holds with `content`, never which engine plays it. |
+| `engines.toml` | An engine that appeared after a release. The built-in list already covers SFZ, SoundFont 2 and DrumGizmo content. |
+| `packs` | Curated sets, which are a concept of this manager alone. |
+| Shadows | A package OAS also carries, where its data or the derived install rules are wrong. Each says at the top of the file why it exists and what would retire it. |
+
+When something here becomes expressible upstream, the move is the point:
+send it to OAS and delete it from `bench/`. `surge-xt` and `dpf-plugins` both
+left that way.
 
 ## How it is fetched
 
-`luthier refresh` downloads a tarball of the repository's default branch over
-HTTPS and extracts it through the same hardened extractor used for plugin
-artifacts. There is deliberately no git dependency: forges publish branch
-tarballs, and that is enough for the MVP. A `GitRegistry` can be added later
+`luthier refresh` downloads `bench.tar.gz` from this repository's latest
+release over HTTPS and extracts it through the same hardened extractor used
+for plugin artifacts. The release workflow builds that asset from `bench/`.
+
+It is an asset rather than a branch tarball of the repository for two reasons.
+Discovery walks whatever it is handed, so a repository tarball would offer the
+workspace's own `Cargo.toml` files up as manifests. And a signature is fetched
+from the snapshot's URL with `.sig` appended, which nothing can publish under
+`/archive/refs/heads/` — a branch tarball is a snapshot that can never be
+signed.
+
+There is deliberately no git dependency. A `GitRegistry` can be added later
 behind the same `RegistryProvider` trait.
 
 During development, skip fetching entirely:
 
 ```console
-$ luthier --registry-path ../luthier-extras search synth
+$ luthier --registry-path bench search synth
 ```
 
 ## Adding a package
@@ -41,7 +76,11 @@ $ luthier --registry-path ../luthier-extras search synth
 fork → add manifest → run the validator → open a PR → CI → review → merge
 ```
 
-Before writing anything, check the package is a candidate at all:
+First read *Most packages do not belong here* above. If the package has a
+downloadable Linux binary, the pull request you want is against the Open Audio
+Stack registry, not this one.
+
+Then check the package is a candidate at all:
 
 - Is there an **official Linux x86_64 binary**? Many excellent projects publish
   source only. sfizz has shipped no Linux binary since 0.5.1 in 2020, which is
@@ -101,7 +140,7 @@ which is free-form. See [MANIFEST.md](MANIFEST.md#category-and-tags).
 ### Validate
 
 ```console
-$ cargo run -p luthier-registry-tool -- validate ../luthier-extras
+$ cargo run -p luthier-registry-tool -- validate bench
 Checked 9 manifest(s): 0 error(s), 0 warning(s).
 ```
 
@@ -142,15 +181,24 @@ than being ignored:
 - `engines.toml` names each engine once, with known content, and detect rules
   only for formats that have a plugin directory
 
-It also diffs the committed `schemas/package-v1.json` against the one generated
-from the manager's types, so the published schema cannot drift from what the
-code actually accepts.
+Validation itself runs as part of the test suite —
+`the_real_bench_passes_strict_validation` drives the released binary against
+`bench/` exactly as a reviewer would — so a bad manifest fails `ci.yml` like
+any other change. `bench.yml` adds the one check no test may do, because the
+suite is offline by rule: a sweep that fetches every artifact URL. It is
+advisory, since reachability depends on hosts nobody here controls.
 
-## Keeping the registry current
+`ci.yml` also diffs `schemas/package-v1.json` against the one generated from
+the manager's types, so the published schema cannot drift from what the code
+actually accepts, and builds the validator with `--no-default-features` —
+the configuration that keeps `luthier-manifest` free of async, HTTP and
+archive decoders.
+
+## Keeping the bench current
 
 ```console
-$ luthier-registry check-updates ../luthier-extras
-$ luthier-registry check-updates ../luthier-extras --all --json
+$ luthier-registry check-updates bench
+$ luthier-registry check-updates bench --all --json
 ```
 
 Asks each package's forge for its newest tag and reports what is behind. It
@@ -192,7 +240,7 @@ records for audit.
 
 ```console
 $ luthier-registry keygen --out luthier-bench.key
-$ luthier-registry sign luthier-extras-2026.09.22.tar.gz --key luthier-bench.key
+$ luthier-registry sign bench.tar.gz --key luthier-bench.key
 ```
 
 `keygen` writes a secret key only its owner can read and prints the public
@@ -279,7 +327,7 @@ plays the content, and if its registry carries no detect rules, read the name
 it installs as with `luthier-registry inspect <url>`. See
 [MANIFEST.md](MANIFEST.md#content-and-engines).
 
-## What is not in the registry, and why
+## What is not in the bench, and why
 
 The initial set is small on purpose. A working experience for a handful of
 packages is worth more than a broken one for thousands.

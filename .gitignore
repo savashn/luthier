@@ -1,1 +1,14 @@
 /target
+
+# Archives pulled down while authoring a manifest. `hash-url` and `inspect`
+# both want the real file, and none of them belong in the repository: the
+# bench is data about other people's releases, never a mirror of them.
+*.tar.gz
+*.tar.xz
+*.tgz
+*.zip
+*.7z
+
+# Scratch output from the registry tools.
+report.txt
+report.json

@@ -1,0 +1,49 @@
+MIT License
+
+Copyright (c) 2026 Luthier contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+================================================================================
+SCOPE
+================================================================================
+
+The MIT License above covers the contents of this directory: the package
+manifests under `plugins/`, `libraries/`, `presets/` and `packs/`.
+
+It does not cover the rest of the repository. Luthier itself — everything
+outside `bench/` — is licensed LGPL-2.1-or-later; see the `LICENSE` file at
+the repository root. The split is deliberate: the tool stays copyleft, the
+data stays maximally reusable, as it is in homebrew-core, nixpkgs and
+winget-pkgs.
+
+Two clarifications, because a registry describes things it does not own:
+
+1. `schemas/package-v1.json` at the repository root is generated from the
+   source of Luthier and carries documentation text taken from it. The
+   copyright holder also makes that generated file available under the MIT
+   License above, so that it may be redistributed alongside this data and used
+   for editor completion without further conditions.
+
+2. The software described by these manifests is licensed by its own authors,
+   under their own terms. Nothing here relicenses any of it. Each manifest
+   records the licence its upstream project states, in the `[license]` table,
+   and that record is a statement of fact rather than a grant. Downloading and
+   installing a package means accepting that project's licence, not this one.

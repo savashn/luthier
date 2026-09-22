@@ -33,6 +33,13 @@ env:
   # `releases/latest/download/` that stays correct across releases. The
   # version is inside, in the directory the tarball unpacks to.
   ASSET: luthier-x86_64-linux.tar.gz
+  # The default bench travels with the release rather than as a branch
+  # tarball of this repository. Two reasons, and the second is the one that
+  # settles it: discovery walks whatever it is handed, so a repository
+  # tarball would offer the workspace's own `Cargo.toml` files up as
+  # manifests; and a signature is fetched from the snapshot URL with `.sig`
+  # appended, which nothing can publish under `/archive/refs/heads/`.
+  BENCH_ASSET: bench.tar.gz
 
 jobs:
   release:
@@ -106,6 +113,15 @@ jobs:
           sha256sum "$ASSET" > "$ASSET.sha256"
           cat "$ASSET.sha256"
 
+      # `bench` as the single top-level entry, which is the shape
+      # `unwrap_single_root` was written for: the snapshot's paths then stay
+      # the same across refreshes whatever the asset is called.
+      - name: Package the bench
+        run: |
+          tar czf "$BENCH_ASSET" bench
+          sha256sum "$BENCH_ASSET" > "$BENCH_ASSET.sha256"
+          cat "$BENCH_ASSET.sha256"
+
       # Release notes come from the changelog rather than from the tag
       # message: the changelog is the version of this that gets reviewed.
       - name: Extract the changelog section
@@ -130,10 +146,36 @@ jobs:
           # rather than failing on a release that already exists.
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release edit "$tag" --notes-file notes.md
-            gh release upload "$tag" "$ASSET" "$ASSET.sha256" --clobber
+            gh release upload "$tag" \
+              "$ASSET" "$ASSET.sha256" \
+              "$BENCH_ASSET" "$BENCH_ASSET.sha256" --clobber
           else
             gh release create "$tag" \
               --title "luthier $tag" \
               --notes-file notes.md \
-              "$ASSET" "$ASSET.sha256"
+              "$ASSET" "$ASSET.sha256" \
+              "$BENCH_ASSET" "$BENCH_ASSET.sha256"
+          fi
+
+      # Signing is deliberately not done here. The key that vouches for the
+      # bench should not live where a compromised workflow could reach it, so
+      # `bench.tar.gz.sig` is produced on the maintainer's machine and
+      # uploaded to the same release:
+      #
+      #   gh release download <tag> -p bench.tar.gz
+      #   luthier-registry sign bench.tar.gz --key luthier-bench.key
+      #   gh release upload <tag> bench.tar.gz.sig
+      #
+      # Until one is uploaded the bench is simply unsigned, which `refresh`
+      # accepts for a bench with no pinned key. See docs/REGISTRY.md.
+      - name: Say whether the bench was signed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          if gh release view "$tag" --json assets \
+               --jq '.assets[].name' | grep -qx "$BENCH_ASSET.sig"; then
+            echo "bench signature present"
+          else
+            echo "::warning::$BENCH_ASSET is published unsigned; sign it locally and upload $BENCH_ASSET.sig"
           fi

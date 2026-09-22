@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 386 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 401 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -46,28 +46,27 @@ run and nobody but its author can install it. That is what Phase 0 is about.
 Nothing else matters until this is done. Every item below is small; together
 they are the difference between a local working directory and a project.
 
-### 0.1 Put both repositories under version control — half done
+### 0.1 Publish the repository — half done
 
-`luthier/` is a git repository and lives at `savashn/luthier`, privately.
-`luthier-extras/` is neither: no repository, no remote. Two consequences
-follow: `.github/workflows/ci.yml` and `.github/workflows/validate.yml` have
-never executed, and the TOML migration and category system were verified only
-on one machine.
+`luthier/` is a git repository and lives at `savashn/luthier`, privately. No
+workflow has ever executed, so the TOML migration and the category system were
+verified only on one machine.
 
-The registry workflow checks out `savashn/luthier` and builds the validator
-from source, so the manager repository has to exist first — and has to be
-*readable* from the registry's CI. A workflow's default token reaches only its
-own repository, so while the manager stays private that checkout needs a
-personal access token in the registry's secrets. Making the manager public is
-the cheaper answer, and the one this project's licence assumes.
+There used to be a second repository to publish. The bench now lives here
+under `bench/`, which removed the part of this item that was genuinely awkward:
+the bench's CI had to check out `savashn/luthier` to build the validator, and
+a workflow's default token reaches only its own repository, so a private
+manager meant a personal access token in the other repository's secrets. One
+repository needs none of that. Making the manager public remains the right
+answer anyway, and the one this project's licence assumes.
 
-**Done when:** both repositories are pushed, both workflows are green on a
-pull request, and the schema-drift check in each has run at least once.
+**Done when:** the repository is pushed and `ci.yml` is green on a pull
+request, with the schema-drift check having run at least once.
 
 ### 0.2 Add the licence texts — done
 
 `luthier/LICENSE` carries the canonical LGPL-2.1 text, which is a standalone
-licence and needs no GPL text beside it. `luthier-extras/LICENSE` carries MIT plus
+licence and needs no GPL text beside it. `bench/LICENSE` carries MIT plus
 a scope note covering the generated schema and the fact that manifests record
 upstream licences rather than granting them.
 
@@ -98,10 +97,11 @@ default.
 
 ### 0.3 Publish a release, and make the default registry resolve
 
-`config.rs` points at `https://github.com/savashn/luthier-extras/archive/refs/heads/main.tar.gz`.
-Until that URL resolves, `luthier refresh` fails out of the box and every user
-must pass `--registry-path`. The comment in the source says so; it stops being
-true the moment 0.1 lands.
+`config.rs` points at `https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz`.
+Until a release exists that URL does not resolve, `luthier refresh` fails out
+of the box and every user must pass `--registry-path`. The comment in the
+source says so; it stops being true with the first tag, which is this item —
+not 0.1, since the bench now ships from the same release as the binary.
 
 The only install path today is `cargo build --release` with a Rust 1.89
 toolchain. The people this tool is for are musicians.
@@ -382,7 +382,8 @@ Removing a bench deletes its snapshot and forgets its pinned origin, so
 re-adding the name under a different URL is not refused for a pin the user has
 already discarded.
 
-A collection of manifests is a *bench*; `luthier-extras` is the default one
+A collection of manifests is a *bench*; `luthier-extras` is the default one,
+and it ships in this repository under `bench/`
 (see [Open questions](#third-party-registries)). The naming convention there —
 whether `bench add savas/jazz` should expand to a repository URL — is still
 open; today the location is written out in full.
@@ -594,10 +595,10 @@ What stays is the distinction between the kind and an instance's name:
 | Term | Names |
 |---|---|
 | *bench* | The kind. A collection of manifests. |
-| `luthier-extras` | The default bench, by name — as `homebrew-core` names the default tap rather than being called `homebrew-tap`. |
+| `luthier-extras` | The default bench, by name — as `homebrew-core` names the default tap rather than being called `homebrew-tap`. It ships in this repository as `bench/`, so the name is the collection's rather than a directory's or a repository's. |
 | "registry" in code | The mechanism: `RegistryProvider`, `RegistryIndex`, `RegistrySource`. An implementation term, said 178 times, unchanged. |
 
-So the official repository is **not renamed**. An instance's name need not be
+So the default bench is **not renamed**. An instance's name need not be
 the kind word, and in both precedents deliberately is not: `luthier-extras`
 says what that particular collection is — curated, reviewed, the default —
 where `luthier-bench` would only repeat the type and require knowing the

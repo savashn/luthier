@@ -109,13 +109,24 @@ pub struct Config {
   pub registries: Vec<RegistryConfig>,
 }
 
-/// The registry shipped with the client.
+/// The bench shipped with the client, published as a release asset.
 ///
-/// Until the registry repository is published this URL will not resolve; use
-/// `--registry-path` (or a `path` entry in `config.json`) to point at a local
-/// checkout in the meantime.
+/// A release asset rather than the forge's branch tarball, for a reason that
+/// only shows up one phase later: a signature is fetched from the snapshot's
+/// own URL with `.sig` appended, and nothing can be published under
+/// `/archive/refs/heads/`. A branch tarball is therefore a snapshot that can
+/// never be signed. An asset is a path this project controls, so
+/// `bench.tar.gz.sig` sits beside it.
+///
+/// It is built from `bench/` by the release workflow rather than being a
+/// tarball of the repository: the manager's own `Cargo.toml` files would
+/// otherwise be read as manifests, since discovery walks whatever it is given.
+///
+/// Until the first release is tagged this URL will not resolve; use
+/// `--registry-path bench` (or a `path` entry in `config.json`) to point at
+/// the checkout in the meantime.
 pub const DEFAULT_REGISTRY_URL: &str =
-  "https://github.com/savashn/luthier-extras/archive/refs/heads/main.tar.gz";
+  "https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz";
 
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///

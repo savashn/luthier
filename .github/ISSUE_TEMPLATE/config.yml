@@ -1,10 +1,13 @@
 blank_issues_enabled: false
 contact_links:
   - name: Add or correct a package
-    url: https://github.com/savashn/luthier-extras/issues
+    url: https://github.com/open-audio-stack/open-audio-stack-registry/issues
     about: >
-      Manifests live in the registry repository. A wrong checksum, a missing
-      version or a package that should be listed goes there.
+      Almost every package comes from the Open Audio Stack registry, and an
+      entry there serves every client that reads it rather than only this
+      one. A wrong checksum, a missing version or a package that should be
+      listed goes there. The bench in this repository carries only what that
+      registry cannot express — see docs/REGISTRY.md.
 
   - name: Report a security issue
     url: https://github.com/savashn/luthier/blob/main/SECURITY.md

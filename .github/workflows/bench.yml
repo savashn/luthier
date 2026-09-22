@@ -1,0 +1,36 @@
+# The part of validating the bench that the test suite cannot do.
+#
+# `validate --strict` itself runs in `ci.yml`, because the suite covers it:
+# `the_real_bench_passes_strict_validation` drives the real binary against
+# `bench/` exactly as this used to. What is left is the sweep that needs the
+# network, which no test is allowed to do.
+name: bench
+
+on:
+  pull_request:
+    paths:
+      - 'bench/**'
+      - 'crates/luthier-manifest/**'
+      - 'crates/luthier-registry-tool/**'
+      - '.github/workflows/bench.yml'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  urls:
+    name: Check artifact URLs
+    runs-on: ubuntu-latest
+    # Reachability depends on third-party hosts, so a failure here reports a
+    # problem without blocking an otherwise valid change.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # With the authoring features: --check-urls is one of the things they
+      # are for.
+      - name: Check URLs
+        run: cargo run --release -p luthier-registry-tool -- validate bench --check-urls

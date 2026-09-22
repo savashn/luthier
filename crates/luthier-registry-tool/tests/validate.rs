@@ -310,17 +310,19 @@ fn the_committed_schema_can_be_printed_without_a_bench() {
   assert!(text.contains("file-extension"), "{text}");
 }
 
-/// The real bench, when it is checked out beside this repository.
+/// The bench that ships with this repository.
 ///
-/// Skipped rather than failed when it is not: a contributor with only this
-/// repository should still get a green suite.
+/// Unconditional now that `bench/` is in the tree. It used to be skipped when
+/// the bench was a sibling checkout that might be absent, which meant the one
+/// test covering real data was the one most likely not to run.
 #[test]
 fn the_real_bench_passes_strict_validation() {
-  let bench = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../luthier-extras");
-  if !bench.join("plugins").is_dir() {
-    eprintln!("skipping: {} is not checked out", bench.display());
-    return;
-  }
+  let bench = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench");
+  assert!(
+    bench.join("plugins").is_dir(),
+    "{} is missing from the checkout",
+    bench.display()
+  );
   let mut command = Command::cargo_bin("luthier-registry").unwrap();
   let output = command
     .arg("validate")
@@ -330,7 +332,7 @@ fn the_real_bench_passes_strict_validation() {
     .unwrap();
   assert!(
     output.status.success(),
-    "the bench CI runs exactly this: {}",
+    "the bench workflow runs exactly this: {}",
     text_of(&output)
   );
 }

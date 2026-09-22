@@ -33,9 +33,10 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      # The registry's CI builds the tool this way on every pull request. Without
-      # a check here, an import added under the default features would break it
-      # silently and only surface in the other repository.
+      # What keeps `luthier-manifest` free of async, HTTP and archive decoders:
+      # built this way the tool pulls 70 crates instead of 164, which is the
+      # configuration a bench's CI can afford. Nothing else asserts it, so an
+      # import added under the default features would rot it unnoticed.
       - name: Registry tool builds without the authoring features
         run: cargo build -p luthier-registry-tool --no-default-features
 

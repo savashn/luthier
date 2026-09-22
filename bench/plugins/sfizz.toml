@@ -1,0 +1,40 @@
+schema = 1
+
+id = "sfizz"
+name = "sfizz"
+kind = "external"
+category = "instrument"
+tags = ["sampler", "sfz"]
+
+description = """
+SFZ playback engine. Sample libraries in SFZ format need an engine such as \
+this one to be played; the SFZ format and the engine are separate things."""
+
+homepage = "https://sfz.tools/sfizz/"
+repository = "https://github.com/sfztools/sfizz"
+
+authors = ["SFZTools"]
+
+provisioning_hint = """
+Install sfizz from your distribution (for example `pacman -S sfizz`, `apt \
+install sfizz`) or build it from https://github.com/sfztools/sfizz."""
+
+[license]
+kind = "open-source"
+spdx = "BSD-2-Clause"
+
+# sfizz has published no Linux binary since 0.5.1 (2020); 1.x releases ship
+# source only. Luthier therefore treats it as an external dependency: it can
+# be depended on and detected, but never downloaded or installed. Detection
+# looks for any of the formats sfizz builds as.
+[[detect]]
+format = "vst3"
+name = "sfizz.vst3"
+
+[[detect]]
+format = "lv2"
+name = "sfizz.lv2"
+
+[[detect]]
+format = "clap"
+name = "sfizz.clap"

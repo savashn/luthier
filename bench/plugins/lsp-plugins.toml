@@ -1,0 +1,78 @@
+# SHADOW — OAS carries lsp-plugins/lsp-plugins at this version, and this
+# manifest wins the collision.
+#
+# Reason: one install rule cannot be derived. Deriving from the archive finds
+# the CLAP, the VST3 and the LV2, but not liblsp-r3d-glx-lib.so beside the
+# CLAP — `.so` is not a plugin format, so nothing recognises it. Nor is there
+# anything in the file to derive it from: the CLAP does not name the library
+# in DT_NEEDED, it dlopens it. The only statement that the library belongs
+# beside the plugin is the one upstream writes in prose, quoted on the rule
+# below, and reading prose is what a curated bench is for.
+#
+# What going without costs: the CLAP still loads and every plugin works
+# except the 3D scene view, which only room_builder draws. The LV2 and VST3
+# builds are unaffected — each carries its own copy of the library inside
+# the bundle. What the shadow costs: OAS carries nine versions of this
+# package and the bench wins the collision, so only this one is offered.
+#
+# Permanent, unless upstream stops shipping the library separately.
+schema = 1
+
+id = "lsp-plugins"
+name = "LSP Plugins"
+kind = "plugin"
+category = "effect"
+tags = ["equalizer", "dynamics", "analyser"]
+
+description = """
+Large suite of mixing and mastering processors: parametric and graphic EQs, \
+compressors, gates, limiters, delays, impulse-response loaders, crossovers \
+and analysers, in over a hundred mono, stereo and multiband variants."""
+
+homepage = "https://lsp-plug.in/"
+repository = "https://github.com/lsp-plugins/lsp-plugins"
+documentation = "https://lsp-plug.in/?page=manuals"
+
+authors = ["Vladimir Sadovnikov"]
+
+# The shipped EULA states "version 3 (LGPL v3)" with no "or later" grant, so
+# the -only form is what upstream actually says.
+[license]
+kind = "open-source"
+spdx = "LGPL-3.0-only"
+
+[[releases]]
+version = "1.2.35"
+release_notes = "https://github.com/lsp-plugins/lsp-plugins/releases/tag/1.2.35"
+
+# The only container upstream publishes Linux binaries in.
+[[releases.artifacts]]
+target = { os = "linux", arch = "x86_64" }
+source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.35/lsp-plugins-1.2.35-Linux-x86_64.7z" }
+archive = "7z"
+size = 38793460
+checksum = { sha256 = "4ef3b2f63b29a522fdaf3a18f879c1c85c82f0bdd1e0b3c849a5f3c4b08d2550" }
+provides = ["clap", "vst3", "lv2"]
+install = [
+  { format = "clap", source = "lsp-plugins-1.2.35-Linux-x86_64/CLAP/lsp-plugins.clap", kind = "file" },
+  # The 3D rendering library the CLAP loads at runtime. Where it goes is
+  # not our judgement — the archive's INSTALL.txt says it:
+  #
+  #   Place the *.clap file from the CLAP subdirectory to directory with
+  #   CLAP plugins. […] Place all *.so files nearby to the *.clap file or
+  #   to the path where system libraries are located.
+  #
+  #   Don't worry about *.so file names are clashing between installations
+  #   of different plugins because *.so files with the same name are fully
+  #   replaceable between each other.
+  #
+  # Of the locations it lists, `~/.clap` is the only one this manager
+  # writes to, so "nearby to the *.clap file" is the whole rule. The
+  # second paragraph answers the objection a loose file in a shared
+  # directory invites. The VST3 and LV2 bundles carry their own copy
+  # inside, which is why only the CLAP needs this; a host scanning for
+  # *.clap ignores it.
+  { format = "clap", source = "lsp-plugins-1.2.35-Linux-x86_64/CLAP/liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] },
+  { format = "vst3", source = "lsp-plugins-1.2.35-Linux-x86_64/VST3/lsp-plugins.vst3", kind = "bundle" },
+  { format = "lv2", source = "lsp-plugins-1.2.35-Linux-x86_64/LV2/lsp-plugins.lv2", kind = "bundle" },
+]

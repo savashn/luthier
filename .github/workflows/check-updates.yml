@@ -1,0 +1,61 @@
+name: check-updates
+
+# Version tracking by hand does not scale, so this asks each bench package's
+# forge weekly and files the result as an issue. It never fails the build: a
+# package being behind is news, not a broken bench.
+#
+# It covers `bench/` only. Everything with a downloadable binary belongs in
+# the Open Audio Stack registry, which tracks its own upstreams.
+on:
+  schedule:
+    # Monday morning, so the week starts with the list.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check upstream versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the tool
+        run: cargo build --release -p luthier-registry-tool
+
+      # GITHUB_TOKEN raises the API rate limit from 60/hour to 5000, which
+      # matters once the registry is larger than a couple of dozen packages.
+      - name: Check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./target/release/luthier-registry check-updates bench | tee report.txt
+          ./target/release/luthier-registry check-updates bench --json \
+            > report.json
+          behind=$(python3 -c "import json;print(sum(1 for p in json.load(open('report.json')) if p['state']=='behind'))")
+          echo "behind=$behind" >> "$GITHUB_OUTPUT"
+
+      - name: File an issue when something is behind
+        if: steps.check.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # One rolling issue rather than a new one every week: reopen and
+          # update the existing report if it is still around.
+          title="Packages behind upstream"
+          body=$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
+            "Automated weekly check. Derive each new checksum with \`luthier-registry hash-url <url>\` before editing a manifest — never copy a version bump without it." \
+            "$(cat report.txt)" \
+            "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}")
+          existing=$(gh issue list --state open --search "$title in:title" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label upstream
+          fi

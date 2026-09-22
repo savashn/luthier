@@ -1,0 +1,31 @@
+schema = 1
+
+id = "drumgizmo"
+name = "DrumGizmo"
+kind = "external"
+category = "instrument"
+tags = ["drums", "sampler"]
+
+description = """
+Multi-channel, multi-layered drum sampler. It ships no sounds of its own: it \
+plays the separately distributed DrumGizmo kits, routing each microphone to \
+its own output."""
+
+homepage = "https://drumgizmo.org/"
+repository = "https://github.com/drumgizmo/drumgizmo"
+
+authors = ["The DrumGizmo project"]
+
+provisioning_hint = """
+Install from your distribution, for example `apt install drumgizmo` on \
+Debian or Ubuntu, or `pacman -S drumgizmo` on Arch."""
+
+[license]
+kind = "open-source"
+spdx = "LGPL-3.0-or-later"
+
+# Published as source only; every distribution packages it. Detection name was
+# read from the files the Debian package installs.
+[[detect]]
+format = "lv2"
+name = "drumgizmo.lv2"

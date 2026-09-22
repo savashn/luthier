@@ -6,17 +6,17 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 386 tests, fully offline
+cargo test --workspace                     # 401 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
 ```
 
-Manual run against the registry (a **sibling** repo, `../luthier-extras`):
+Manual run against the bench, which lives in this repository under `bench/`:
 
 ```console
-cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path ../luthier-extras \
-  --yes install dexed
+cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path bench \
+  --yes install lsp-plugins
 ```
 
 Always pass `--root` when testing by hand. Without it the binary writes to the
@@ -254,9 +254,10 @@ the crate map keeps that out of `luthier-manifest`.
   retry, `Range` — the server is a local `wiremock`, which is still not the
   network.
 - `crates/luthier-registry-tool/tests/validate.rs` drives the `validate`
-  binary the way the bench's CI does, including `--strict`. It also validates
-  the real `../../../luthier-extras` when that is checked out, and skips rather
-  than fails when it is not.
+  binary the way a reviewer would, including `--strict`. It also validates the
+  real `bench/`, unconditionally: that used to be a sibling checkout that might
+  be absent, which made the one test covering real data the one most likely not
+  to run.
 - `crates/luthier-core/tests/archive_security.rs` is the malicious-archive corpus.
   Archives are *generated in code*, not committed as blobs, so a reviewer can
   see what each test feeds the extractor. Every case asserts both the refusal
@@ -322,7 +323,12 @@ installers are Linux-only); reading OAS's `presets/` and
 given that a manifest may not name a destination; a released binary; aarch64;
 a `GitRegistry` backend. A *bench* is the kind —
 any collection of manifests, the official one included; `luthier-extras` is
-just the default bench's name, as `homebrew-core` names the default tap.
+just the default bench's name, as `homebrew-core` names the default tap. It
+ships in this repository under `bench/` and is published as the `bench.tar.gz`
+release asset — an asset rather than a branch tarball because discovery walks
+whatever it is handed (the workspace's `Cargo.toml` files would become
+manifests) and because a `.sig` cannot be published under
+`/archive/refs/heads/`.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 
 The spec lives in the original task description; section references like §30

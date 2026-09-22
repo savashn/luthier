@@ -1,8 +1,10 @@
 # Changelog
 
-Notable changes to the manager. The registry has
-[its own](https://github.com/savashn/luthier-extras/blob/main/CHANGELOG.md),
-because a package being added is not a change to this program.
+Notable changes to the manager. A package added to or corrected in `bench/` is
+not one of them — the git log says it better, and every manifest carries its
+own version history in the `releases` it lists. What is recorded here is a
+change to the *shape* of the bench: the schema, the layout, the conventions
+`engines.toml` follows.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project follows [semantic versioning](https://semver.org/). Until 1.0 the

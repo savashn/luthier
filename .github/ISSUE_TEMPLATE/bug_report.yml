@@ -7,9 +7,10 @@ body:
       value: |
         A package that fails to install is often a manifest problem rather
         than a manager problem. If the error names a checksum, an archive
-        layout or a missing artifact for your target, the
-        [registry](https://github.com/savashn/luthier-extras/issues) is the
-        place for it.
+        layout or a missing artifact for your target, say which package it
+        is — most of them come from the
+        [Open Audio Stack registry](https://github.com/open-audio-stack/open-audio-stack-registry/issues),
+        and that is where the fix belongs.
 
   - type: textarea
     id: what

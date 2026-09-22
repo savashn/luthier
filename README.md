@@ -179,10 +179,10 @@ warning: nothing on this system can play crocellkit's DrumGizmo content. Any one
 error: not installing crocellkit: nothing on this system can play its DrumGizmo content
 ```
 
-Until the registry repository is published, point at a local checkout:
+Until the first release is published, point at the bench in this checkout:
 
 ```console
-$ luthier --registry-path ../luthier-extras search synth
+$ luthier --registry-path bench search synth
 ```
 
 ## Where things go
@@ -273,9 +273,9 @@ tree — are Apache-2.0 only, which the FSF reads as incompatible with the
 version-2 licences and compatible with version 3. The option to take this
 under LGPL-3.0-or-later is what keeps a build of Luthier distributable.
 
-The package manifests live in a separate repository,
-[luthier-extras](https://github.com/savashn/luthier-extras), under the MIT
-licence: the tool stays free, the data stays maximally reusable.
+The package manifests live in `bench/`, under the MIT licence rather than the
+LGPL that covers the rest of the repository: the tool stays free, the data
+stays maximally reusable. See `bench/LICENSE`.
 
 Two things follow for anyone integrating with it.
 
