@@ -214,6 +214,7 @@ stay visible alongside the environment's own.
 ## Documentation
 
 - [Roadmap](ROADMAP.md) — what is next, and what is deliberately out of scope
+- [Changelog](CHANGELOG.md) — what changed, release by release
 - [Architecture](docs/ARCHITECTURE.md) — how the pieces fit together
 - [Environments](docs/ENVIRONMENTS.md) — export, import and reproducing a setup
 - [Security model](SECURITY.md) — what is trusted, and what is not

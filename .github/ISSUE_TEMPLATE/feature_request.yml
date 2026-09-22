@@ -1,0 +1,36 @@
+name: Feature request
+description: Something the manager should do and does not.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Some things are decided rather than missing. The manager runs no
+        install scripts, manifests never name a destination, there is no
+        DAW-specific integration, nothing is installed system-wide, and this
+        is not a DAW. Those are recorded under *Deliberate ceilings* in
+        [ROADMAP.md](https://github.com/luthier/luthier/blob/main/ROADMAP.md)
+        with the reasoning, and a request to lift one needs to answer it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you were trying to do
+      description: >
+        The situation, not the solution. What the manager made you do by
+        hand, or refused to do, is more useful than a feature name.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: An existing flag, another tool, a shell script.

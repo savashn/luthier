@@ -1,0 +1,58 @@
+name: Bug report
+description: Something the manager did that it should not have done.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A package that fails to install is often a manifest problem rather
+        than a manager problem. If the error names a checksum, an archive
+        layout or a missing artifact for your target, the
+        [registry](https://github.com/luthier/luthier-pkgs/issues) is the
+        place for it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command, and its output
+      description: >
+        Re-run it with `-v` and paste the whole thing. Run against
+        `--root /tmp/luthier-test` if the output would otherwise name
+        directories you would rather not share.
+      render: console
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `luthier --version`, and how you installed it.
+      placeholder: luthier 0.1.0, release tarball
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and architecture
+      placeholder: Arch Linux, x86_64
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything-else
+    attributes:
+      label: Anything else
+      description: >
+        A plugin directory that is a symlink, a `CLAP_PATH` you set by hand,
+        an environment you were in — the sort of thing that would not occur
+        to us to ask about.
