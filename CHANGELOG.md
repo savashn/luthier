@@ -35,6 +35,12 @@ The first release: everything below is new.
   a list every build carries, which any bench's `engines.toml` adds to, so a
   library read from a registry with no field for that still knows what it
   needs — and an engine installed by a distribution still counts.
+- **The default bench, in `bench/`.** Six manifests filed as `<id>.toml`:
+  what the Open Audio Stack registry cannot express — two `external` engines,
+  three DrumGizmo kits it has no `contains` value for, and one shadow that
+  says at the top of the file why it exists and what would retire it. It is
+  MIT rather than LGPL, and ships as the `bench.tar.gz` release asset, which
+  is what a detached signature can be published beside.
 - **Environments.** `--env` and `LUTHIER_ENV` redirect the per-installation
   parts of a layout; `env export` and `env import` reproduce an installation
   elsewhere, pinning every version including dependencies.
