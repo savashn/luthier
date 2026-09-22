@@ -25,8 +25,8 @@ derived from the verified archive rather than declared. The curated bench holds
 9 manifests: what OAS cannot express — two `external` engines, four sample
 libraries, one pack — plus two shadows, each of which says why it exists, and
 an `engines.toml` naming what plays SFZ, SoundFont 2 and DrumGizmo content from
-either registry. A library is refused before download when none of its engines
-is present. Where both carry an ID, the bench wins.
+either registry. A library whose engines are all absent is reported before
+download and installed anyway — the confirmation is where the user decides. Where both carry an ID, the bench wins.
 
 A bench's origin is pinned on first fetch, and a bench that publishes an
 Ed25519 signature has it verified between the download and the extractor, with

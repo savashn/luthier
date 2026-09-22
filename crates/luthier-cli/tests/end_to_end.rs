@@ -665,9 +665,10 @@ fn an_external_dependency_is_reported_rather_than_downloaded() {
 }
 
 #[test]
-fn content_nothing_can_play_is_refused_before_it_is_downloaded() {
+fn content_nothing_can_play_is_reported_and_installed_anyway() {
   // A DrumGizmo kit: DrumGizmo plays it, and so does DrumCraker. With
-  // neither present the kit is refused; either one is enough.
+  // neither present the kit still installs, and the plan says what it will
+  // take to hear it.
   let fixture = Fixture::new();
   let kit = fixture.make_library_artifact("Kit");
   fixture.add_library("kit", "1.0.0", "Kit", &kit);
@@ -708,34 +709,34 @@ fn content_nothing_can_play_is_refused_before_it_is_downloaded() {
   .unwrap();
   let installed = fixture.root().join("share/luthier/libraries/Kit");
 
-  // Pointing the artifact nowhere proves the refusal comes first: a
-  // download attempt would fail with a different error.
-  let real = std::fs::read_to_string(&path).unwrap();
-  std::fs::write(
-    &path,
-    real.replace(&kit.url, "file:///nonexistent/kit.tar.gz"),
-  )
-  .unwrap();
+  // Nothing here plays it. That is said, in a sentence that names what the
+  // format needs and what would supply it — and then the install proceeds,
+  // because what a user does with a folder of samples is their business.
   let output = fixture.luthier().args(["install", "kit"]).output().unwrap();
-  assert_eq!(output.status.code(), Some(6));
+  assert!(output.status.success());
   let stderr = String::from_utf8_lossy(&output.stderr);
   for expected in [
-    "warning: nothing on this system can play kit's DrumGizmo content",
+    "kit holds DrumGizmo content, and playing it needs DrumGizmo",
     "luthier install drumcraker",
     "Install drumgizmo from your distribution.",
-    "error: not installing kit",
   ] {
     assert!(stderr.contains(expected), "{expected}: {stderr}");
   }
-  assert!(!installed.exists());
-  std::fs::write(&path, real).unwrap();
+  assert!(installed.join("Strings/violin.sfz").is_file());
+  fixture.luthier().args(["remove", "kit"]).assert().success();
 
-  // An engine arriving in the same run counts.
-  fixture
+  // An engine arriving in the same run leaves nothing to say.
+  let output = fixture
     .luthier()
     .args(["install", "kit", "drumcraker"])
-    .assert()
-    .success();
+    .output()
+    .unwrap();
+  assert!(output.status.success());
+  assert!(
+    !String::from_utf8_lossy(&output.stderr).contains("holds DrumGizmo content"),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
   assert!(installed.join("Strings/violin.sfz").is_file());
   fixture
     .luthier()
@@ -746,11 +747,13 @@ fn content_nothing_can_play_is_refused_before_it_is_downloaded() {
   // So does one this manager did not install.
   let lv2 = fixture.root().join(".lv2/drumgizmo.lv2");
   std::fs::create_dir_all(&lv2).unwrap();
-  fixture
-    .luthier()
-    .args(["install", "kit"])
-    .assert()
-    .success();
+  let output = fixture.luthier().args(["install", "kit"]).output().unwrap();
+  assert!(output.status.success());
+  assert!(
+    !String::from_utf8_lossy(&output.stderr).contains("holds DrumGizmo content"),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
   assert!(installed.is_dir());
 
   let info = fixture.luthier().args(["info", "kit"]).output().unwrap();

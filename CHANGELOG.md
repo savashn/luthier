@@ -46,6 +46,12 @@ The first release: everything below is new.
   discarding the pin, and a signature that fails to verify is refused
   whatever any flag says. `luthier-registry keygen` and `sign` are the
   publishing side.
+- **Content that nothing plays is reported, not refused.** A library says
+  what it holds; before downloading, the plan says what playing it takes and
+  which engine is a command away. What a user does with a folder of samples
+  is their business, and a registry with no field for what plays what — the
+  Open Audio Stack's — would otherwise make every library it carries
+  uninstallable.
 - **Sample content from a registry that carries no install rules.** Where an
   artifact declares a `library`, the rule is read from the archive's shape —
   one wrapper directory, or none — and the content installs as

@@ -236,17 +236,21 @@ impl Reporter {
         break;
       }
       eprintln!();
+      // A note on the plan, not a refusal: the confirmation below is where
+      // the user decides. What the format needs is true whatever any
+      // registry knows, so it is said first and always.
       if found.engines.is_empty() {
         self.warn(format!(
-          "nothing on this system can play {}'s {} content, and no configured registry \
-           names an engine for it",
-          found.id, found.content
+          "{} holds {} content, and playing it needs {}. Nothing on this system \
+           looks like one, and no configured registry names one either.",
+          found.id, found.content, found.played_by
         ));
         continue;
       }
       self.warn(format!(
-        "nothing on this system can play {}'s {} content. Any one of these would:",
-        found.id, found.content
+        "{} holds {} content, and playing it needs {}. Nothing on this system \
+         looks like one; any of these would do:",
+        found.id, found.content, found.played_by
       ));
       let width = found.engines.iter().map(|e| e.id.len()).max().unwrap_or(0);
       for engine in &found.engines {

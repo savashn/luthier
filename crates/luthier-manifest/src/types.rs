@@ -53,6 +53,22 @@ impl Content {
       Content::Other(raw) => raw,
     }
   }
+
+  /// What kind of software plays this, named so the sentence is useful on a
+  /// machine where no registry knows a single engine.
+  ///
+  /// A format implies its player: SFZ is played by an SFZ engine, and saying
+  /// so needs no registry data at all. What a registry adds is *which* one is
+  /// installable right now, which is an improvement on this sentence rather
+  /// than a precondition for it.
+  pub fn played_by(&self) -> String {
+    match self {
+      Content::Sfz => "an SFZ engine such as sfizz".into(),
+      Content::Sf2 => "a SoundFont player such as FluidSynth".into(),
+      Content::Drumgizmo => "DrumGizmo, or another player of its kits".into(),
+      Content::Other(raw) => format!("something that reads {raw}"),
+    }
+  }
 }
 
 string_enum! {

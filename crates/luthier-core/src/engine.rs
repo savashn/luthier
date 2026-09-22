@@ -2,14 +2,26 @@
 //!
 //! A sample library is the one package that can install perfectly and still
 //! do nothing: a directory of `.sfz` and `.wav` files with no engine on the
-//! machine is a download nobody can hear. For a DrumGizmo kit that is several
-//! gigabytes. So the check runs after resolution and before the first byte is
-//! fetched, and a package whose content nothing can play is refused.
+//! machine is a download nobody can hear. So the check runs after resolution
+//! and before the first byte is fetched, and what it produces is a *note on
+//! the plan* — the confirmation a user already gives is where they decide.
+//!
+//! It is not a refusal, and the reason is what the absence of an engine
+//! actually means. "No engine is installed" is a fact about the machine;
+//! "no registry names an engine for this format" is a fact about this
+//! manager's knowledge, and the Open Audio Stack registry has no field for
+//! what plays what, so every library read from it lands in the second case.
+//! Refusing there would mean treating our own ignorance as evidence — and a
+//! user with sfizz installed from their distribution being told they cannot
+//! install a kit.
 //!
 //! What a package holds comes from its manifest (`content`, or `contains` in
-//! the Open Audio Stack registry). What plays it comes from `engines.toml`,
-//! and any one engine is enough — which is exactly what a dependency could not
-//! say, since a kit that depended on DrumGizmo would refuse a DrumCraker user.
+//! the Open Audio Stack registry), and that much needs no curation. What
+//! *plays* it comes from `engines.toml`, where any one engine is enough —
+//! which is exactly what a dependency could not say, since a kit that
+//! depended on DrumGizmo would refuse a DrumCraker user. Without it the note
+//! still names what the format needs (`Content::played_by`); with it, the
+//! note also says which engine is a command away.
 
 use crate::registry::RegistryIndex;
 use crate::resolver::{Disposition, Resolution};
@@ -23,8 +35,8 @@ pub struct Unplayable {
   pub package: PackageId,
   pub content: Content,
   /// What would play it, in the order the registries list them. Empty when
-  /// no configured registry names an engine for this content at all, which
-  /// is refused the same way: nothing can vouch that one is present.
+  /// no configured registry names an engine for this content at all — a
+  /// thinner note, not a different verdict.
   pub engines: Vec<PackageId>,
 }
 

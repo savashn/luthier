@@ -103,7 +103,7 @@ luthier install surge
   ├─ detect external packages     scan::detect_externals
   ├─ resolve                      resolver::resolve      → ordered plan
   ├─ refuse missing externals     ResolveError::ExternalMissing
-  ├─ refuse unplayable content    engine::unplayable     (scan::detect_engines)
+  ├─ report unplayable content    engine::unplayable     (scan::detect_engines)
   │
   └─ for each package, dependencies first:
        ├─ download                download::Downloader   → cache/<sha256>
@@ -291,8 +291,11 @@ nothing. Its manifest says what it holds (`content = ["drumgizmo"]`, read from
 `contains` for the Open Audio Stack registry); a bench's `engines.toml` says
 which packages play that. After resolution and before any download,
 `engine::unplayable` looks for one engine per content value — detected on disk,
-recorded in state, or in the plan being executed — and the install is refused
-when there is none.
+recorded in state, or in the plan being executed — and reports the ones it
+cannot account for. The plan carries the note and the confirmation decides;
+refusing would treat an empty engine list as evidence about the machine, when
+a registry with no field for what plays what (the Open Audio Stack's, for one)
+produces an empty list for every library it carries.
 
 It is not modelled as a dependency because a dependency names one package and
 engines are interchangeable: a DrumGizmo kit plays in DrumGizmo or DrumCraker,

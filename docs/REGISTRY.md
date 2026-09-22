@@ -268,9 +268,12 @@ nothing else. Either shape is accepted — a directory of samples or a single
 soundfont file — because both are what upstreams actually ship.
 
 A library that needs an engine declares what it holds with `content = ["sfz"]`
-(or `sf2`, `drumgizmo`), never which engine plays it. The manager refuses to
-download it unless one of the engines `engines.toml` lists for that content is
-present. Adding an engine means one `[[engine]]` entry there: confirm it really
+(or `sf2`, `drumgizmo`), never which engine plays it. Before downloading, the
+manager looks for one of the engines `engines.toml` lists for that content —
+detected on the machine, installed, or arriving in the same command — and says
+so in the plan when it finds none. It installs either way: a format implies
+its player without any registry saying so, and refusing because *this*
+registry has no entry would mistake what we know for what the machine can do. Adding an engine means one `[[engine]]` entry there: confirm it really
 plays the content, and if its registry carries no detect rules, read the name
 it installs as with `luthier-registry inspect <url>`. See
 [MANIFEST.md](MANIFEST.md#content-and-engines).

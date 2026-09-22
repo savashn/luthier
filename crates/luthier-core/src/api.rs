@@ -23,7 +23,7 @@ use crate::state::{
   ArtifactRecord, InstallReason, InstalledEntry, InstalledPackage, State, StateGuard,
 };
 use jiff::Timestamp;
-use luthier_manifest::{Content, Format, PackageId, Target};
+use luthier_manifest::{Format, PackageId, Target};
 use semver::Version;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -330,13 +330,6 @@ impl Session {
         provisioning_hint: external.provisioning_hint.clone(),
       })
       .or_else(|| {
-        unplayable.first().map(|found| BlockedReason::NoEngine {
-          id: found.package.clone(),
-          content: found.content.clone(),
-          engines: found.engines.clone(),
-        })
-      })
-      .or_else(|| {
         space
           .iter()
           .find(|s| s.is_short())
@@ -469,6 +462,7 @@ impl Session {
         .map(|entry| entry.manifest.name.clone())
         .unwrap_or_else(|| found.package.to_string()),
       content: found.content.label().to_owned(),
+      played_by: found.content.played_by(),
       engines: found
         .engines
         .iter()
@@ -548,20 +542,6 @@ impl Session {
       return Err(Error::Resolve(ResolveError::ExternalMissing {
         id: missing.id.clone(),
         provisioning_hint: missing.provisioning_hint.clone(),
-      }));
-    }
-
-    // Content nothing can play is refused for the same reason, and before
-    // the download for a better one: a DrumGizmo kit is gigabytes.
-    if let Some(found) = self
-      .unplayable(&resolution, index, guard.state())
-      .into_iter()
-      .next()
-    {
-      return Err(Error::Resolve(ResolveError::NoEngine {
-        id: found.package,
-        content: found.content,
-        engines: found.engines,
       }));
     }
 
@@ -1615,11 +1595,6 @@ pub enum BlockedReason {
     id: PackageId,
     provisioning_hint: Option<String>,
   },
-  NoEngine {
-    id: PackageId,
-    content: Content,
-    engines: Vec<PackageId>,
-  },
   NotEnoughSpace {
     path: PathBuf,
     required: u64,
@@ -1638,15 +1613,6 @@ impl BlockedReason {
       } => Error::Resolve(ResolveError::ExternalMissing {
         id: id.clone(),
         provisioning_hint: provisioning_hint.clone(),
-      }),
-      BlockedReason::NoEngine {
-        id,
-        content,
-        engines,
-      } => Error::Resolve(ResolveError::NoEngine {
-        id: id.clone(),
-        content: content.clone(),
-        engines: engines.clone(),
       }),
       BlockedReason::NotEnoughSpace {
         path,
@@ -1776,12 +1742,20 @@ pub struct MissingExternal {
   pub provisioning_hint: Option<String>,
 }
 
-/// A package whose content nothing on this machine can play.
+/// A package whose content nothing on this machine appears to play.
+///
+/// Reported, never refused. What a user does with a folder of samples is
+/// their business, and a registry that names no engine for a format is this
+/// manager being ignorant rather than the machine being unable — which is
+/// exactly the case with a registry that has no field for what plays what.
 #[derive(Debug, Clone, Serialize)]
 pub struct UnplayableContent {
   pub id: String,
   pub name: String,
   pub content: String,
+  /// What kind of software plays this format, in prose. True whatever any
+  /// registry knows, so the warning is useful even with an empty `engines`.
+  pub played_by: String,
   /// Any one of these would do, in the order the registries list them.
   pub engines: Vec<EngineChoice>,
 }

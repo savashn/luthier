@@ -6,7 +6,7 @@
 //! status, the two digests that differed — rather than collapsing to
 //! "installation failed".
 
-use luthier_manifest::{Content, Format, PackageId, Sha256Hash, Target};
+use luthier_manifest::{Format, PackageId, Sha256Hash, Target};
 use semver::{Version, VersionReq};
 use std::path::PathBuf;
 
@@ -527,17 +527,6 @@ pub enum ResolveError {
     provisioning_hint: Option<String>,
   },
 
-  /// A library's content has nothing on the system to play it. Refused
-  /// before downloading: several gigabytes of samples nothing can open is not
-  /// an installation.
-  #[error("not installing {id}: nothing on this system can play its {} content", .content.label())]
-  NoEngine {
-    id: PackageId,
-    content: Content,
-    /// Any one of these would do. Empty when no registry names an engine.
-    engines: Vec<PackageId>,
-  },
-
   /// An imported environment file named a version the registry cannot
   /// supply. Falling back to another version would defeat the point of a
   /// pinned export, so this is fatal (§51).
@@ -573,24 +562,6 @@ impl ResolveError {
                      it but cannot install it."
           .into(),
       )),
-      ResolveError::NoEngine {
-        content, engines, ..
-      } => Some(if engines.is_empty() {
-        format!(
-          "No configured registry names an engine for {} content. Run `luthier refresh`; \
-           if that does not help, the bench's engines.toml has no entry for it yet.",
-          content.label()
-        )
-      } else {
-        format!(
-          "Install any one of these first: {}.",
-          engines
-            .iter()
-            .map(PackageId::as_str)
-            .collect::<Vec<_>>()
-            .join(", ")
-        )
-      }),
       ResolveError::NothingInstallable { declared, .. } => Some(match declared.as_slice() {
         [] => "Its metadata does not say what the archive holds, so the install rules \
                would have to be read out of it — and a release that says nothing is \
