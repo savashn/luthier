@@ -39,10 +39,10 @@ That is what Phase 0 is about.
 Nothing else matters until this is done. Every item below is small; together
 they are the difference between a local working directory and a project.
 
-### 0.1 Put both repositories under version control
+### 0.1 Put both repositories under version control — half done
 
-`luthier/` and `luthier-pkgs/` are not git repositories. No commits, no
-remotes. Two consequences follow: `.github/workflows/ci.yml` and
+`luthier/` is a git repository now. `luthier-pkgs/` is not, and neither has a
+remote. Two consequences follow: `.github/workflows/ci.yml` and
 `.github/workflows/validate.yml` have never executed, and the TOML migration
 and category system were verified only on one machine.
 
@@ -94,18 +94,44 @@ true the moment 0.1 lands.
 The only install path today is `cargo build --release` with a Rust 1.89
 toolchain. The people this tool is for are musicians.
 
-**Done when:** a tagged `v0.1.0` publishes a static `luthier` binary for
-linux-x86_64, `luthier refresh` works on a clean machine with no flags, and
-the README's install section leads with the binary rather than with cargo.
+The machinery for this exists: `.github/workflows/release.yml` builds a
+statically linked musl binary on a `v*` tag, asserts it really is static
+rather than trusting the target triple, packages it with the man page and
+completions the binary generates itself, and publishes it with its SHA-256
+under a versionless asset name so the README can name a `releases/latest`
+URL that stays correct. Release notes come from `CHANGELOG.md`, and the job
+refuses a tag that disagrees with the workspace version. The README's install
+section leads with that download.
 
-### 0.4 Repository hygiene
+What is left is the part only an account can do: tag, let it run, and publish
+the registry so `config.rs`'s default URL resolves.
 
-`CHANGELOG.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates, and a
-`.gitignore` for the registry. Small, and cheaper to do before there are
-contributors than after.
+**Done when:** ~~the README's install section leads with the binary rather
+than with cargo~~, a tagged `v0.1.0` publishes a static `luthier` binary for
+linux-x86_64, and `luthier refresh` works on a clean machine with no flags.
 
-**Done when:** present in both repositories, with the changelog covering
-`v0.1.0`.
+### 0.4 Repository hygiene — done
+
+`CHANGELOG.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates in
+both repositories, and a `.gitignore` for the registry that keeps the
+archives `hash-url` and `inspect` pull down out of a repository whose whole
+point is that it mirrors nothing.
+
+The templates are not generic. The manager's feature-request form names the
+deliberate ceilings and where their reasoning lives, so a request to lift one
+starts by answering it; its pull-request template lists the four CI gates and
+says which one surprises people and why. The registry's asks first whether a
+package belongs in the Open Audio Stack registry instead, and its
+pull-request template asks for the checksum and the install rules to have
+been *derived* rather than written.
+
+The two changelogs cover different things on purpose: the manager's is
+releases of a program, the registry's is changes to the shape of a
+collection. A package being added is not a change to either, which is what
+the git log is for.
+
+**Done when:** ~~present in both repositories, with the changelog covering
+`v0.1.0`~~.
 
 ---
 

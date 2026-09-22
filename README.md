@@ -71,6 +71,30 @@ and that is not a workaround. It is the other half of a division of labour.
 
 ## Install
 
+One statically linked binary, no runtime to install and no toolchain to build
+it with:
+
+```console
+$ curl -LO https://github.com/luthier/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
+$ curl -LO https://github.com/luthier/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz.sha256
+$ sha256sum -c luthier-x86_64-linux.tar.gz.sha256
+$ tar xzf luthier-x86_64-linux.tar.gz
+$ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
+```
+
+Check the checksum rather than skipping it. A manager whose whole job is
+verifying what it downloads should be worth the same courtesy.
+
+The tarball also carries the man page and shell completions, which the binary
+generates itself:
+
+```console
+$ install -Dm644 luthier-*/luthier.1 ~/.local/share/man/man1/luthier.1
+$ luthier completions zsh > ~/.zfunc/_luthier
+```
+
+From source, with a Rust 1.89 or newer toolchain:
+
 ```console
 $ cargo build --release
 $ install -Dm755 target/release/luthier ~/.local/bin/luthier
