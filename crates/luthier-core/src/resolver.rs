@@ -602,16 +602,11 @@ mod tests {
   }
 
   #[test]
-  fn sample_content_is_refused_the_same_way_and_says_so() {
-    // A library declares `library` and nothing else. Rules for content
-    // cannot be read out of a tree, so this is the same refusal with a
-    // different reason — and the alternative is fetching gigabytes of
-    // samples to find that out.
+  fn sample_content_resolves_because_its_rule_is_read_from_the_archive_shape() {
+    // A library declares `library` and nothing else. The archive's shape
+    // says where the content is, so there is something to plan.
     let fixture = Fixture::new().add_derived("kit", &["library"]);
-    let err = resolve_one(&fixture, "kit").unwrap_err();
-
-    let hint = err.hint().unwrap_or_default();
-    assert!(hint.contains("sample content"), "{hint}");
+    assert_eq!(resolve_one(&fixture, "kit").unwrap(), vec!["kit"]);
   }
 
   #[test]

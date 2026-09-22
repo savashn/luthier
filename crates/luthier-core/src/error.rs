@@ -598,10 +598,6 @@ impl ResolveError {
                manager installs; your distribution's package manager is the answer for \
                the first, and there is no second answer for VST2."
           .into(),
-        [Format::Library] => "It is sample content, and rules for content cannot be read \
-               out of an archive: nothing in a tree says which directory is the library. \
-               A bench manifest that declares the rules by hand installs it today."
-          .into(),
         other => format!(
           "It declares {}, and rules read out of an archive can only cover {}.",
           other

@@ -144,12 +144,20 @@ archive by `install::derive`, the same code behind `luthier-registry inspect`.
 rules someone reviewed. See [SECURITY.md](../SECURITY.md) for why that
 distinction is the one that matters.
 
-Derivation reads plugins and only plugins, so an artifact whose rules must be
-derived can promise no more than `install::derive::DERIVABLE_FORMATS` covers.
-`install::installable` is what checks that *before* a download: a release
-declaring nothing on the list — a VST2 build, a standalone program, a folder of
-samples — is refused by the resolver rather than fetched in full and turned
-down by the installer afterwards.
+An artifact whose rules must be derived can promise no more than
+`install::derive::DERIVABLE_FORMATS` covers, and `install::installable` checks
+that *before* a download: a release declaring nothing on the list — a VST2
+build, a standalone program — is refused by the resolver rather than fetched in
+full and turned down by the installer afterwards.
+
+Content is on that list but is read differently. A plugin announces itself with
+an extension and a shape; a folder of samples announces nothing, so what is read
+is the shape of the *archive* — one wrapper directory, or none — and it installs
+as `<library root>/<package id>`. The ID rather than the wrapper's name because
+the wrapper is `BillieDrum-48fadc01…`, renamed on every release; the ID is
+already a validated path component and is what the user typed. Shape is reported
+for every tree and acted on only where the artifact declares `library`, so a
+plugin release that happens to hold no plugin is never installed as content.
 
 **`ArtifactSource`** — expressed as the `type` field on a manifest's `source`.
 `http` covers GitHub and GitLab release assets, which are ordinary URLs; `file`

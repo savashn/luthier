@@ -17,6 +17,14 @@
 //! DPF-Plugins, so it is not a CLAP file and no rule is produced for it —
 //! installing it would put something in `~/.clap` no host is guaranteed to
 //! load. Anything unrecognised is simply not installed.
+//!
+//! Content is read differently, because it announces itself differently. A
+//! plugin is a file or a bundle with a conventional extension; a sample
+//! library is a folder of `.sfz` and `.wav` that looks like any other folder.
+//! So what is read for content is the *shape of the archive* — one wrapper
+//! directory, or none — and whether that shape is content at all is the
+//! manifest's answer, not this module's: [`ContentSource`] is reported for
+//! every tree and used only where an artifact says it holds a `library`.
 
 use crate::error::{Error, Result};
 use luthier_manifest::{ArchivePath, EntryKind, Format, InstallRule};
@@ -24,17 +32,30 @@ use std::path::Path;
 
 /// The formats a rule can be *derived* for.
 ///
-/// Narrower than `validate::INSTALLABLE_FORMATS`, and deliberately so. The
-/// installer can place a `library`, but nothing in a tree says which directory
-/// *is* the library: a plugin announces itself with an extension and a shape,
-/// and a folder of samples announces nothing. So a source that carries no
-/// rules of its own can offer plugins and not content, and this is the list
-/// that says which is which.
-///
 /// Read before downloading, by [`crate::install::installable`]. A release that
-/// declares nothing on it is refused at that point rather than after its bytes
-/// are on disk.
-pub const DERIVABLE_FORMATS: &[Format] = &[Format::Clap, Format::Vst3, Format::Lv2];
+/// declares nothing on this list is refused at that point rather than after
+/// its bytes are on disk.
+///
+/// The plugin formats are read from a tree by [`recognise`], on an extension
+/// and a shape. `Library` is not: it is read from the archive's shape by
+/// [`content_of`], and only where the artifact says it holds one.
+pub const DERIVABLE_FORMATS: &[Format] =
+  &[Format::Clap, Format::Vst3, Format::Lv2, Format::Library];
+
+/// Where a package's content sits in an extracted archive.
+///
+/// Both shapes are common, and both were counted in the Open Audio Stack
+/// registry's sample libraries before this existed: thirteen unpack to one
+/// directory named after a tag or a commit, fourteen unpack flat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContentSource {
+  /// The single directory the archive unpacks to. Its name carries a commit
+  /// or a tag more often than not, which is why nothing installs under it.
+  Directory(ArchivePath),
+  /// Everything extracted. The archive has no wrapper directory, so there is
+  /// no name in it to use and nothing to descend into.
+  Root,
+}
 
 /// One entry seen while walking an extracted archive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +75,11 @@ pub struct Derived {
   pub listing: Vec<Listed>,
   /// Rules for the recognised entries, sorted with the listing.
   pub rules: Vec<InstallRule>,
+  /// What would be installed if this archive holds content. Reported for
+  /// every non-empty tree and acted on only where the artifact declares a
+  /// `library`, so a plugin archive that happens to hold no plugin is never
+  /// installed as a folder of samples.
+  pub content: Option<ContentSource>,
 }
 
 /// Walks an extracted archive and derives what to install from it.
@@ -67,12 +93,44 @@ pub fn from_tree(root: &Path) -> Result<Derived> {
   let mut derived = Derived::default();
   if root.is_dir() {
     walk(root, root, &mut derived)?;
+    derived.content = content_of(root)?;
   }
   derived.listing.sort_by(|a, b| a.path.cmp(&b.path));
   derived
     .rules
     .sort_by(|a, b| (&a.format, a.source.as_str()).cmp(&(&b.format, b.source.as_str())));
   Ok(derived)
+}
+
+/// Reads the shape of an extracted archive, for a package that holds content.
+///
+/// One directory and nothing beside it is a wrapper, exactly as a forge's
+/// branch tarball is; anything else is taken whole. The same rule as
+/// `HttpSnapshotRegistry::unwrap_single_root`, for the same reason: what
+/// upstream wrapped its files in is not part of what it published.
+///
+/// `None` only for an empty tree, which is an archive with nothing in it.
+pub fn content_of(root: &Path) -> Result<Option<ContentSource>> {
+  let mut entries = std::fs::read_dir(root)
+    .map_err(|e| Error::io("list", root, e))?
+    .collect::<std::result::Result<Vec<_>, _>>()
+    .map_err(|e| Error::io("list", root, e))?;
+  entries.sort_by_key(|entry| entry.file_name());
+
+  match entries.as_slice() {
+    [] => Ok(None),
+    [only] if only.path().is_dir() => {
+      let name = only.file_name();
+      match name.to_str().map(ArchivePath::new) {
+        // A name a manifest cannot express — invalid UTF-8, or anything
+        // `ArchivePath` refuses — is not descended into. The whole tree
+        // installs instead, which loses nothing and invents nothing.
+        Some(Ok(path)) => Ok(Some(ContentSource::Directory(path))),
+        _ => Ok(Some(ContentSource::Root)),
+      }
+    }
+    _ => Ok(Some(ContentSource::Root)),
+  }
 }
 
 /// The format an entry is, judged by its extension *and* its shape on disk.
@@ -190,6 +248,12 @@ mod tests {
     // either refused for something that would have worked or downloaded
     // for something that never could.
     for format in DERIVABLE_FORMATS {
+      // Content is the exception: it is read from the shape of the
+      // archive rather than from an extension, because a folder of
+      // samples looks like any other folder.
+      if format == &Format::Library {
+        continue;
+      }
       let is_dir = format.entry_kind() == Some(EntryKind::Bundle);
       let path = std::path::PathBuf::from(format!("Thing.{format}"));
       assert_eq!(
@@ -198,9 +262,66 @@ mod tests {
         "{format} is listed as derivable and is not recognised"
       );
     }
-    // The one installable format that cannot be derived, which is the
-    // whole reason this list exists.
-    assert!(!DERIVABLE_FORMATS.contains(&Format::Library));
+    // And the other half of that exception: nothing in a tree is
+    // recognised as content by name.
+    assert_eq!(
+      recognise(std::path::Path::new("Samples.library"), true),
+      None
+    );
+  }
+
+  #[test]
+  fn one_wrapper_directory_is_the_content_and_anything_else_is_the_whole_tree() {
+    // The two shapes the registry's sample libraries actually ship in: a
+    // GitHub source archive wrapped in `<name>-<commit>/`, and a release
+    // asset unpacked flat.
+    let dir = tempfile::tempdir().unwrap();
+    let wrapped = dir.path().join("wrapped");
+    fs::create_dir_all(wrapped.join("BillieDrum-48fadc0/Samples")).unwrap();
+    fs::write(wrapped.join("BillieDrum-48fadc0/BillieDrum.sfz"), b"").unwrap();
+    assert_eq!(
+      from_tree(&wrapped).unwrap().content,
+      Some(ContentSource::Directory(
+        ArchivePath::new("BillieDrum-48fadc0").unwrap()
+      ))
+    );
+
+    let flat = dir.path().join("flat");
+    fs::create_dir_all(flat.join("samples")).unwrap();
+    fs::write(flat.join("AVL_Drumkits_Percussion-1.0.sfz"), b"").unwrap();
+    fs::write(flat.join("LICENSE"), b"").unwrap();
+    assert_eq!(from_tree(&flat).unwrap().content, Some(ContentSource::Root));
+
+    // One *file* at the root is not a wrapper to descend into.
+    let single_file = dir.path().join("single");
+    fs::create_dir_all(&single_file).unwrap();
+    fs::write(single_file.join("kit.sfz"), b"").unwrap();
+    assert_eq!(
+      from_tree(&single_file).unwrap().content,
+      Some(ContentSource::Root)
+    );
+
+    // An empty archive holds no content, and says so.
+    let empty = dir.path().join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(from_tree(&empty).unwrap().content, None);
+  }
+
+  #[test]
+  fn content_is_reported_for_a_plugin_archive_too_and_the_caller_decides() {
+    // Shape is all this reads. Whether a tree *is* content is the
+    // manifest's answer — installing a plugin release that happened to
+    // hold no plugin as a folder of samples would be a guess.
+    let dir = tempfile::tempdir().unwrap();
+    version_nested(dir.path());
+    let derived = from_tree(dir.path()).unwrap();
+    assert!(!derived.rules.is_empty());
+    assert_eq!(
+      derived.content,
+      Some(ContentSource::Directory(
+        ArchivePath::new("wstd-eq-v1.1.1").unwrap()
+      ))
+    );
   }
 
   #[test]

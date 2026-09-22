@@ -650,9 +650,17 @@ impl Session {
       // `luthier-registry inspect` shows a contributor — one
       // implementation, so what the tool promises is what happens here.
       let derived;
+      // Content is installed only where the artifact says it holds some.
+      // Reading it out of the shape of any archive that happened to carry
+      // no plugin would install a broken plugin release as a folder of
+      // samples, which is a guess, and the wrong one.
+      let mut content = None;
       let rules: &[luthier_manifest::InstallRule] = if artifact.derive_install {
         derived = install::derive::from_tree(&extract_root)?;
-        if derived.rules.is_empty() {
+        if artifact.provides.contains(&Format::Library) {
+          content = derived.content.clone();
+        }
+        if derived.rules.is_empty() && content.is_none() {
           return Err(Error::Install(InstallError::NothingToInstall {
             id: package.id().clone(),
             version: package.version.clone(),
@@ -665,6 +673,9 @@ impl Session {
         // upstream metadata is wrong, which is a thing to fix there
         // rather than absorb here.
         for missing in missing_formats(&artifact.provides, &derived.rules) {
+          if missing == Format::Library && content.is_some() {
+            continue;
+          }
           warnings.push(format!(
             "{} {} claims to provide {missing}, and the archive holds none",
             package.id(),
@@ -676,13 +687,22 @@ impl Session {
         &artifact.install
       };
 
-      let items = install::plan(
+      let mut items = install::plan(
         &self.layout,
         &extract_root,
         rules,
         package.id(),
         guard.state(),
       )?;
+      if let Some(content) = &content {
+        items.push(install::plan_content(
+          &self.layout,
+          &extract_root,
+          content,
+          package.id(),
+          guard.state(),
+        )?);
+      }
 
       let mut files: Vec<InstalledEntry> = Vec::new();
       for item in &items {

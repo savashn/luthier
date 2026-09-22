@@ -79,6 +79,57 @@ impl Fixture {
     }
   }
 
+  /// A `.tar.gz` whose content sits at the root, with no wrapper directory —
+  /// how half the Open Audio Stack registry's libraries are published.
+  fn make_flat_library_artifact(&self, name: &str) -> Artifact {
+    let mut builder = tar::Builder::new(Vec::new());
+    append(&mut builder, "kit.sfz", b"<region> sample=kick.wav", 0o644);
+    append(&mut builder, "samples/kick.wav", b"RIFF....WAVE", 0o644);
+    append(&mut builder, "LICENSE", b"CC0", 0o644);
+
+    let tar = builder.into_inner().expect("tar");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&tar).unwrap();
+    let bytes = encoder.finish().unwrap();
+
+    let path = self
+      .dir
+      .path()
+      .join("artifacts")
+      .join(format!("{name}-flat.tar.gz"));
+    std::fs::write(&path, &bytes).unwrap();
+
+    Artifact {
+      url: url::Url::from_file_path(&path).unwrap().to_string(),
+      sha256: luthier_core::fsutil::hash_file(&path).unwrap().to_string(),
+      size: bytes.len() as u64,
+      path,
+    }
+  }
+
+  /// A library manifest carrying no install rules, as everything from a
+  /// source that publishes none arrives.
+  fn add_library_derived(&self, id: &str, version: &str, artifact: &Artifact) {
+    let name = capitalise(id);
+    let manifest = format!(
+      "schema = 1\nid = \"{id}\"\nname = \"{name}\"\nkind = \"library\"\n\
+             category = \"sample-library\"\ntags = [\"orchestral\"]\n\
+             description = \"Test library {id}.\"\n\
+             license = {{ kind = \"open-source\", spdx = \"CC0-1.0\" }}\n\
+             \n[[releases]]\nversion = \"{version}\"\n\
+             \n[[releases.artifacts]]\n\
+             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             source = {{ type = \"file\", url = \"{}\" }}\n\
+             archive = \"tar.gz\"\n\
+             size = {}\n\
+             checksum = {{ sha256 = \"{}\" }}\n\
+             provides = [\"library\"]\n\
+             derive_install = true\n",
+      artifact.url, artifact.size, artifact.sha256,
+    );
+    std::fs::write(self.registry().join(format!("plugins/{id}.toml")), manifest).unwrap();
+  }
+
   /// Writes a sample-library manifest.
   fn add_library(&self, id: &str, version: &str, source: &str, artifact: &Artifact) {
     let name = capitalise(id);
@@ -948,6 +999,49 @@ fn a_sample_library_installs_under_the_library_root() {
     .assert()
     .success();
   assert!(!installed.exists());
+}
+
+#[test]
+fn a_library_with_no_rules_installs_under_its_package_id() {
+  // What the Open Audio Stack registry publishes: `contains: sfz` and no
+  // install rules. The archive's shape says where the content is, and the
+  // package ID says what to call it — the directory in the archive is named
+  // after a commit and changes on every release, so installing under it
+  // would move the content out from under whatever plays it.
+  let fixture = Fixture::new();
+
+  let wrapped = fixture.make_library_artifact("BillieDrum-48fadc0");
+  fixture.add_library_derived("billiedrum", "1.0.0", &wrapped);
+  let flat = fixture.make_flat_library_artifact("avl");
+  fixture.add_library_derived("avl-percussions", "1.1.0", &flat);
+
+  fixture
+    .luthier()
+    .args(["install", "billiedrum", "avl-percussions"])
+    .assert()
+    .success();
+
+  let libraries = fixture.root().join("share/luthier/libraries");
+  // The wrapper directory is descended into, and its name is not used.
+  assert!(libraries.join("billiedrum/Strings/violin.sfz").is_file());
+  assert!(!libraries.join("BillieDrum-48fadc0").exists());
+  // A flat archive installs whole, under the same predictable name.
+  assert!(libraries.join("avl-percussions/kit.sfz").is_file());
+  assert!(libraries.join("avl-percussions/samples/kick.wav").is_file());
+
+  // Nothing went near a plugin root.
+  assert!(!fixture.clap_dir().join("billiedrum").exists());
+  assert!(!fixture.vst3_dir().join("avl-percussions").exists());
+
+  // Owned like anything else: verified and removed by recorded path.
+  fixture.luthier().args(["verify"]).assert().success();
+  fixture
+    .luthier()
+    .args(["remove", "billiedrum", "avl-percussions"])
+    .assert()
+    .success();
+  assert!(!libraries.join("billiedrum").exists());
+  assert!(!libraries.join("avl-percussions").exists());
 }
 
 #[test]

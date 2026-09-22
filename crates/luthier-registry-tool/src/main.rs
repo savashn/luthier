@@ -57,6 +57,13 @@ enum Command {
     /// Container format. Inferred from the filename when omitted.
     #[arg(long)]
     format: Option<String>,
+
+    /// The package ID, for an archive of sample content.
+    ///
+    /// Content installs under the ID rather than under whatever the archive
+    /// wrapped it in, so the suggestion needs one to be exact.
+    #[arg(long)]
+    id: Option<String>,
   },
 
   /// Generate an Ed25519 key pair for signing this bench's snapshots.
@@ -151,7 +158,11 @@ fn main() -> ExitCode {
     Command::HashUrl { url } => runtime().block_on(cmd_hash_url(&url)),
 
     #[cfg(feature = "authoring")]
-    Command::Inspect { archive, format } => cmd_inspect(&archive, format.as_deref()),
+    Command::Inspect {
+      archive,
+      format,
+      id,
+    } => cmd_inspect(&archive, format.as_deref(), id.as_deref()),
 
     #[cfg(feature = "authoring")]
     Command::Keygen { out } => cmd_keygen(&out),
@@ -497,6 +508,7 @@ async fn cmd_hash_url(url: &str) -> Result<bool, Box<dyn std::error::Error>> {
 fn cmd_inspect(
   archive_path: &Path,
   format: Option<&str>,
+  id: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
   let declared: ArchiveFormat = match format {
     Some(raw) => raw.parse().expect("parsing is infallible"),
@@ -534,7 +546,32 @@ fn cmd_inspect(
       println!("{}", render_rule(rule));
     }
   }
+
+  // The same answer the manager reaches for a package whose manifest
+  // declares `library`, printed here so a contributor writing rules by hand
+  // can see what deriving them would have produced.
+  if let Some(content) = &derived.content {
+    println!("\n{}", render_content(content, id));
+  }
+
   Ok(true)
+}
+
+#[cfg(feature = "authoring")]
+/// What a package of content would install, and where.
+fn render_content(content: &install::ContentSource, id: Option<&str>) -> String {
+  let name = id.unwrap_or("<package id>");
+  let what = match content {
+    install::ContentSource::Directory(path) => format!("{} (the archive's one directory)", path),
+    install::ContentSource::Root => "everything in the archive".to_owned(),
+  };
+  format!(
+    "As sample content, a manifest declaring `provides = [\"library\"]` and no install\n\
+     rules would install {what} as:\n\
+     \n    <library root>/{name}\n\
+     \nThe name is the package ID rather than anything in the archive, so the path\n\
+     stays put across releases."
+  )
 }
 
 #[cfg(feature = "authoring")]

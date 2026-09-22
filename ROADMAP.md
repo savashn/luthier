@@ -409,7 +409,10 @@ re-downloading the whole tree.
 Concrete content gaps, in order of how visible they are:
 
 - **`presets/` is empty.** The `preset-pack` category and kind both exist with
-  no manifest using them.
+  no manifest using them. Reading the Open Audio Stack registry's own
+  `presets/` index is the other half of this, and it now has an answer to
+  follow: content derives its rule from the archive's shape and installs under
+  the package ID, exactly as a `library` does.
 - **No impulse-response content.** The vision document promises IRs; the
   registry has plugins that *load* IRs and no IR collections.
 - **No aarch64 artifacts.** The schema models the target; an ARM Linux user can
@@ -480,17 +483,6 @@ Things without an answer yet, recorded so they are not mistaken for oversights.
 Import currently fails, which is right for reproducibility and unhelpful when a
 project simply moved. A `--skip-missing` flag is the obvious answer; whether it
 should also record what it skipped is not settled.
-
-**Where does a derived library install?** Rules read out of an archive cover
-plugins, because a plugin announces itself with an extension and a shape and a
-folder of samples announces nothing. So the ~25 sample libraries the Open Audio
-Stack registry carries are listed, refused before download, and told why, while
-the four in the bench install from hand-written rules. Deriving one means
-choosing the directory it lands in, and the archives make that concrete: a
-GitHub source tarball unpacks to `basic-harmonica-4b8d698a…`, a name that
-changes every release. The package ID is the obvious stable answer and is data
-rather than invention, but it is still the manager naming a destination, which
-is the line §14 draws. The same question blocks reading OAS's `presets/` index.
 
 **Should libraries be shared between environments?** They are per-environment
 today, which duplicates multi-gigabyte content. Hardlinking from a shared

@@ -46,6 +46,11 @@ The first release: everything below is new.
   discarding the pin, and a signature that fails to verify is refused
   whatever any flag says. `luthier-registry keygen` and `sign` are the
   publishing side.
+- **Sample content from a registry that carries no install rules.** Where an
+  artifact declares a `library`, the rule is read from the archive's shape —
+  one wrapper directory, or none — and the content installs as
+  `<library root>/<package id>`, a path that stays put across releases even
+  though the directory inside the archive is named after a commit.
 - **Refusal before the download.** A release is checked against what this
   build can actually install while the plan is being made: an artifact whose
   rules must be derived from its archive is refused unless it declares a

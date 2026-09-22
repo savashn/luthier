@@ -12,7 +12,7 @@
 pub mod derive;
 pub mod formats;
 
-pub use derive::{Derived, Listed};
+pub use derive::{ContentSource, Derived, Listed};
 pub use formats::{ClapInstaller, FormatInstaller, Vst3Installer, installer_for, installers};
 
 use crate::error::{Error, InstallError, Result};
@@ -115,6 +115,59 @@ pub fn plan(
   }
 
   Ok(items)
+}
+
+/// Plans the one item a package of content installs.
+///
+/// The destination is derived exactly as a plugin's is — a root from the
+/// [`Layout`], a leaf this function chooses — except that the leaf is the
+/// package ID rather than a name out of the archive. That is deliberate. The
+/// archives this exists for unpack to `BillieDrum-48fadc01…`, a directory
+/// named after a commit and renamed on every release, and half of them unpack
+/// with no directory at all. Installing under the ID gives one predictable
+/// path in both cases, and the ID is already a validated path component —
+/// lowercase, digits and hyphens, nothing else — which is what makes it safe
+/// to join.
+pub fn plan_content(
+  layout: &Layout,
+  extract_root: &Path,
+  content: &ContentSource,
+  package: &PackageId,
+  state: &State,
+) -> Result<PlannedItem> {
+  let installer = installer_for(&Format::Library)
+    .ok_or_else(|| Error::Install(InstallError::NoInstaller(Format::Library)))?;
+  let root = installer
+    .root(layout)
+    .ok_or_else(|| Error::Install(InstallError::NoInstaller(Format::Library)))?;
+
+  let source = match content {
+    ContentSource::Directory(path) => path.resolve_under(extract_root),
+    ContentSource::Root => extract_root.to_path_buf(),
+  };
+  if !source.is_dir() {
+    return Err(Error::Archive(crate::error::ArchiveError::MissingEntry {
+      path: match content {
+        ContentSource::Directory(path) => path.to_string(),
+        ContentSource::Root => ".".to_owned(),
+      },
+    }));
+  }
+
+  let destination = root.join(package.as_str());
+  if !destination.starts_with(root) || !layout.is_managed_location(&destination) {
+    return Err(Error::Install(InstallError::OutsideManagedRoot {
+      path: destination,
+    }));
+  }
+  check_conflict(&destination, package, state)?;
+
+  Ok(PlannedItem {
+    format: Format::Library,
+    source,
+    destination,
+    kind: EntryKind::Bundle,
+  })
 }
 
 /// Refuses to write over anything we do not already own (§30).
@@ -508,10 +561,9 @@ mod tests {
     // holds something, and names nothing this build installs.
     assert!(!installable(&derived(&[])));
 
-    // Sample content. The installer can place a library; no derivation can
-    // say which directory in a tree is one.
-    assert!(!installable(&derived(&[Format::Library])));
-    // Mixed is enough, because the plugin half is derivable.
+    // Sample content: the archive's shape says where it is, and the
+    // manifest's `library` says that is what it holds.
+    assert!(installable(&derived(&[Format::Library])));
     assert!(installable(&derived(&[Format::Library, Format::Clap])));
   }
 

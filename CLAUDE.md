@@ -167,14 +167,20 @@ the crate map keeps that out of `luthier-manifest`.
   pinned key when a refresh was accepted unsigned, or one `--allow-unsigned`
   would disable verification permanently. `bench untrust` is the deliberate
   way to drop it.
-- **Derived rules can only promise what derivation recognises.** `install::
-  derive` reads plugins out of a tree; nothing in a tree says which directory
-  is a `library`. So `install::installable` refuses an artifact whose rules
-  are derived and whose `provides` names nothing in `DERIVABLE_FORMATS`,
-  before the download rather than after — the Open Audio Stack registry
-  carries standalone programs, VST2 builds and sample content, and each one
-  used to be fetched in full and then turned down by the installer. The two
-  lists have a test that keeps them in step.
+- **Derived rules can only promise what derivation recognises.**
+  `install::installable` refuses an artifact whose rules are derived and whose
+  `provides` names nothing in `derive::DERIVABLE_FORMATS`, before the download
+  rather than after — the Open Audio Stack registry carries standalone
+  programs and VST2 builds, and each used to be fetched in full and then
+  turned down by the installer. A test keeps the list and `recognise` in step.
+- **Content is derived from the archive's shape, not from a name.** A plugin
+  announces itself with an extension; a folder of samples does not. So
+  `derive::content_of` reads one wrapper directory or none, and
+  `install::plan_content` installs it as `<library root>/<package id>` —
+  the ID, because the wrapper is named after a commit and changes on every
+  release. Shape is reported for *every* tree and acted on only where the
+  artifact declares `library`; deriving content whenever no plugin turned up
+  would install a broken plugin release as a folder of samples.
 - **Only the workspace copy is transient.** `space_needed` charges the cache
   and the install root the plan's total but the workspace only its largest
   single package, because `InstallTransaction::commit` deletes the workspace
