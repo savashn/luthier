@@ -19,14 +19,15 @@ one category from a closed list plus free-form tags. Extraction runs through
 one hardened policy with a 38-case malicious-archive corpus.
 
 Two registries are read together. The Open Audio Stack registry supplies
-anything with a downloadable release binary — 456 of its 559 packages
-translate, 281 of them with a Linux x86_64 artifact — and its install rules are
-derived from the verified archive rather than declared. The curated bench holds
-9 manifests: what OAS cannot express — two `external` engines, four sample
-libraries, one pack — plus two shadows, each of which says why it exists, and
-an `engines.toml` naming what plays SFZ, SoundFont 2 and DrumGizmo content from
-either registry. A library whose engines are all absent is reported before
-download and installed anyway — the confirmation is where the user decides. Where both carry an ID, the bench wins.
+anything with a downloadable release binary — 458 of its 560 packages
+translate, 293 of them installable on Linux x86_64 — and its install rules are
+derived from the verified archive rather than declared. The curated bench is
+down to 6 manifests: what OAS cannot express — two `external` engines, three
+DrumGizmo kits it does not carry, and one shadow for an install rule nothing
+can derive — plus an `engines.toml` naming what plays SFZ, SoundFont 2 and
+DrumGizmo content from either registry. A library whose engines are all absent
+is reported before the download and installed anyway; the confirmation is where
+the user decides. Where both registries carry an ID, the bench wins.
 
 A bench's origin is pinned on first fetch, and a bench that publishes an
 Ed25519 signature has it verified between the download and the extractor, with
@@ -148,9 +149,9 @@ the git log is for.
 ## Phase 1 — Make the registry maintainable
 
 A curated registry dies of neglect, not of bad design. That is why the bench
-carries only what OAS cannot: nine manifests, of which six have an artifact
-pinned to a tag upstream will move past. The rest — two `external` engines and
-one pack — have nothing to go stale.
+carries only what OAS cannot: six manifests, of which three have an artifact
+pinned to a version upstream will move past. The rest — two `external` engines
+and one shadow — have nothing of their own to go stale.
 
 The `external` entries were cut from twenty to two on the same reasoning. An
 entry nothing depends on is an unverified claim — a bundle name and an
