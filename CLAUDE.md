@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 412 tests, fully offline
+cargo test --workspace                     # 427 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -151,6 +151,11 @@ the crate map keeps that out of `luthier-manifest`.
   keeps the rest; `remove_dir_all` never followed a symlink, and deleting file
   by file must not start. `update` refuses up front (`LocalChanges`) rather
   than silently discarding the same edits.
+- **A bare file is named by its URL.** The cache knows an artifact only by
+  digest, and for `archive = "none"` the published name is what says the file
+  is a CLAP. `archive::place` puts it through `SafeExtractor` like any entry
+  and sniffs the bytes first; `ArchiveFormat::from_filename` is the one list
+  of what may be bare (`.clap`, `.sf2` — never `.vst3`, a directory on Linux).
 - **`Path::starts_with` is not containment.** `~/.clap/../x` starts with
   `~/.clap`. `Layout::is_managed_location` requires plain components strictly
   below a root, and never a root itself — roots nest, so that means *any*
@@ -283,7 +288,7 @@ Phases 0–6 of the spec are complete: refresh, search, info, install, list,
 verify, update, remove, cleanup, pin/unpin, with dependency resolution and the
 hardened extractor.
 
-LV2 and sample libraries install; 7z extracts; tar hard links are materialised
+LV2 and sample libraries install; 7z extracts; a bare CLAP or SoundFont installs; tar hard links are materialised
 as copies; `external` detection searches the system plugin directories as well
 as the managed roots; environments (`luthier env`, `--env`, `LUTHIER_ENV`)
 redirect the per-installation parts of a `Layout`.

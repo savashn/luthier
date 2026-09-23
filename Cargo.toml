@@ -55,6 +55,7 @@ dirs = "6.0"
 tempfile = "3.27"
 async-trait = "0.1"
 url = { version = "2", features = ["serde"] }
+percent-encoding = "2"
 
 assert_cmd = "2.2"
 predicates = "3.1"

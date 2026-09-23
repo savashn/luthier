@@ -212,6 +212,12 @@ impl Format {
 impl ArchiveFormat {
   /// Infer the container from a filename. Order matters: `.tar.gz` must be
   /// tested before `.gz` would be.
+  ///
+  /// A file that is complete on its own is `none`: a CLAP on Linux is one
+  /// shared object, and a SoundFont carries its samples inside it. Nothing
+  /// else is. A `.vst3` or `.lv2` is a directory on Linux, so a single file
+  /// by that name is an archive mislabelled or a build for another
+  /// platform; `.sfz` names samples beside it; `.so` is VST2.
   pub fn from_filename(name: &str) -> Option<Self> {
     let lower = name.to_ascii_lowercase();
     for (suffix, format) in [
@@ -221,6 +227,8 @@ impl ArchiveFormat {
       (".txz", ArchiveFormat::TarXz),
       (".zip", ArchiveFormat::Zip),
       (".7z", ArchiveFormat::SevenZ),
+      (".clap", ArchiveFormat::None),
+      (".sf2", ArchiveFormat::None),
     ] {
       if lower.ends_with(suffix) {
         return Some(format);
@@ -315,6 +323,16 @@ mod tests {
       Some(ArchiveFormat::SevenZ)
     );
     assert_eq!(ArchiveFormat::from_filename("plugin.so"), None);
+    assert_eq!(
+      ArchiveFormat::from_filename("LibreKick_linux_x86_64.clap"),
+      Some(ArchiveFormat::None)
+    );
+    assert_eq!(
+      ArchiveFormat::from_filename("Modern.Kit.sf2"),
+      Some(ArchiveFormat::None)
+    );
+    // A bundle on Linux, so never a bare file.
+    assert_eq!(ArchiveFormat::from_filename("Plugin.vst3"), None);
   }
 
   #[test]

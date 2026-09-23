@@ -1945,3 +1945,169 @@ fn an_update_does_not_delete_what_the_user_changed() {
   assert!(!mine.exists());
   assert!(stdout_of(&fixture.luthier().args(["list"]).output().unwrap()).contains("1.2.0"));
 }
+
+impl Fixture {
+  /// A file published as itself, under `name`, with no container around it.
+  fn make_bare(&self, name: &str, bytes: &[u8]) -> Artifact {
+    let dir = self.dir.path().join("artifacts/bare");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, bytes).unwrap();
+    Artifact {
+      url: url::Url::from_file_path(&path).unwrap().to_string(),
+      sha256: luthier_core::fsutil::hash_file(&path).unwrap().to_string(),
+      size: bytes.len() as u64,
+      path,
+    }
+  }
+
+  /// A manifest for a bare artifact. `rules` is the TOML after `provides`:
+  /// an `install` line, or `derive_install = true` for one from a source
+  /// that publishes none.
+  fn add_bare(
+    &self,
+    id: &str,
+    kind: &str,
+    extra: &str,
+    artifact: &Artifact,
+    provides: &str,
+    rules: &str,
+  ) {
+    let name = capitalise(id);
+    let manifest = format!(
+      "schema = 1\nid = \"{id}\"\nname = \"{name}\"\nkind = \"{kind}\"\n\
+             category = \"instrument\"\ntags = [\"test\"]\n\
+             description = \"Test package {id}.\"\n{extra}\
+             license = {{ kind = \"open-source\", spdx = \"MIT\" }}\n\
+             \n[[releases]]\nversion = \"1.0.0\"\n\
+             \n[[releases.artifacts]]\n\
+             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             source = {{ type = \"file\", url = \"{}\" }}\n\
+             archive = \"none\"\n\
+             size = {}\n\
+             checksum = {{ sha256 = \"{}\" }}\n\
+             provides = [{provides}]\n{rules}\n",
+      artifact.url, artifact.size, artifact.sha256,
+    );
+    std::fs::write(self.registry().join(format!("plugins/{id}.toml")), manifest).unwrap();
+  }
+}
+
+#[test]
+fn a_bare_clap_with_a_written_rule_installs_and_removes() {
+  // `archive = "none"` was in the schema and the validator from the start,
+  // and the installer refused every one of them.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_bare("Kick.clap", &elf_shared_object());
+  fixture.add_bare(
+    "kick",
+    "plugin",
+    "",
+    &artifact,
+    "\"clap\"",
+    r#"install = [{ format = "clap", source = "Kick.clap", kind = "file" }]"#,
+  );
+
+  fixture
+    .luthier()
+    .args(["install", "kick"])
+    .assert()
+    .success();
+  assert_eq!(
+    std::fs::read(fixture.clap_dir().join("Kick.clap")).unwrap(),
+    elf_shared_object()
+  );
+  fixture.luthier().args(["verify"]).assert().success();
+
+  fixture
+    .luthier()
+    .args(["remove", "kick"])
+    .assert()
+    .success();
+  assert!(!fixture.clap_dir().join("Kick.clap").exists());
+}
+
+#[test]
+fn a_bare_clap_from_a_source_without_rules_installs_under_its_published_name() {
+  // How LibreKick, FreqChain and Delax arrive from the Open Audio Stack
+  // registry: the name in the URL is the only thing saying what it is.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_bare("LibreKick_linux_x86_64.clap", &elf_shared_object());
+  fixture.add_bare(
+    "librekick",
+    "plugin",
+    "",
+    &artifact,
+    "\"clap\"",
+    "derive_install = true",
+  );
+
+  fixture
+    .luthier()
+    .args(["install", "librekick"])
+    .assert()
+    .success();
+  assert!(
+    fixture
+      .clap_dir()
+      .join("LibreKick_linux_x86_64.clap")
+      .is_file()
+  );
+}
+
+#[test]
+fn a_bare_clap_that_is_not_a_plugin_is_refused() {
+  // Placed as a file is not the same as trusted as a plugin: the CLAP
+  // installer still checks it is a shared object.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_bare("Fake.clap", b"#!/bin/sh\necho hi\n");
+  fixture.add_bare(
+    "fake",
+    "plugin",
+    "",
+    &artifact,
+    "\"clap\"",
+    "derive_install = true",
+  );
+
+  let output = fixture
+    .luthier()
+    .args(["install", "fake"])
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  assert!(!fixture.clap_dir().join("Fake.clap").exists());
+}
+
+#[test]
+fn a_bare_soundfont_installs_as_a_library_under_its_package_id() {
+  // `modernkit`: a SoundFont carries its samples inside it, so the one
+  // file is the whole library.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_bare("Modern.Kit.sf2", b"RIFF....sfbk");
+  fixture.add_bare(
+    "modernkit",
+    "library",
+    "content = [\"sf2\"]\n",
+    &artifact,
+    "\"library\"",
+    "derive_install = true",
+  );
+
+  fixture
+    .luthier()
+    .args(["install", "modernkit"])
+    .assert()
+    .success();
+  let installed = fixture
+    .root()
+    .join("share/luthier/libraries/modernkit/Modern.Kit.sf2");
+  assert_eq!(std::fs::read(&installed).unwrap(), b"RIFF....sfbk");
+
+  fixture
+    .luthier()
+    .args(["remove", "modernkit"])
+    .assert()
+    .success();
+  assert!(!installed.exists());
+}

@@ -173,7 +173,7 @@ target = { os = "linux", arch = "x86_64" }
 |---|---|---|
 | `target` | yes | `{ os, arch }`. Currently `linux` with `x86_64`/`aarch64`. |
 | `source` | yes | `{ type = "http" \| "file", url = "..." }`. |
-| `archive` | yes | `tar.gz`, `tar.xz`, `zip`, `7z`, `none`. |
+| `archive` | yes | `tar.gz`, `tar.xz`, `zip`, `7z`, `none`. See [Bare files](#bare-files). |
 | `size` | no | Bytes. Used for progress; the checksum is what decides. |
 | `checksum` | yes | `{ sha256 = "..." }`, 64 hex characters. |
 | `provides` | no | Formats this artifact delivers. |
@@ -182,6 +182,19 @@ target = { os = "linux", arch = "x86_64" }
 When several artifacts match a target, the first is used. Put the one users
 should get first — for Surge XT that is the 92 MiB plugins-only tarball, not
 the 333 MiB full build.
+
+### Bare files
+
+`archive = "none"` is a file published as itself, with no container: a CLAP,
+which on Linux is one shared object, or a SoundFont, which carries its samples
+inside it. Nothing else is complete as one file — a `.vst3` or `.lv2` is a
+directory on Linux, and an `.sfz` names samples beside it.
+
+The file is placed under the name it was published as, the last segment of
+its URL, decoded. That name is the only thing that says what it is, so it is
+also the only `source` its one install rule may give; the validator refuses
+anything else. The bytes are sniffed as an archive's are, and a file declared
+`none` that is really a zip is refused rather than installed whole.
 
 ## Install rules
 

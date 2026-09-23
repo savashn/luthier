@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 412 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 427 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -19,8 +19,8 @@ one category from a closed list plus free-form tags. Extraction runs through
 one hardened policy with a 38-case malicious-archive corpus.
 
 Two registries are read together. The Open Audio Stack registry supplies
-anything with a downloadable release binary — 458 of its 560 packages
-translate, 293 of them installable on Linux x86_64 — and its install rules are
+anything with a downloadable release binary — 464 of its 560 packages
+translate, 299 of them installable on Linux x86_64 — and its install rules are
 derived from the verified archive rather than declared. The curated bench is
 down to 6 manifests: what OAS cannot express — two `external` engines, three
 DrumGizmo kits it does not carry, and one shadow for an install rule nothing

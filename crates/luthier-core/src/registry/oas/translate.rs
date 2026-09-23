@@ -358,7 +358,7 @@ fn artifacts_for_file(file: &OasFile) -> Result<Vec<Artifact>, String> {
   let url = Url::parse(&file.url).map_err(|e| format!("{}: bad url: {e}", file.url))?;
   // The declared type says "archive" for things that are not archives, so
   // the extension decides and the downloaded bytes are sniffed again later.
-  let archive = archive_format(url.path())
+  let archive = ArchiveFormat::from_filename(url.path())
     .ok_or_else(|| format!("{}: not an archive format this build reads", file.url))?;
   let sha256 =
     Sha256Hash::parse(&file.sha256).map_err(|e| format!("{}: unusable checksum: {e}", file.url))?;
@@ -413,23 +413,6 @@ fn declared_formats(contains: &[String]) -> Vec<Format> {
   formats.sort();
   formats.dedup();
   formats
-}
-
-fn archive_format(path: &str) -> Option<ArchiveFormat> {
-  let lower = path.to_ascii_lowercase();
-  for (suffix, format) in [
-    (".tar.gz", ArchiveFormat::TarGz),
-    (".tgz", ArchiveFormat::TarGz),
-    (".tar.xz", ArchiveFormat::TarXz),
-    (".txz", ArchiveFormat::TarXz),
-    (".zip", ArchiveFormat::Zip),
-    (".7z", ArchiveFormat::SevenZ),
-  ] {
-    if lower.ends_with(suffix) {
-      return Some(format);
-    }
-  }
-  None
 }
 
 /// Reports a licence that could not be expressed, for callers that only want
@@ -662,6 +645,28 @@ mod tests {
   #[test]
   fn a_package_with_nothing_installable_is_refused_rather_than_half_translated() {
     let json = WSTD_EQ.replace(r#""type": "archive""#, r#""type": "installer""#);
+    assert!(package(&entry(&json)).is_err());
+  }
+
+  #[test]
+  fn a_bare_clap_is_a_file_to_place_not_an_archive_to_open() {
+    // Six Linux packages in the published index ship this way — LibreKick,
+    // FreqChain, Delax — filed as `type: archive` all the same.
+    let json = WSTD_EQ.replace(
+      "wstd-eq-v1.1.1-linux-x86_64.tar.xz",
+      "LibreKick_linux_x86_64.clap",
+    );
+    let translated = package(&entry(&json)).unwrap();
+    let artifact = &translated.manifest.releases[0].artifacts[0];
+    assert_eq!(artifact.archive, ArchiveFormat::None);
+    assert!(artifact.derive_install);
+  }
+
+  #[test]
+  fn a_single_file_vst3_is_not_taken_for_a_bundle() {
+    // A VST3 is a directory on Linux. One file by that name is a zip
+    // mislabelled or a build for another platform.
+    let json = WSTD_EQ.replace("wstd-eq-v1.1.1-linux-x86_64.tar.xz", "Plugin.vst3");
     assert!(package(&entry(&json)).is_err());
   }
 

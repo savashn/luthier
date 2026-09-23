@@ -7,7 +7,7 @@
 
 mod support;
 
-use luthier_core::archive::{ExtractLimits, extract};
+use luthier_core::archive::{ExtractLimits, extract, place};
 use luthier_core::error::{ArchiveError, UnsafeEntry};
 use luthier_manifest::ArchiveFormat;
 use std::path::{Path, PathBuf};
@@ -96,6 +96,12 @@ impl Sandbox {
   fn extract_7z(&self, entries: &[SevenZEntry]) -> Result<(), ArchiveError> {
     let archive = sevenz_file(&self.archives, "payload.7z", entries);
     self.run(&archive, ArchiveFormat::SevenZ)
+  }
+
+  /// Places a bare file under a name, as an artifact declared `none` is.
+  fn place_bare(&self, name: &str, bytes: &[u8]) -> Result<(), ArchiveError> {
+    let source = write_file(&self.archives, "payload", bytes);
+    place(&source, name, &self.dest, ExtractLimits::small()).map(|_| ())
   }
 
   fn run(&self, archive: &Path, format: ArchiveFormat) -> Result<(), ArchiveError> {
@@ -665,5 +671,89 @@ fn a_legitimate_7z_extracts_intact() {
     std::fs::read(sandbox.dest.join("lsp-plugins.lv2/lsp-plugins.so")).unwrap(),
     b"\x7fELF fake"
   );
+  sandbox.assert_nothing_escaped();
+}
+
+// ------------------------------------------------------------- bare files --
+//
+// A bare file has one name, and it comes from the URL it was published at.
+// That name is the whole attack surface, so each shape of escape gets a case.
+
+#[test]
+fn a_bare_file_cannot_climb_out_by_its_name() {
+  for name in ["../escape.clap", "..", "../../home/.ssh/authorized_keys"] {
+    let sandbox = Sandbox::new();
+    assert!(
+      sandbox.place_bare(name, b"\x7fELF payload").is_err(),
+      "{name:?} was placed"
+    );
+    assert!(
+      list_tree(&sandbox.dest).is_empty(),
+      "{name:?} left something"
+    );
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+#[test]
+fn a_bare_file_is_one_component_and_never_a_path() {
+  // An archive entry may create directories; a bare file has none to
+  // recreate, so a separator means the name is lying about something.
+  for name in ["sub/escape.clap", "/etc/passwd", "a/../../escape.clap"] {
+    let sandbox = Sandbox::new();
+    assert_unsafe(
+      sandbox.place_bare(name, b"\x7fELF payload"),
+      UnsafeEntry::MalformedPath,
+    );
+    assert!(
+      list_tree(&sandbox.dest).is_empty(),
+      "{name:?} left something"
+    );
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+#[test]
+fn a_bare_file_needs_a_name() {
+  for name in ["", "."] {
+    let sandbox = Sandbox::new();
+    assert!(
+      sandbox.place_bare(name, b"data").is_err(),
+      "{name:?} was placed"
+    );
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+#[test]
+fn an_archive_declared_bare_is_refused_rather_than_placed_whole() {
+  // Otherwise a zip named `.clap` would be installed as a plugin.
+  let sandbox = Sandbox::new();
+  let zip = build_zip(&[ZipEntry::file("inside.clap", b"\x7fELF")]);
+  match sandbox.place_bare("Plugin.clap", &zip) {
+    Err(ArchiveError::FormatMismatch { declared, detected }) => {
+      assert_eq!(declared, "none");
+      assert_eq!(detected, "zip");
+    }
+    other => panic!("expected a format mismatch, got {other:?}"),
+  }
+  assert!(list_tree(&sandbox.dest).is_empty());
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_bare_file_is_placed_whole_without_special_bits() {
+  let sandbox = Sandbox::new();
+  sandbox
+    .place_bare("LibreKick_linux_x86_64.clap", b"\x7fELF plugin")
+    .expect("a plain name must be placed");
+  let placed = sandbox.dest.join("LibreKick_linux_x86_64.clap");
+  assert_eq!(std::fs::read(&placed).unwrap(), b"\x7fELF plugin");
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&placed).unwrap().permissions().mode();
+    assert_eq!(mode & 0o7000, 0);
+  }
   sandbox.assert_nothing_escaped();
 }

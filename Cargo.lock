@@ -1331,6 +1331,7 @@ dependencies = [
  "jiff",
  "liblzma",
  "luthier-manifest",
+ "percent-encoding",
  "reqwest",
  "rustix",
  "semver",
@@ -1353,6 +1354,7 @@ dependencies = [
 name = "luthier-manifest"
 version = "0.1.0"
 dependencies = [
+ "percent-encoding",
  "schemars",
  "semver",
  "serde",

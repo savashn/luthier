@@ -513,17 +513,28 @@ fn cmd_inspect(
   format: Option<&str>,
   id: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error>> {
+  let file_name = archive_path
+    .file_name()
+    .map(|n| n.to_string_lossy().into_owned())
+    .unwrap_or_default();
   let declared: ArchiveFormat = match format {
     Some(raw) => raw.parse().expect("parsing is infallible"),
-    None => {
-      archive::sniff(archive_path)?.ok_or("cannot determine the archive format; pass --format")?
-    }
+    // Bytes first, as the installer does; a name is only consulted for a
+    // file whose bytes say it is no archive, which is what a bare CLAP or
+    // SoundFont looks like.
+    None => match archive::sniff(archive_path)? {
+      Some(sniffed) => sniffed,
+      None => ArchiveFormat::from_filename(&file_name)
+        .filter(|f| *f == ArchiveFormat::None)
+        .ok_or("cannot determine the archive format; pass --format")?,
+    },
   };
 
   let destination = tempdir()?;
-  let report = archive::extract(
+  let report = archive::unpack(
     archive_path,
     &declared,
+    &file_name,
     destination.path(),
     archive::ExtractLimits::default(),
   )?;

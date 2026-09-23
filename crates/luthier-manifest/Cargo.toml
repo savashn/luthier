@@ -16,6 +16,7 @@ semver.workspace = true
 spdx.workspace = true
 thiserror.workspace = true
 url.workspace = true
+percent-encoding.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

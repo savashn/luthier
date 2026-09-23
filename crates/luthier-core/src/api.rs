@@ -678,9 +678,10 @@ impl Session {
       let mut transaction = InstallTransaction::begin(&self.layout, package.id())?;
       let extract_root = transaction.workspace().join("extract");
       fsutil::ensure_dir(&extract_root)?;
-      archive::extract(
+      archive::unpack(
         &fetched.path,
         &artifact.archive,
+        &published_name(&artifact.source.url),
         &extract_root,
         ExtractLimits::for_download(fetched.bytes),
       )?;
@@ -1711,6 +1712,24 @@ pub struct ImportOutcome {
   /// Pins the file carried for packages this import did not install.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub skipped_pins: Vec<String>,
+}
+
+/// The name an artifact was published under: the last segment of its URL,
+/// decoded.
+///
+/// The cache names a file by its digest, which is right for the cache and
+/// wrong for a bare file, whose name is the only thing that says what it is —
+/// `LibreKick_linux_x86_64.clap` is a CLAP because of the name it was given.
+/// Whatever comes back is untrusted: `archive::place` holds it to the same
+/// rules as an archive entry.
+fn published_name(url: &url::Url) -> String {
+  let last = url
+    .path_segments()
+    .and_then(|mut segments| segments.rfind(|s| !s.is_empty()))
+    .unwrap_or_default();
+  percent_encoding::percent_decode_str(last)
+    .decode_utf8_lossy()
+    .into_owned()
 }
 
 #[derive(Debug, Clone, Serialize)]

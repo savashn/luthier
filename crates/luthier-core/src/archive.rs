@@ -75,6 +75,61 @@ fn read_up_to(file: &mut File, buffer: &mut [u8]) -> std::io::Result<usize> {
   Ok(filled)
 }
 
+/// Makes a downloaded artifact available under `destination` as a tree,
+/// whatever it was published as.
+///
+/// An archive is unpacked. A bare file (`none`) is placed as the one entry
+/// of a tree, under `file_name` — the name it was published under, since the
+/// cache knows it only by digest. Either way what follows sees a directory,
+/// so derivation and install rules have one shape to read.
+pub fn unpack(
+  source: &Path,
+  declared: &ArchiveFormat,
+  file_name: &str,
+  destination: &Path,
+  limits: ExtractLimits,
+) -> Result<ExtractReport, ArchiveError> {
+  match declared {
+    ArchiveFormat::None => place(source, file_name, destination, limits),
+    _ => extract(source, declared, destination, limits),
+  }
+}
+
+/// Places a bare file into `destination` as `name`.
+///
+/// Through [`SafeExtractor`] like any archive entry, so the name is held to
+/// the same rules, the write refuses to follow a link, and the permission
+/// bits are the same sanitised ones. `name` must be one component: it comes
+/// from a URL, and a bare file has no directories to recreate.
+///
+/// The bytes are sniffed as they are for an archive. A file declared bare
+/// that is really a zip would otherwise be placed whole and installed as the
+/// plugin it is not.
+pub fn place(
+  source: &Path,
+  name: &str,
+  destination: &Path,
+  limits: ExtractLimits,
+) -> Result<ExtractReport, ArchiveError> {
+  if let Some(detected) = sniff(source)? {
+    return Err(ArchiveError::FormatMismatch {
+      declared: ArchiveFormat::None.to_string(),
+      detected: detected.to_string(),
+    });
+  }
+  let mut extractor = SafeExtractor::new(destination, limits);
+  if name.contains('/') {
+    return Err(extractor.reject(name, crate::error::UnsafeEntry::MalformedPath));
+  }
+  let mut file = File::open(source).map_err(|e| ArchiveError::Io {
+    operation: "open",
+    path: source.to_path_buf(),
+    source: e,
+  })?;
+  extractor.file(name, None, &mut file)?;
+  Ok(extractor.report())
+}
+
 /// Unpacks `source` into `destination`, which must already exist and be empty.
 ///
 /// `declared` is what the manifest says the container is. It is cross-checked

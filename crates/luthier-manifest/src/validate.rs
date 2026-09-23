@@ -623,7 +623,6 @@ fn check_archive(a: &Artifact, base: &str, r: &mut Report) {
     .and_then(|mut s| s.rfind(|p| !p.is_empty()))
     && let Some(inferred) = ArchiveFormat::from_filename(last)
     && inferred != a.archive
-    && a.archive != ArchiveFormat::None
   {
     r.warn(
       format!("{base}.archive"),
@@ -639,6 +638,35 @@ fn check_archive(a: &Artifact, base: &str, r: &mut Report) {
       format!("{base}.install"),
       "a non-archive artifact is a single file and can have only one install rule",
     );
+  }
+
+  // A bare file is placed under the name it was published as, so that is
+  // the only source its rule can name. Anything else passes review and
+  // then fails after the download, with the file already fetched.
+  if a.archive == ArchiveFormat::None
+    && let [rule] = a.install.as_slice()
+  {
+    let published = a
+      .source
+      .url
+      .path_segments()
+      .and_then(|mut s| s.rfind(|p| !p.is_empty()))
+      .map(|last| {
+        percent_encoding::percent_decode_str(last)
+          .decode_utf8_lossy()
+          .into_owned()
+      })
+      .unwrap_or_default();
+    if rule.source.as_str() != published {
+      r.error(
+        format!("{base}.install[0].source"),
+        format!(
+          "a non-archive artifact is installed under its published name, {published:?}; \
+           the rule names {:?}",
+          rule.source.as_str()
+        ),
+      );
+    }
   }
 }
 
@@ -711,6 +739,56 @@ install = [
         "{format} has no extractor"
       );
     }
+  }
+
+  /// A CLAP published as the file itself, as six Linux packages in the Open
+  /// Audio Stack registry are.
+  fn bare(url_name: &str, source: &str) -> String {
+    GOOD
+      .replace("Dexed-1.0.1-lnx.zip", url_name)
+      .replace("archive = \"zip\"", "archive = \"none\"")
+      .replace("provides = [\"vst3\"]", "provides = [\"clap\"]")
+      .replace(
+        r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
+        &format!(r#"{{ format = "clap", source = "{source}", kind = "file" }}"#),
+      )
+  }
+
+  #[test]
+  fn a_bare_file_installed_under_its_own_name_is_clean() {
+    let report = validate(&manifest(&bare("Dexed.clap", "Dexed.clap")));
+    assert!(!report.has_errors(), "{:?}", report.diagnostics);
+    assert_eq!(report.warnings().count(), 0, "{:?}", report.diagnostics);
+  }
+
+  #[test]
+  fn a_bare_file_is_named_by_its_url_once_decoded() {
+    let yaml = bare("Dexed%20Synth.clap", "Dexed Synth.clap");
+    assert!(errors_for(&yaml).is_empty(), "{:?}", errors_for(&yaml));
+  }
+
+  #[test]
+  fn a_bare_files_rule_cannot_name_something_else() {
+    // It would pass review and fail after the download: the file is placed
+    // under the name it was published as, and nothing else exists.
+    let errors = errors_for(&bare("Dexed.clap", "Other.clap"));
+    assert!(
+      errors.iter().any(|e| e.contains("published name")),
+      "{errors:?}"
+    );
+  }
+
+  #[test]
+  fn an_archive_declared_bare_is_flagged() {
+    let yaml = GOOD.replace("archive = \"zip\"", "archive = \"none\"");
+    let warnings: Vec<String> = validate(&manifest(&yaml))
+      .warnings()
+      .map(|d| d.to_string())
+      .collect();
+    assert!(
+      warnings.iter().any(|w| w.contains("declared none")),
+      "{warnings:?}"
+    );
   }
 
   #[test]
