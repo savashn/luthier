@@ -1,6 +1,16 @@
 # Luthier
 
-A package and environment manager for Linux audio software.
+A command-line package manager for Linux audio software: CLAP, VST3 and LV2
+plugins, and the sample libraries that play in them. Packages come from the
+[Open Audio Stack](https://github.com/open-audio-stack/open-audio-stack-registry)
+registry and from a small curated bench in this repository.
+
+<a href="https://github.com/open-audio-stack"><img src="https://raw.githubusercontent.com/open-audio-stack/open-audio-stack-registry/refs/heads/main/src/assets/powered-by-open-audio-stack.svg" alt="Powered by Open Audio Stack"></a>
+
+A whole setup can be written to a file with `luthier env export` and rebuilt,
+version for version, on another machine with `luthier env import`. Plugins land
+in the directories hosts already scan (`~/.clap`, `~/.vst3`, `~/.lv2`) rather
+than in a folder of Luthier's own, and nothing is ever run to install them.
 
 Linux audio plugins are scattered across GitHub releases, GitLab, vendor sites
 and distribution repositories, in a handful of archive formats and several
@@ -8,7 +18,7 @@ plugin formats. Installing one usually means finding the project, finding the
 release, downloading an archive, working out which directory each format
 belongs in, and copying files by hand.
 
-This replaces that with:
+Luthier replaces that with:
 
 ```console
 $ luthier search synth
@@ -24,8 +34,8 @@ $ luthier remove surge
 ## Status
 
 Linux x86_64, CLAP, VST3, LV2 and sample libraries, from `.tar.gz`, `.tar.xz`,
-`.zip` and `.7z` archives. DAW-agnostic: it installs into the directories hosts
-already scan and knows nothing about any particular DAW. The manifest schema
+`.zip` and `.7z` archives. DAW-agnostic: it knows nothing about any particular
+DAW. The manifest schema
 models macOS and Windows targets, but the layouts and registry artifacts are
 Linux-only for now. Installs into your home directory; root is
 never required and system directories are never written to. Distribution and
@@ -167,9 +177,9 @@ distribution-provided engine as satisfying a dependency, unless
 `--no-system-plugins` says to ignore it.
 
 A sample library is refused before it is downloaded when nothing on the system
-can play it. The library says what it holds (`content = ["sfz"]`), the bench's
-A built-in list and any bench's `engines.toml` say what plays that, and any one engine — detected, already
-installed, or named in the same command — is enough:
+can play it. The library says what it holds (`content = ["sfz"]`), a built-in
+list and any bench's `engines.toml` say what plays that, and any one engine —
+detected, already installed, or named in the same command — is enough:
 
 ```console
 $ luthier install crocellkit
