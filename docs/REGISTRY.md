@@ -262,6 +262,30 @@ $ luthier bench trust mine <public key>      # an existing bench
 $ luthier bench list                         # shows what each bench is trusted to use
 ```
 
+### Releasing the default bench
+
+`bench/` is published as `bench.tar.gz` on this repository's releases, and the
+manager carries its public key (`DEFAULT_BENCH_KEY` in
+`crates/luthier-core/src/config.rs`), so every release of it must be signed.
+The release workflow never sees the secret key. It builds the assets and
+creates the release as a **draft**, which `releases/latest` does not serve, and
+the rest happens on the maintainer's machine:
+
+```console
+$ gh release download v0.1.0 -p bench.tar.gz
+$ luthier-registry sign bench.tar.gz --key <secret key>
+$ gh release upload v0.1.0 bench.tar.gz.sig
+$ gh release edit v0.1.0 --draft=false
+```
+
+A published release is never re-run: replacing its `bench.tar.gz` would leave
+the signature users verify pointing at bytes that are gone, which is a refusal
+no flag relaxes. The workflow refuses to, and a fix goes out as a new tag.
+
+Keep the secret key off the machine CI runs on, and backed up somewhere other
+than the one it lives on. Losing it is a rotation that has to ship as a
+release of the manager, since the old key is compiled in.
+
 ### Rotating a key
 
 Overlap, never a gap. Retiring the old key first would leave a window in which

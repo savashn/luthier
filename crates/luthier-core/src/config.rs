@@ -122,11 +122,24 @@ pub struct Config {
 /// tarball of the repository: the manager's own `Cargo.toml` files would
 /// otherwise be read as manifests, since discovery walks whatever it is given.
 ///
+/// It is signed with [`DEFAULT_BENCH_KEY`], and the key is required from the
+/// first fetch.
+///
 /// Until the first release is tagged this URL will not resolve; use
 /// `--registry-path bench` (or a `path` entry in `config.json`) to point at
 /// the checkout in the meantime.
 pub const DEFAULT_REGISTRY_URL: &str =
   "https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz";
+
+/// The key the default bench is signed with, as the release publishes it.
+///
+/// Built in so the first fetch is verified too. Without it the first
+/// signature a user ever saw would pin whatever key it named, and that first
+/// fetch is exactly the one an attacker who controls the forge account would
+/// aim at. Rotation is `docs/REGISTRY.md`'s procedure, and a release that
+/// changes this constant is the announcement.
+pub const DEFAULT_BENCH_KEY: &str =
+  "e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa";
 
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///
@@ -145,12 +158,15 @@ pub const DEFAULT_OAS_URL: &str = "https://open-audio-stack.github.io/open-audio
 /// one the resolver sees.
 fn default_registries() -> Vec<RegistryConfig> {
   vec![
-    RegistryConfig::new(
-      "luthier-extras",
-      RegistrySource::Snapshot {
-        url: Url::parse(DEFAULT_REGISTRY_URL).expect("the built-in URL is valid"),
-      },
-    ),
+    RegistryConfig {
+      keys: vec![PublicKey::parse(DEFAULT_BENCH_KEY).expect("the built-in key is valid")],
+      ..RegistryConfig::new(
+        "luthier-extras",
+        RegistrySource::Snapshot {
+          url: Url::parse(DEFAULT_REGISTRY_URL).expect("the built-in URL is valid"),
+        },
+      )
+    },
     RegistryConfig::new(
       "oas",
       RegistrySource::Oas {
@@ -275,6 +291,20 @@ mod tests {
     let config = from_path("/srv/luthier-extras");
     config.save(&layout).unwrap();
     assert_eq!(Config::load(&layout).unwrap(), config);
+  }
+
+  #[test]
+  fn the_default_bench_is_verified_from_its_first_fetch() {
+    // A key configured up front is required from the first fetch; with none
+    // the first signature would pin whatever key it named.
+    let config = Config::default();
+    let bench = &config.registries[0];
+    assert_eq!(bench.name, "luthier-extras");
+    assert_eq!(bench.keys.len(), 1);
+    assert_eq!(bench.keys[0].to_string(), DEFAULT_BENCH_KEY);
+    // The Open Audio Stack publishes no signatures; a key there would be a
+    // promise nothing checks.
+    assert!(config.registries[1].keys.is_empty());
   }
 
   #[test]

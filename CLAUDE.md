@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 427 tests, fully offline
+cargo test --workspace                     # 428 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -320,7 +320,8 @@ A bench may publish a detached Ed25519 signature at its snapshot's URL with
 `provenance.rs` records; the key is pinned on first use, or required from the
 first fetch when one is configured (`bench add --key`, `bench trust`,
 `bench untrust`). `refresh --allow-unsigned` accepts a missing signature for
-one run without discarding the pin. `luthier-registry keygen` / `sign` are the
+one run without discarding the pin. The default bench's key is compiled in
+(`DEFAULT_BENCH_KEY`), so its release is a draft until it is signed by hand. `luthier-registry keygen` / `sign` are the
 publishing side, and `docs/REGISTRY.md` carries the rotation procedure.
 
 `luthier cache list` / `cache clean` prune the content-addressed artifact

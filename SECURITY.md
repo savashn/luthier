@@ -173,9 +173,16 @@ Which key counts is decided the same way the origin is:
   names. That first fetch proves nothing by itself; what it buys is that every
   refresh after it has something to check against, including the case where
   the bench simply stops signing.
-- With neither a key nor a pin, the bench is unsigned and says so. This is
-  every bench today, and refusing it would mean refusing to read any registry
-  that has not started signing yet.
+- With neither a key nor a pin, the bench is unsigned and says so. Refusing
+  it would mean refusing to read any registry that has not started signing
+  yet.
+
+The default bench is the first case from the start: its public key is built
+into the manager (`DEFAULT_BENCH_KEY` in `config.rs`), so no first fetch of it
+is ever taken on trust. The cost is that a release of it without a signature
+is a bench nobody can refresh, which is why the release workflow publishes a
+draft — invisible to `releases/latest` — and the signature is added before it
+is made public.
 
 Three refusals follow from that, and only one of them can be overridden:
 

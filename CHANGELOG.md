@@ -54,7 +54,8 @@ The first release: everything below is new.
   --allow-unsigned` accepts a missing signature for one run without
   discarding the pin, and a signature that fails to verify is refused
   whatever any flag says. `luthier-registry keygen` and `sign` are the
-  publishing side.
+  publishing side. The default bench ships with its public key built in, so
+  even the first fetch is verified rather than pinning whatever signed it.
 - **A bench that cannot be reached costs only itself.** `refresh` asks every
   configured bench, reports per bench, and keeps the snapshot a failed one
   already had; only a run where nothing could be refreshed is an error.

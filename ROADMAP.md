@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 427 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 428 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -32,8 +32,11 @@ the user decides. Where both registries carry an ID, the bench wins.
 
 A bench's origin is pinned on first fetch, and a bench that publishes an
 Ed25519 signature has it verified between the download and the extractor, with
-the signing key pinned the same way. Nothing is signed yet, because nothing is
-published yet.
+the signing key pinned the same way. The default bench goes further: its public
+key is built into the manager, so a signature is required from the very first
+fetch, and the release workflow publishes a draft that is signed on the
+maintainer's machine before it becomes visible. Nothing is signed yet, because
+nothing is published yet.
 
 What it is *not*: published. The manager repository is now a git repository;
 the registry is not, neither has a remote, so neither CI workflow has ever

@@ -137,20 +137,37 @@ jobs:
           fi
           cat notes.md
 
-      - name: Publish
+      # Created as a draft, and published by hand once the bench is signed.
+      #
+      # The manager ships with the bench's public key and requires a
+      # signature from the very first fetch, so a published release without
+      # `bench.tar.gz.sig` is a bench nobody can refresh. A draft is invisible
+      # to `releases/latest`, which is the URL every client reads, so there is
+      # no window between publishing and signing for anyone to fall into.
+      - name: Publish as a draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          # Re-running after a half-finished publish replaces the assets
-          # rather than failing on a release that already exists.
           if gh release view "$tag" > /dev/null 2>&1; then
+            # Replacing the bench of a published release would leave the
+            # signature users verify pointing at bytes that are gone, which
+            # is a refusal no flag can relax. A fix goes out as a new tag.
+            if [ "$(gh release view "$tag" --json isDraft --jq .isDraft)" != "true" ]; then
+              echo "::error::$tag is already published; cut a new tag rather than replacing its assets"
+              exit 1
+            fi
+            # Re-running after a half-finished draft replaces the assets
+            # rather than failing on a release that already exists.
             gh release edit "$tag" --notes-file notes.md
             gh release upload "$tag" \
               "$ASSET" "$ASSET.sha256" \
               "$BENCH_ASSET" "$BENCH_ASSET.sha256" --clobber
+            # A signature over the bench this run just replaced verifies
+            # nothing, so it goes with it.
+            gh release delete-asset "$tag" "$BENCH_ASSET.sig" --yes 2> /dev/null || true
           else
-            gh release create "$tag" \
+            gh release create "$tag" --draft \
               --title "luthier $tag" \
               --notes-file notes.md \
               "$ASSET" "$ASSET.sha256" \
@@ -158,24 +175,12 @@ jobs:
           fi
 
       # Signing is deliberately not done here. The key that vouches for the
-      # bench should not live where a compromised workflow could reach it, so
-      # `bench.tar.gz.sig` is produced on the maintainer's machine and
-      # uploaded to the same release:
-      #
-      #   gh release download <tag> -p bench.tar.gz
-      #   luthier-registry sign bench.tar.gz --key luthier-bench.key
-      #   gh release upload <tag> bench.tar.gz.sig
-      #
-      # Until one is uploaded the bench is simply unsigned, which `refresh`
-      # accepts for a bench with no pinned key. See docs/REGISTRY.md.
-      - name: Say whether the bench was signed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # bench should not live where a compromised workflow could reach it.
+      - name: Say what is left to do
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          if gh release view "$tag" --json assets \
-               --jq '.assets[].name' | grep -qx "$BENCH_ASSET.sig"; then
-            echo "bench signature present"
-          else
-            echo "::warning::$BENCH_ASSET is published unsigned; sign it locally and upload $BENCH_ASSET.sig"
-          fi
+          echo "::notice::$tag is a draft. Sign the bench and publish it:"
+          echo "  gh release download $tag -p $BENCH_ASSET"
+          echo "  luthier-registry sign $BENCH_ASSET --key <secret key>"
+          echo "  gh release upload $tag $BENCH_ASSET.sig"
+          echo "  gh release edit $tag --draft=false"
