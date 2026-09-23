@@ -354,9 +354,11 @@ impl Reporter {
       println!("Removed {} {}", package.name, package.version);
     }
     for kept in &outcome.kept_files {
+      println!("Kept {}: {}", kept.path, kept.reason);
+    }
+    if !outcome.kept_files.is_empty() {
       println!(
-        "Kept {} because it was modified after installation: {}",
-        kept.path, kept.reason
+        "Luthier no longer tracks what it kept; delete it yourself when you are done with it."
       );
     }
     self.stranded(&outcome.stranded, "is left");

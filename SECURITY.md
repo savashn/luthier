@@ -216,8 +216,19 @@ are never replaced.
 
 Only paths recorded at install time are deleted, and each is re-checked against
 the managed directories first, so a corrupted or hand-edited state file cannot
-turn removal into arbitrary deletion. A file whose contents changed since
-installation is reported and kept, not deleted.
+turn removal into arbitrary deletion. "Inside" means strictly below a root by
+plain names: a root itself (`~/.clap`) is never a deletion target, and a path
+with a `..` in it is refused even though it textually starts with a root. A
+bundle's recorded contents are checked the same way, because removal joins
+them onto the bundle and deletes the result.
+
+Anything changed, added or replaced since installation is reported and kept.
+A bundle is decided file by file, so one edited preset keeps one file rather
+than the whole bundle, and no symbolic link is followed: a directory inside a
+bundle that has been replaced by a link is left alone rather than emptied
+through it. Replacing a package — `update`, or an install that upgrades — is
+refused before the download when it would delete such changes, until
+`--force` says to go ahead.
 
 ## Not yet implemented
 

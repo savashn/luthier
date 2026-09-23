@@ -515,6 +515,201 @@ pub fn verify_entry(entry: &InstalledEntry) -> Result<EntryStatus> {
   }
 }
 
+/// Something removal left on disk, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+  pub path: PathBuf,
+  pub reason: String,
+}
+
+/// Whether a path recorded inside a bundle stays inside it: relative, and
+/// made of plain names only.
+///
+/// State is read from disk, so a bundle's recorded contents are as
+/// untrusted as its root. Removal joins these onto the root and deletes the
+/// result; `../../.ssh/id_ed25519` would otherwise be a way out.
+pub fn is_plain_relative(path: &str) -> bool {
+  let path = Path::new(path);
+  path.components().next().is_some()
+    && path
+      .components()
+      .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
+/// Deletes what this manager installed for `entry` and nothing else (§20).
+///
+/// Anything changed or added after installation is the user's, so it stays
+/// and is reported — but only that. A bundle is decided file by file: one
+/// edited preset keeps one file, not the whole bundle. Keeping the whole
+/// bundle left a plugin a host would still load, belonging to a package the
+/// manager had just reported removed, and a sample library no command could
+/// reach again, because the package was already gone from state.
+///
+/// No symbolic link is followed. `remove_dir_all` never followed one, and
+/// deleting file by file must not start: a directory inside a bundle
+/// replaced by a link to `~/Music` would otherwise have `~/Music` emptied.
+/// A link found where something was recorded is left alone and reported.
+pub fn remove_entry(entry: &InstalledEntry) -> Result<Vec<Kept>> {
+  let mut kept = Vec::new();
+  match entry {
+    InstalledEntry::File { path, sha256, .. } => {
+      let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return Ok(kept);
+      };
+      if !meta.is_file() {
+        kept.push(Kept {
+          path: path.clone(),
+          reason: "replaced by something that is not a regular file".into(),
+        });
+      } else if &fsutil::hash_file(path)? == sha256 {
+        fsutil::remove_any(path)?;
+      } else {
+        kept.push(Kept {
+          path: path.clone(),
+          reason: "contents changed after installation".into(),
+        });
+      }
+    }
+    InstalledEntry::Bundle { path, contents } => {
+      let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return Ok(kept);
+      };
+      if !meta.is_dir() {
+        kept.push(Kept {
+          path: path.clone(),
+          reason: "replaced by something that is not a directory".into(),
+        });
+        return Ok(kept);
+      }
+      for file in contents {
+        if !is_plain_relative(&file.path) {
+          return Err(Error::Install(InstallError::OutsideManagedRoot {
+            path: path.join(&file.path),
+          }));
+        }
+        let full = path.join(&file.path);
+        if !reached_without_links(path, Path::new(&file.path)) {
+          continue; // Reported below with everything else left behind.
+        }
+        match std::fs::symlink_metadata(&full) {
+          Ok(meta) if meta.is_file() => {
+            if fsutil::hash_file(&full)? == file.sha256 {
+              fsutil::remove_any(&full)?;
+            } else {
+              kept.push(Kept {
+                path: full,
+                reason: "contents changed after installation".into(),
+              });
+            }
+          }
+          _ => {}
+        }
+      }
+      for left in remaining_entries(path)? {
+        let full = path.join(&left);
+        if kept.iter().any(|k| k.path == full) {
+          continue;
+        }
+        let is_link = std::fs::symlink_metadata(&full).is_ok_and(|m| m.is_symlink());
+        kept.push(Kept {
+          path: full,
+          reason: if is_link {
+            "a symbolic link, which removal does not follow".into()
+          } else {
+            "added after installation".into()
+          },
+        });
+      }
+      prune_empty_dirs(path)?;
+    }
+    InstalledEntry::Dir { path } => {
+      // "May remove if it ends up empty" — never its contents.
+      if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if meta.is_dir() && dir_is_empty(path)? {
+          std::fs::remove_dir(path).map_err(|e| Error::io("remove directory", path, e))?;
+        } else {
+          kept.push(Kept {
+            path: path.clone(),
+            reason: "not empty".into(),
+          });
+        }
+      }
+    }
+  }
+  Ok(kept)
+}
+
+/// Whether every directory between `root` and `root/relative` is a real
+/// directory rather than a link to one.
+fn reached_without_links(root: &Path, relative: &Path) -> bool {
+  let mut current = root.to_path_buf();
+  let mut parts = relative.components().peekable();
+  while let Some(part) = parts.next() {
+    if parts.peek().is_none() {
+      return true;
+    }
+    current.push(part);
+    match std::fs::symlink_metadata(&current) {
+      Ok(meta) if meta.is_dir() => {}
+      _ => return false,
+    }
+  }
+  true
+}
+
+/// Everything under `root` that is not a directory — regular files and
+/// links alike — as paths relative to it, without following links.
+fn remaining_entries(root: &Path) -> Result<Vec<PathBuf>> {
+  fn walk(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::io("list", dir, e))?;
+    for entry in entries {
+      let entry = entry.map_err(|e| Error::io("list", dir, e))?;
+      let path = entry.path();
+      let meta = std::fs::symlink_metadata(&path).map_err(|e| Error::io("inspect", &path, e))?;
+      if meta.is_dir() {
+        walk(base, &path, out)?;
+      } else {
+        out.push(path.strip_prefix(base).unwrap_or(&path).to_path_buf());
+      }
+    }
+    Ok(())
+  }
+  let mut out = Vec::new();
+  walk(root, root, &mut out)?;
+  out.sort();
+  Ok(out)
+}
+
+/// Removes every directory under `root`, and `root` itself, that holds
+/// nothing. Deepest first, so a chain of emptied directories goes entirely.
+fn prune_empty_dirs(root: &Path) -> Result<()> {
+  fn prune(dir: &Path) -> Result<()> {
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::io("list", dir, e))?;
+    for entry in entries {
+      let entry = entry.map_err(|e| Error::io("list", dir, e))?;
+      let path = entry.path();
+      let meta = std::fs::symlink_metadata(&path).map_err(|e| Error::io("inspect", &path, e))?;
+      if meta.is_dir() {
+        prune(&path)?;
+      }
+    }
+    if dir_is_empty(dir)? {
+      std::fs::remove_dir(dir).map_err(|e| Error::io("remove directory", dir, e))?;
+    }
+    Ok(())
+  }
+  prune(root)
+}
+
+fn dir_is_empty(dir: &Path) -> Result<bool> {
+  Ok(
+    std::fs::read_dir(dir)
+      .map_err(|e| Error::io("list", dir, e))?
+      .next()
+      .is_none(),
+  )
+}
+
 /// A transaction identifier that is unique within a machine.
 fn transaction_id() -> String {
   let nanos = std::time::SystemTime::now()
@@ -1026,5 +1221,141 @@ mod tests {
       EntryStatus::Modified { detail } => assert!(detail.contains("was added"), "{detail}"),
       other => panic!("expected a modification, got {other:?}"),
     }
+  }
+
+  /// A VST3 bundle installed into the fixture's layout, and its entry.
+  fn installed_bundle(fixture: &Fixture) -> (PathBuf, InstalledEntry) {
+    let source = vst3_bundle(&fixture.extract, "Bundle");
+    let destination = fixture
+      .layout
+      .plugin_root(&Format::Vst3)
+      .unwrap()
+      .join("Bundle.vst3");
+    let mut transaction =
+      InstallTransaction::begin(&fixture.layout, &package_id("bundle")).unwrap();
+    let entry = transaction
+      .place(&PlannedItem {
+        format: Format::Vst3,
+        source,
+        destination: destination.clone(),
+        kind: EntryKind::Bundle,
+      })
+      .unwrap();
+    transaction.commit().unwrap();
+    (destination, entry)
+  }
+
+  #[test]
+  fn removing_an_untouched_bundle_leaves_nothing() {
+    let fixture = Fixture::new();
+    let (bundle, entry) = installed_bundle(&fixture);
+    assert!(remove_entry(&entry).unwrap().is_empty());
+    assert!(!bundle.exists());
+  }
+
+  #[test]
+  fn removal_keeps_only_the_edited_file_of_a_bundle() {
+    // Keeping the whole bundle left a plugin a host still loads, owned by
+    // nothing, because the package was already gone from state.
+    let fixture = Fixture::new();
+    let (bundle, entry) = installed_bundle(&fixture);
+    let edited = bundle.join("Contents/Resources/moduleinfo.json");
+    std::fs::write(&edited, b"{\"mine\": true}").unwrap();
+
+    let kept = remove_entry(&entry).unwrap();
+
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].path, edited);
+    assert_eq!(std::fs::read(&edited).unwrap(), b"{\"mine\": true}");
+    assert_eq!(
+      remaining_entries(&bundle).unwrap(),
+      vec![PathBuf::from("Contents/Resources/moduleinfo.json")],
+      "the plugin binary and its emptied directory should be gone"
+    );
+  }
+
+  #[test]
+  fn removal_keeps_a_file_added_to_a_bundle() {
+    let fixture = Fixture::new();
+    let (bundle, entry) = installed_bundle(&fixture);
+    let added = bundle.join("Contents/Resources/notes.txt");
+    std::fs::write(&added, b"mine").unwrap();
+
+    let kept = remove_entry(&entry).unwrap();
+
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].path, added);
+    assert!(kept[0].reason.contains("added"), "{}", kept[0].reason);
+    assert_eq!(std::fs::read(&added).unwrap(), b"mine");
+  }
+
+  #[test]
+  fn removal_does_not_follow_a_directory_replaced_by_a_link() {
+    // `remove_dir_all` never followed links; deleting file by file must not
+    // start. The files behind the link have the recorded hashes, which is
+    // exactly the case a hash check cannot catch.
+    let fixture = Fixture::new();
+    let (bundle, entry) = installed_bundle(&fixture);
+    let outside = fixture.extract.join("elsewhere");
+    std::fs::rename(bundle.join("Contents/Resources"), &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, bundle.join("Contents/Resources")).unwrap();
+
+    let kept = remove_entry(&entry).unwrap();
+
+    assert!(
+      outside.join("moduleinfo.json").is_file(),
+      "followed the link"
+    );
+    assert!(
+      kept
+        .iter()
+        .any(|k| k.path == bundle.join("Contents/Resources")),
+      "{kept:?}"
+    );
+  }
+
+  #[test]
+  fn a_recorded_path_that_climbs_out_of_its_bundle_is_refused() {
+    let fixture = Fixture::new();
+    let (bundle, entry) = installed_bundle(&fixture);
+    let victim = fixture.extract.join("victim");
+    std::fs::write(&victim, b"keep me").unwrap();
+    let InstalledEntry::Bundle { path, mut contents } = entry else {
+      unreachable!()
+    };
+    contents.push(BundleFile {
+      path: "../../extract/victim".into(),
+      sha256: fsutil::hash_file(&victim).unwrap(),
+      mode: 0o644,
+    });
+
+    assert!(remove_entry(&InstalledEntry::Bundle { path, contents }).is_err());
+    assert!(victim.is_file());
+    assert!(bundle.exists());
+  }
+
+  #[test]
+  fn a_dir_entry_is_removed_only_when_empty() {
+    let fixture = Fixture::new();
+    let dir = fixture.layout.library_root().join("made");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("song.wav"), b"mine").unwrap();
+    let entry = InstalledEntry::Dir { path: dir.clone() };
+
+    let kept = remove_entry(&entry).unwrap();
+    assert_eq!(kept.len(), 1);
+    assert!(dir.join("song.wav").is_file());
+
+    std::fs::remove_file(dir.join("song.wav")).unwrap();
+    assert!(remove_entry(&entry).unwrap().is_empty());
+    assert!(!dir.exists());
+  }
+
+  #[test]
+  fn plain_relative_paths() {
+    assert!(is_plain_relative("Contents/x86_64-linux/a.so"));
+    assert!(!is_plain_relative(""));
+    assert!(!is_plain_relative("/etc/passwd"));
+    assert!(!is_plain_relative("a/../../b"));
   }
 }

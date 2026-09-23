@@ -337,6 +337,7 @@ impl Session {
     // than relying on the installer to derive the same verdict a second time
     // from freshly-read state. Two derivations can disagree; the one the user
     // was shown is the one that must decide.
+    let local_changes = self.local_changes(&resolution, &state, force)?;
     let blocked = resolution
       .missing_externals()
       .next()
@@ -344,6 +345,7 @@ impl Session {
         id: external.id.clone(),
         provisioning_hint: external.provisioning_hint.clone(),
       })
+      .or_else(|| local_changes.map(|(id, changes)| BlockedReason::LocalChanges { id, changes }))
       .or_else(|| {
         space
           .iter()
@@ -395,6 +397,44 @@ impl Session {
         .collect(),
       space,
     })
+  }
+
+  /// The first package this resolution would replace whose files someone
+  /// changed or added to since it was installed, and what changed.
+  ///
+  /// Replacing a package moves its old files aside and deletes them when the
+  /// new ones are in place, so an upgrade would throw away exactly what
+  /// `remove` is careful to keep: a preset edited inside a bundle, or an
+  /// `.sfz` a user wrote into a library's directory. `force` is the user
+  /// saying they know, and is what `verify` already tells them to use to
+  /// repair a package, which is the same act.
+  fn local_changes(
+    &self,
+    resolution: &Resolution<'_>,
+    state: &State,
+    force: bool,
+  ) -> Result<Option<(PackageId, Vec<String>)>> {
+    if force {
+      return Ok(None);
+    }
+    for package in &resolution.order {
+      if !matches!(package.disposition, Disposition::Upgrade { .. }) {
+        continue;
+      }
+      let Some(installed) = state.get(package.id()) else {
+        continue;
+      };
+      let mut changes = Vec::new();
+      for entry in &installed.files {
+        if let EntryStatus::Modified { detail } = install::verify_entry(entry)? {
+          changes.push(format!("{}: {detail}", entry.path().display()));
+        }
+      }
+      if !changes.is_empty() {
+        return Ok(Some((package.id().clone(), changes)));
+      }
+    }
+    Ok(None)
   }
 
   /// What carrying out a plan would ask of each filesystem involved.
@@ -558,6 +598,12 @@ impl Session {
         id: missing.id.clone(),
         provisioning_hint: missing.provisioning_hint.clone(),
       }));
+    }
+
+    // Checked before the download for the same reason, and by the same
+    // function as the plan, so the two cannot disagree about it.
+    if let Some((id, changes)) = self.local_changes(&resolution, guard.state(), force)? {
+      return Err(Error::Install(InstallError::LocalChanges { id, changes }));
     }
 
     // Running out of disk is refused here too, and for the same reason:
@@ -865,6 +911,17 @@ impl Session {
             path: path.to_path_buf(),
           }));
         }
+        // A bundle's recorded contents are joined onto its root and
+        // deleted one by one, so they are checked here too.
+        if let InstalledEntry::Bundle { contents, .. } = entry
+          && let Some(bad) = contents
+            .iter()
+            .find(|f| !install::is_plain_relative(&f.path))
+        {
+          return Err(Error::Install(InstallError::OutsideManagedRoot {
+            path: path.join(&bad.path),
+          }));
+        }
       }
 
       planned.push(installed);
@@ -880,17 +937,13 @@ impl Session {
           }));
         }
 
-        match install::verify_entry(entry)? {
-          EntryStatus::Missing => {}
-          EntryStatus::Intact => fsutil::remove_any(path)?,
-          EntryStatus::Modified { detail } => {
-            // Someone changed it after we installed it; that is
-            // their work, not ours to throw away.
-            kept_files.push(KeptFile {
-              path: path.display().to_string(),
-              reason: detail,
-            });
-          }
+        // Whatever someone changed or added after we installed it is
+        // their work, not ours to throw away.
+        for kept in install::remove_entry(entry)? {
+          kept_files.push(KeptFile {
+            path: kept.path.display().to_string(),
+            reason: kept.reason,
+          });
         }
       }
 
@@ -1615,6 +1668,10 @@ pub enum BlockedReason {
     required: u64,
     available: u64,
   },
+  LocalChanges {
+    id: PackageId,
+    changes: Vec<String>,
+  },
 }
 
 impl BlockedReason {
@@ -1637,6 +1694,10 @@ impl BlockedReason {
         path: path.clone(),
         required: *required,
         available: *available,
+      }),
+      BlockedReason::LocalChanges { id, changes } => Error::Install(InstallError::LocalChanges {
+        id: id.clone(),
+        changes: changes.clone(),
       }),
     }
   }
@@ -1997,7 +2058,8 @@ pub struct KeptFile {
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoveOutcome {
   pub removed: Vec<InstalledSummary>,
-  /// Files left in place because they had been modified since installation.
+  /// Files left in place because they were changed, added or replaced after
+  /// installation. Only those: the rest of a bundle they sit in is removed.
   pub kept_files: Vec<KeptFile>,
   /// Installed content this removal left with nothing to play it.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]

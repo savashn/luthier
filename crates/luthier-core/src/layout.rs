@@ -331,12 +331,33 @@ impl Layout {
   ///
   /// System roots are *not* managed locations. Detection may read
   /// `/usr/lib/lv2`; nothing may ever write to or delete from it.
+  ///
+  /// The path must lie strictly *below* a root, by plain names only. A root
+  /// itself is not a location: `~/.clap` holds plugins this manager never
+  /// installed, and a delete aimed at it takes them too. And `starts_with`
+  /// compares components without resolving them, so `~/.clap/../Documents`
+  /// starts with `~/.clap` and names somewhere else entirely.
+  /// Roots nest — the library and state roots sit inside the data root — so
+  /// "not a root" means not *any* root, not just the one the path is under.
   pub fn is_managed_location(&self, path: &Path) -> bool {
-    self
-      .plugin_roots
-      .values()
-      .chain([&self.data, &self.state, &self.libraries])
-      .any(|root| path.starts_with(root))
+    let roots = || {
+      self
+        .plugin_roots
+        .values()
+        .chain([&self.data, &self.state, &self.libraries])
+    };
+    if roots().any(|root| path == root) {
+      return false;
+    }
+    roots().any(|root| match path.strip_prefix(root) {
+      Ok(rest) => {
+        rest.components().next().is_some()
+          && rest
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+      }
+      Err(_) => false,
+    })
   }
 }
 
@@ -509,6 +530,25 @@ mod tests {
     assert!(!layout.is_managed_location(Path::new("/etc/passwd")));
     assert!(!layout.is_managed_location(Path::new("/home/u/.ssh/authorized_keys")));
     assert!(!layout.is_managed_location(Path::new("/home/u/Documents/song.wav")));
+  }
+
+  #[test]
+  fn a_root_itself_is_not_a_managed_location() {
+    // Deleting `~/.clap` would take every plugin in it, installed by this
+    // manager or not.
+    let layout = Layout::rooted_at("/home/u");
+    assert!(!layout.is_managed_location(Path::new("/home/u/.clap")));
+    assert!(!layout.is_managed_location(Path::new("/home/u/.clap/")));
+    assert!(!layout.is_managed_location(layout.library_root()));
+  }
+
+  #[test]
+  fn a_parent_component_does_not_pass_as_managed() {
+    // `Path::starts_with` is satisfied by these; the paths they name are not
+    // under any root.
+    let layout = Layout::rooted_at("/home/u");
+    assert!(!layout.is_managed_location(Path::new("/home/u/.clap/../Documents")));
+    assert!(!layout.is_managed_location(Path::new("/home/u/.vst3/x/../../.ssh/id_ed25519")));
   }
 
   #[test]

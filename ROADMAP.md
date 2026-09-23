@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 401 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 412 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 

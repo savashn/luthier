@@ -1868,3 +1868,80 @@ fn a_pin_names_a_version_that_exists() {
     .assert()
     .success();
 }
+
+#[test]
+fn removal_keeps_what_the_user_changed_in_a_library_and_nothing_else() {
+  // Keeping the whole directory over one edit left gigabytes of samples on
+  // disk that no command could reach again: the package was gone from state.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &artifact);
+  fixture
+    .luthier()
+    .args(["install", "vsco2"])
+    .assert()
+    .success();
+
+  let installed = fixture.root().join("share/luthier/libraries/VSCO-2-CE");
+  std::fs::write(installed.join("Strings/violin.sfz"), b"<region> edited").unwrap();
+  std::fs::write(installed.join("Strings/mine.sfz"), b"<region> mine").unwrap();
+
+  let output = fixture
+    .luthier()
+    .args(["remove", "vsco2"])
+    .output()
+    .unwrap();
+  assert!(output.status.success());
+  let stdout = stdout_of(&output);
+  assert!(stdout.contains("Kept"), "{stdout}");
+
+  assert!(!installed.join("Strings/violin.wav").exists());
+  assert_eq!(
+    std::fs::read(installed.join("Strings/violin.sfz")).unwrap(),
+    b"<region> edited"
+  );
+  assert_eq!(
+    std::fs::read(installed.join("Strings/mine.sfz")).unwrap(),
+    b"<region> mine"
+  );
+}
+
+#[test]
+fn an_update_does_not_delete_what_the_user_changed() {
+  // Replacing a package moves the old files aside and deletes them, so an
+  // update used to throw away exactly what `remove` keeps.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &artifact);
+  fixture
+    .luthier()
+    .args(["install", "vsco2"])
+    .assert()
+    .success();
+  let mine = fixture
+    .root()
+    .join("share/luthier/libraries/VSCO-2-CE/Strings/mine.sfz");
+  std::fs::write(&mine, b"<region> mine").unwrap();
+
+  fixture.add_library("vsco2", "1.2.0", "VSCO-2-CE", &artifact);
+  let output = fixture
+    .luthier()
+    .args(["update", "vsco2"])
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(5), "{}", stdout_of(&output));
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("mine.sfz"), "{stderr}");
+  assert!(stderr.contains("--force"), "{stderr}");
+  assert!(mine.is_file());
+  assert!(stdout_of(&fixture.luthier().args(["list"]).output().unwrap()).contains("1.1.0"));
+
+  // Saying so is enough.
+  fixture
+    .luthier()
+    .args(["install", "--force", "vsco2"])
+    .assert()
+    .success();
+  assert!(!mine.exists());
+  assert!(stdout_of(&fixture.luthier().args(["list"]).output().unwrap()).contains("1.2.0"));
+}

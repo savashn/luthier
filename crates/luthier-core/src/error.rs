@@ -447,6 +447,11 @@ pub enum InstallError {
     available: u64,
   },
 
+  /// Replacing the package would delete what someone changed or added in
+  /// its files since it was installed.
+  #[error("{id} has changed since it was installed: {}", changes.join("; "))]
+  LocalChanges { id: PackageId, changes: Vec<String> },
+
   #[error("rolled back after a failure: {0}")]
   RolledBack(String),
 }
@@ -467,6 +472,10 @@ impl InstallError {
                  package needs updating in the registry."
           .into(),
       ),
+      InstallError::LocalChanges { id, .. } => Some(format!(
+        "Replacing it would delete those changes. Copy anything you want to keep \
+                 somewhere else, then run `luthier install --force {id}`."
+      )),
       InstallError::NotEnoughSpace { .. } => Some(
         "The estimate allows for the archive, the extracted copy and the installed \
                  files existing at once. Free some space, or run `luthier cache clean`."

@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 401 tests, fully offline
+cargo test --workspace                     # 412 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -144,6 +144,17 @@ the crate map keeps that out of `luthier-manifest`.
   state that disagrees with itself, which `verify` reports as missing files and
   `install` refuses to fix because the package reads as satisfied. Naming a
   package twice is one removal, not two.
+- **Removal decides file by file and follows no link.** Keeping a whole
+  bundle because one file in it changed left a plugin hosts still loaded, or a
+  library no command could reach, since the package was already gone from
+  state. `install::remove_entry` deletes what still hashes as installed and
+  keeps the rest; `remove_dir_all` never followed a symlink, and deleting file
+  by file must not start. `update` refuses up front (`LocalChanges`) rather
+  than silently discarding the same edits.
+- **`Path::starts_with` is not containment.** `~/.clap/../x` starts with
+  `~/.clap`. `Layout::is_managed_location` requires plain components strictly
+  below a root, and never a root itself — roots nest, so that means *any*
+  root.
 - **A name out of `config.json` is not a validated name.** `bench remove`
   validates before using one as a path segment, because `add_bench` validating
   on the way in proves nothing about an entry that arrived some other way, and
