@@ -15,7 +15,7 @@ use crate::envfile::EnvFile;
 use crate::error::{Error, InstallError, ResolveError, Result, StateError};
 use crate::fsutil;
 use crate::install::{self, EntryStatus, InstallTransaction};
-use crate::layout::Layout;
+use crate::layout::{Layout, LocationKind};
 use crate::registry::{RefreshOutcome, RegistryIndex};
 use crate::resolver::{self, Disposition, Resolution, ResolveRequest};
 use crate::scan::{self, DetectedPlugin};
@@ -27,7 +27,7 @@ use luthier_manifest::{Format, PackageId, Target};
 use semver::Version;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A configured manager.
 pub struct Session {
@@ -100,6 +100,25 @@ impl Session {
     &self.layout
   }
 
+  /// Refuses when a location the user chose for one of `kinds` is missing.
+  ///
+  /// Each operation names only what it touches, so a samples disk left
+  /// unplugged does not stop `refresh`, and a missing cache disk does not
+  /// stop `remove`. Removal needs its roots present above all: deleting from
+  /// a disk that is not there finds every file already gone, and the
+  /// package would leave state with its files still on the disk.
+  fn require_locations(&self, kinds: &[LocationKind]) -> Result<()> {
+    match self
+      .layout
+      .unavailable_locations()
+      .into_iter()
+      .find(|(kind, _)| kinds.contains(kind))
+    {
+      Some((kind, path)) => Err(Error::LocationUnavailable { kind, path }),
+      None => Ok(()),
+    }
+  }
+
   pub fn target(&self) -> &Target {
     &self.target
   }
@@ -149,6 +168,7 @@ impl Session {
   /// setting on the session for the same reason `install` takes `force`:
   /// consent belongs to the operation a user asked for.
   pub async fn refresh(&self, allow_unsigned: bool) -> Result<Vec<RefreshOutcome>> {
+    self.require_locations(&[LocationKind::Cache])?;
     let mut outcomes = Vec::new();
     let mut first_error = None;
     for provider in self
@@ -313,6 +333,7 @@ impl Session {
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
   ) -> Result<InstallPlan> {
+    self.require_locations(&LocationKind::ALL)?;
     let index = self.index()?;
     let state = crate::state::load(&self.layout)?;
     let detected = self.externals_present(index);
@@ -329,7 +350,7 @@ impl Session {
     )?;
 
     let unplayable = self.unplayable(&resolution, index, &state);
-    let sizes = ArtifactSizes::of(&resolution);
+    let sizes = ArtifactSizes::of(&resolution, &self.layout);
     let space = self.space_needed(&sizes);
 
     // The typed refusal is decided here, from the resolution this plan was
@@ -452,16 +473,16 @@ impl Session {
   /// installs that would fit with room to spare — the same over-conservative
   /// arithmetic that once made a 5 GiB kit uninstallable everywhere.
   ///
-  /// The cache and the install root are often the same filesystem and
-  /// sometimes not, so the requirement is summed per device rather than
-  /// checked twice against the same free space.
+  /// The cache and the install roots are often the same filesystem and
+  /// sometimes not — a user can put either on another disk — so the
+  /// requirement is summed per device rather than checked twice against the
+  /// same free space, and each package is charged to the root it lands in.
   fn space_needed(&self, sizes: &ArtifactSizes) -> Vec<SpaceRequirement> {
     if sizes.total == 0 {
       return Vec::new();
     }
     let cache = self.layout.artifact_cache_dir();
     let workspace = self.layout.transactions_dir();
-    let install = self.layout.data_dir().to_path_buf();
 
     let mut by_device: BTreeMap<Option<u64>, (PathBuf, u64)> = BTreeMap::new();
     // Directories sharing a device share one requirement, and only one path
@@ -469,11 +490,11 @@ impl Session {
     // the install root, then the cache, then the workspace — so the name a
     // shortage carries is the one worth freeing space in, rather than
     // whichever directory happened to be listed first.
-    for (path, needed) in [
-      (install, sizes.total),
-      (cache, sizes.total),
-      (workspace, sizes.largest),
-    ] {
+    let installs = sizes
+      .by_root
+      .iter()
+      .map(|(root, bytes)| (root.clone(), *bytes));
+    for (path, needed) in installs.chain([(cache, sizes.total), (workspace, sizes.largest)]) {
       let device = fsutil::filesystem_id(&path);
       let entry = by_device.entry(device).or_insert((path, 0));
       entry.1 += needed;
@@ -566,6 +587,7 @@ impl Session {
     required_versions: &BTreeMap<PackageId, Version>,
     progress: &mut dyn Progress,
   ) -> Result<InstallOutcome> {
+    self.require_locations(&LocationKind::ALL)?;
     let mut guard = StateGuard::acquire(&self.layout)?;
 
     // Replay any journal left by an interrupted run before touching disk.
@@ -610,7 +632,7 @@ impl Session {
     // discovering it mid-extraction leaves a rolled-back transaction and a
     // cache full of bytes the user waited an hour for.
     if let Some(short) = self
-      .space_needed(&ArtifactSizes::of(&resolution))
+      .space_needed(&ArtifactSizes::of(&resolution, &self.layout))
       .into_iter()
       .find(SpaceRequirement::is_short)
     {
@@ -798,6 +820,7 @@ impl Session {
 
   /// Describes what removing `ids` would do, including why a dependency is kept.
   pub fn plan_remove(&self, ids: &[PackageId]) -> Result<RemovalPlan> {
+    self.require_locations(&[LocationKind::Libraries, LocationKind::Plugins])?;
     let state = crate::state::load(&self.layout)?;
     let mut packages = Vec::new();
     let stranded = self.stranded_by_removing(ids, &state);
@@ -858,6 +881,7 @@ impl Session {
   /// that are not there, which `verify` reports and `install` declines to fix
   /// because it reads the package as satisfied.
   pub fn remove(&self, ids: &[PackageId], force: bool) -> Result<RemoveOutcome> {
+    self.require_locations(&[LocationKind::Libraries, LocationKind::Plugins])?;
     let mut guard = StateGuard::acquire(&self.layout)?;
     let mut removed = Vec::new();
     let mut kept_files = Vec::new();
@@ -967,6 +991,8 @@ impl Session {
 
   /// Checks installed files still match what was recorded (§31).
   pub fn verify(&self, ids: &[PackageId]) -> Result<Vec<VerifyResult>> {
+    // Otherwise an unmounted disk reads as every file on it gone.
+    self.require_locations(&[LocationKind::Libraries, LocationKind::Plugins])?;
     let state = crate::state::load(&self.layout)?;
     let targets: Vec<&InstalledPackage> = if ids.is_empty() {
       state.packages.values().collect()
@@ -1321,6 +1347,7 @@ impl Session {
   /// while the command that started it is still running or the user runs it
   /// again, and an abandoned one is pure occupancy.
   pub fn clean_cache(&self, dry_run: bool) -> Result<CacheCleaned> {
+    self.require_locations(&[LocationKind::Cache])?;
     // Under the state lock, like every other operation that deletes
     // something. Without it this races an install running in another
     // terminal and unlinks the `.part` it is writing, or the verified
@@ -1499,6 +1526,201 @@ impl Session {
   }
 }
 
+// -------------------------------------------------------------- locations --
+
+/// Where the parts a user may move to another disk are, and moving them.
+///
+/// Apart from [`Session`] for the reason [`Environments`] is: a session's
+/// layout already has the locations applied, and possibly an environment on
+/// top, while changing a location needs the layout from before either — a
+/// reset has to know what the default was.
+///
+/// Locations belong to the default environment and to the cache every
+/// environment shares. A named environment keeps its plugins and libraries
+/// inside its own directory, because `env remove` deletes that directory
+/// whole and must not have to go looking on other disks.
+pub struct Storage {
+  /// The layout with no location applied.
+  home: Layout,
+}
+
+/// One movable part, as `location show` reports it.
+#[derive(Debug, Clone, Serialize)]
+pub struct LocationSummary {
+  pub kind: LocationKind,
+  /// The directories in use: one, or one per plugin format.
+  pub paths: Vec<PathBuf>,
+  /// What the user chose, when it is not the default.
+  pub configured: Option<PathBuf>,
+  /// False when the chosen directory is not there — a disk not mounted.
+  pub available: bool,
+}
+
+impl Storage {
+  /// `home` is the base layout, before [`Config::located`] and before any
+  /// environment redirect.
+  pub fn new(home: Layout) -> Self {
+    Self { home }
+  }
+
+  fn located(&self, config: &Config) -> Layout {
+    self.home.clone().with_locations(&config.locations)
+  }
+
+  /// Every movable part and where it is now.
+  pub fn show(&self) -> Result<Vec<LocationSummary>> {
+    let config = Config::load(&self.home)?;
+    Ok(Self::summarise(&self.located(&config)))
+  }
+
+  fn summarise(layout: &Layout) -> Vec<LocationSummary> {
+    let missing = layout.unavailable_locations();
+    LocationKind::ALL
+      .into_iter()
+      .map(|kind| LocationSummary {
+        kind,
+        paths: Self::roots(layout, kind),
+        configured: layout.locations().get(kind).map(PathBuf::from),
+        available: !missing.iter().any(|(k, _)| *k == kind),
+      })
+      .collect()
+  }
+
+  /// The directories `kind` names in `layout`.
+  fn roots(layout: &Layout, kind: LocationKind) -> Vec<PathBuf> {
+    match kind {
+      LocationKind::Cache => vec![layout.cache_dir().to_path_buf()],
+      LocationKind::Libraries => vec![layout.library_root().to_path_buf()],
+      LocationKind::Plugins => layout
+        .plugin_roots()
+        .map(|(_, root)| root.to_path_buf())
+        .collect(),
+    }
+  }
+
+  /// Puts `kind` in `path` from now on.
+  ///
+  /// `path` must be a directory that exists: this is the moment to find out
+  /// that a disk is not mounted, rather than after an install has filled the
+  /// empty mount point underneath it. Nothing already installed is moved,
+  /// and so nothing installed may be left behind either — see
+  /// [`Storage::refuse_stranding`].
+  pub fn set(&self, kind: LocationKind, path: &Path) -> Result<Vec<LocationSummary>> {
+    if !path.is_absolute()
+      || path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+      return Err(Error::InvalidArgument(format!(
+        "{} is not an absolute path without `..`",
+        path.display()
+      )));
+    }
+    if !path.is_dir() {
+      return Err(Error::InvalidArgument(format!(
+        "{} is not a directory; create it first (and check that its disk is mounted)",
+        path.display()
+      )));
+    }
+    self.change(kind, Some(path.to_path_buf()))
+  }
+
+  /// Puts `kind` back where it is by default.
+  pub fn reset(&self, kind: LocationKind) -> Result<Vec<LocationSummary>> {
+    self.change(kind, None)
+  }
+
+  fn change(&self, kind: LocationKind, path: Option<PathBuf>) -> Result<Vec<LocationSummary>> {
+    // Under the state lock, so an install in another terminal cannot land
+    // in the old location between the check and the save.
+    let before_config = Config::load(&self.home)?;
+    let before = self.located(&before_config);
+    let guard = StateGuard::acquire(&before)?;
+
+    let mut config = before_config.clone();
+    config.locations.set(kind, path);
+    let after = self.located(&config);
+
+    if Self::roots(&before, kind) != Self::roots(&after, kind) {
+      self.refuse_nesting(&after, kind)?;
+      Self::refuse_stranding(&before, kind, guard.state())?;
+    }
+    config.save(&self.home)?;
+    Ok(Self::summarise(&after))
+  }
+
+  /// A location inside another, or around one, would let a package ID name
+  /// a directory the manager keeps something else in: libraries in
+  /// `/mnt/x` and the cache in `/mnt/x/cache`, then a package called
+  /// `cache`. The manager's own data and configuration are off limits for
+  /// the same reason.
+  fn refuse_nesting(&self, after: &Layout, kind: LocationKind) -> Result<()> {
+    let Some(chosen) = after.locations().get(kind) else {
+      return Ok(());
+    };
+    let others = LocationKind::ALL
+      .into_iter()
+      .filter(|other| *other != kind)
+      .flat_map(|other| Self::roots(after, other))
+      .chain([
+        after.data_dir().to_path_buf(),
+        after.config_dir().to_path_buf(),
+      ]);
+    for other in others {
+      if chosen.starts_with(&other) || other.starts_with(chosen) {
+        return Err(Error::InvalidArgument(format!(
+          "{} overlaps {}, which Luthier already uses; choose a directory of its own",
+          chosen.display(),
+          other.display()
+        )));
+      }
+    }
+    Ok(())
+  }
+
+  /// Refuses to move a root that packages are installed under.
+  ///
+  /// State records absolute paths and removal deletes only inside the
+  /// current roots, so a package left in the old place could never be
+  /// removed. The cache is exempt: everything in it can be fetched again,
+  /// and nothing records a path into it.
+  fn refuse_stranding(before: &Layout, kind: LocationKind, state: &State) -> Result<()> {
+    if kind == LocationKind::Cache {
+      return Ok(());
+    }
+    let roots = Self::roots(before, kind);
+    let stranded: Vec<String> = state
+      .packages
+      .values()
+      .filter(|package| {
+        package
+          .files
+          .iter()
+          .any(|file| roots.iter().any(|root| file.path().starts_with(root)))
+      })
+      .map(|package| package.id.to_string())
+      .collect();
+    if stranded.is_empty() {
+      return Ok(());
+    }
+    let list = stranded.join(" ");
+    Err(Error::InvalidArgument(format!(
+      "{} package(s) are installed in the current {kind} location: {list}. \
+       Remove them first (`luthier remove {list}`), change the location, then install them again",
+      stranded.len()
+    )))
+  }
+
+  /// The exports that let hosts find plugins in a location the user chose.
+  pub fn search_path(&self) -> Result<Activation> {
+    let config = Config::load(&self.home)?;
+    Ok(env::relocated_search_path(
+      &self.home,
+      &self.located(&config),
+    ))
+  }
+}
+
 // ----------------------------------------------------------- environments --
 
 /// Managing environments, as opposed to working inside one.
@@ -1635,20 +1857,42 @@ struct ArtifactSizes {
   total: u64,
   /// The largest single one, which is all the workspace ever holds at once.
   largest: u64,
+  /// The same bytes, by the root each package is installed under.
+  by_root: BTreeMap<PathBuf, u64>,
 }
 
 impl ArtifactSizes {
-  fn of(resolution: &Resolution<'_>) -> Self {
-    let sizes = resolution
-      .to_install()
-      .filter_map(|p| p.artifact.and_then(|a| a.size));
+  fn of(resolution: &Resolution<'_>, layout: &Layout) -> Self {
     let mut total = 0;
     let mut largest = 0;
-    for size in sizes {
+    let mut by_root = BTreeMap::new();
+    for artifact in resolution.to_install().filter_map(|p| p.artifact) {
+      let Some(size) = artifact.size else {
+        continue;
+      };
       total += size;
       largest = largest.max(size);
+      *by_root.entry(Self::root_of(artifact, layout)).or_default() += size;
     }
-    Self { total, largest }
+    Self {
+      total,
+      largest,
+      by_root,
+    }
+  }
+
+  /// Where most of an artifact's bytes land. Content goes to the library
+  /// root; a plugin to the root of the first format this build installs.
+  fn root_of(artifact: &luthier_manifest::Artifact, layout: &Layout) -> PathBuf {
+    if artifact.provides.contains(&Format::Library) {
+      return layout.library_root().to_path_buf();
+    }
+    artifact
+      .provides
+      .iter()
+      .find_map(|format| layout.plugin_root(format))
+      .unwrap_or(layout.data_dir())
+      .to_path_buf()
   }
 }
 

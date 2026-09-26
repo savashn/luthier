@@ -268,6 +268,29 @@ what another terminal is about to install into.
 The environment name becomes a path segment, so it is validated rather than
 trusted: `--env ../../etc` is refused before any path is built from it.
 
+### Locations move roots, and never create them
+
+`config.json` may name a directory for the cache, for sample libraries and for
+plugins (`Locations`, applied by `Layout::with_locations` to the base layout
+before any environment redirect). The cache moves for every environment; the
+other two apply to the default one only, because an environment is a single
+directory `env remove` deletes whole.
+
+A chosen directory is typically on an external disk, so it is never created:
+an unmounted disk leaves either nothing or an empty mount point, and
+`create_dir_all` would then put the samples on the disk the user was trying to
+spare. Every operation names the locations it touches and refuses when one is
+missing (`Session::require_locations`). Removal needs this most — deleting
+from an absent disk finds every file gone and would drop the package from
+state with its files still on the disk.
+
+State records absolute paths and removal deletes only under the current roots,
+so `api::Storage` refuses to move libraries or plugins while anything is
+installed there. Once the cache and the data directory can be on different
+disks, a `rename` between them fails with `EXDEV`; `fsutil::move_tree` copies
+instead where that happens. Staging for installs was already a sibling of the
+destination, so the final rename never crosses a disk.
+
 ### State is authoritative, scanning is advisory
 
 Ownership comes from the state file, never from scanning plugin directories. A

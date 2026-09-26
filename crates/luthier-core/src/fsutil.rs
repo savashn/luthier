@@ -130,6 +130,34 @@ pub fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
   Ok(())
 }
 
+/// Moves `source` to `destination`, which must not exist, across filesystems
+/// if it has to.
+///
+/// A rename where one is possible. The cache and the data directory are on
+/// different disks as soon as a user moves the cache, and then only a copy
+/// can cross; it lands in a sibling of `destination` first and is renamed
+/// into place, so a reader never sees half of it.
+pub fn move_tree(source: &Path, destination: &Path) -> Result<()> {
+  match fs::rename(source, destination) {
+    Ok(()) => Ok(()),
+    Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+      let temporary = destination.with_file_name(format!(
+        ".{}.moving",
+        destination
+          .file_name()
+          .unwrap_or_default()
+          .to_string_lossy()
+      ));
+      remove_any(&temporary)?;
+      copy_tree(source, &temporary)?;
+      fs::rename(&temporary, destination)
+        .map_err(|e| Error::io("move into place", destination, e))?;
+      remove_any(source)
+    }
+    Err(e) => Err(Error::io("move", destination, e)),
+  }
+}
+
 /// Removes a file or directory tree, ignoring a missing target.
 pub fn remove_any(path: &Path) -> Result<()> {
   match fs::symlink_metadata(path) {

@@ -8,12 +8,13 @@ mod args;
 mod progress;
 mod render;
 
-use args::{BenchCommand, CacheCommand, Cli, Command, EnvCommand, GlobalArgs};
+use args::{BenchCommand, CacheCommand, Cli, Command, EnvCommand, GlobalArgs, LocationCommand};
 use clap::Parser;
-use luthier_core::api::{Environments, Session};
+use luthier_core::api::{Environments, Session, Storage};
 use luthier_core::config::RegistrySource;
 use luthier_core::env::EnvName;
 use luthier_core::error::{Error, ExitCode, Result};
+use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
 use luthier_manifest::PackageId;
 use progress::BarProgress;
@@ -82,14 +83,14 @@ fn init_logging(global: &GlobalArgs) {
     .try_init();
 }
 
-/// The layout before any environment redirect.
+/// The layout before any location or environment redirect.
 ///
 /// `--root` confines what is *written*; the system search paths govern what is
 /// *seen*. They are orthogonal, so a rooted layout still sees the machine
 /// unless `--no-system-plugins` says otherwise. `Layout::rooted_at` itself
 /// stays hermetic, which is what keeps the library's own tests independent of
 /// the machine running them.
-fn build_layout(global: &GlobalArgs) -> Result<Layout> {
+fn home_layout(global: &GlobalArgs) -> Result<Layout> {
   Ok(match &global.root {
     Some(root) => {
       let layout = Layout::rooted_at(root);
@@ -102,6 +103,12 @@ fn build_layout(global: &GlobalArgs) -> Result<Layout> {
     None if global.no_system_plugins => Layout::from_env()?.with_system_roots(Default::default()),
     None => Layout::from_env()?,
   })
+}
+
+/// The layout before any environment redirect: the base, with the locations
+/// the configuration names applied.
+fn build_layout(global: &GlobalArgs) -> Result<Layout> {
+  Config::located(home_layout(global)?)
 }
 
 /// Which environment this invocation acts on: `--env`, else `LUTHIER_ENV`.
@@ -187,6 +194,12 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       return Ok(());
     }
     _ => {}
+  }
+
+  // Changes where things go, so it must work when a chosen disk is missing
+  // — `location reset` is the way out of that.
+  if let Command::Location { command } = &cli.command {
+    return run_location(global, command.as_ref(), reporter);
   }
 
   if let Command::Env { command } = &cli.command
@@ -471,9 +484,43 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
 
     // Unreachable: handled before a session is built, since neither needs
     // one. Kept exhaustive so a new command cannot be forgotten here.
-    Command::Completions { .. } | Command::Man => unreachable!("handled before the session"),
+    Command::Completions { .. } | Command::Man | Command::Location { .. } => {
+      unreachable!("handled before the session")
+    }
   }
 
+  Ok(())
+}
+
+/// Location management: rendering only. What a valid location is, and when
+/// moving one would strand an installed package, is `api::Storage`'s call.
+fn run_location(
+  global: &GlobalArgs,
+  command: Option<&LocationCommand>,
+  reporter: &Reporter,
+) -> Result<()> {
+  let storage = Storage::new(home_layout(global)?);
+  let kind = |raw: &str| {
+    LocationKind::parse(raw)
+      .ok_or_else(|| Error::InvalidArgument(format!("unknown location {raw:?}")))
+  };
+
+  let summaries = match command.unwrap_or(&LocationCommand::Show) {
+    LocationCommand::Show => storage.show()?,
+    LocationCommand::Set { kind: raw, dir } => storage.set(kind(raw)?, dir)?,
+    LocationCommand::Reset { kind: raw } => storage.reset(kind(raw)?)?,
+    LocationCommand::SearchPath => {
+      reporter.activation(&storage.search_path()?);
+      return Ok(());
+    }
+  };
+  reporter.locations(&summaries);
+  if !storage.search_path()?.set.is_empty() {
+    reporter.note(
+      "\nHosts do not search the plugin location on their own. Add it to their search path with:\n  \
+       eval \"$(luthier location search-path)\"",
+    );
+  }
   Ok(())
 }
 

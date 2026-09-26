@@ -156,6 +156,16 @@ pub enum Command {
     command: CacheCommand,
   },
 
+  /// Choose which disk downloads, sample libraries and plugins go to.
+  ///
+  /// Each is a directory you create yourself, for instance on an external
+  /// disk. While that disk is not mounted, anything that would write to it
+  /// is refused rather than written to the disk underneath.
+  Location {
+    #[command(subcommand)]
+    command: Option<LocationCommand>,
+  },
+
   /// Manage the registries packages are read from.
   Bench {
     #[command(subcommand)]
@@ -250,6 +260,40 @@ pub enum CacheCommand {
     dry_run: bool,
   },
 }
+
+#[derive(Debug, Subcommand)]
+pub enum LocationCommand {
+  /// Show where each part lives. The default.
+  Show,
+
+  /// Put one part in a directory of your choosing from now on.
+  ///
+  /// Nothing already installed is moved. Packages installed in the current
+  /// location must be removed first, and installed again afterwards.
+  Set {
+    #[arg(value_parser = LOCATION_KINDS)]
+    kind: String,
+    /// An existing directory, given as an absolute path.
+    dir: PathBuf,
+  },
+
+  /// Put one part back in its default place.
+  Reset {
+    #[arg(value_parser = LOCATION_KINDS)]
+    kind: String,
+  },
+
+  /// Print the exports that let hosts find plugins in a chosen location.
+  ///
+  /// Hosts search ~/.clap, ~/.vst3 and ~/.lv2 by themselves; anywhere else
+  /// has to be on CLAP_PATH, VST3_PATH and LV2_PATH:
+  ///
+  ///     eval "$(luthier location search-path)"
+  SearchPath,
+}
+
+/// What `location set` and `location reset` accept.
+const LOCATION_KINDS: [&str; 3] = ["cache", "libraries", "plugins"];
 
 #[derive(Debug, Subcommand)]
 pub enum EnvCommand {

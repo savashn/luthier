@@ -21,7 +21,7 @@ The first release: everything below is new.
 
 - **Commands.** `refresh`, `search`, `info`, `install`, `list`, `verify`,
   `update`, `remove`, `cleanup`, `pin`/`unpin`, `cache list`/`clean`,
-  `bench list`/`add`/`remove`/`trust`/`untrust`, `env` (create, list,
+  `bench list`/`add`/`remove`/`trust`/`untrust`, `location`, `env` (create, list,
   activate, deactivate, show, path, remove, export, import), `completions`
   and a man page the binary generates itself. Every command speaks `--json`,
   and every destructive one needs `--yes` when stdin is not a terminal —
@@ -44,6 +44,15 @@ The first release: everything below is new.
 - **Environments.** `--env` and `LUTHIER_ENV` redirect the per-installation
   parts of a layout; `env export` and `env import` reproduce an installation
   elsewhere, pinning every version including dependencies.
+- **Locations on another disk.** `location set cache|libraries|plugins <dir>`
+  moves downloads, sample libraries or plugins into a directory of the user's
+  choosing — an external disk, typically — and `location reset` puts one
+  back. The directory must already exist and is never created: while its
+  disk is not mounted, anything that would write to it or delete from it is
+  refused instead of filling the disk underneath. A location that packages
+  are installed in cannot be moved away from until they are removed, and
+  `location search-path` prints the exports hosts need to find plugins
+  outside `~/.clap`, `~/.vst3` and `~/.lv2`.
 - **Registry provenance.** A bench's origin — scheme, host and port — is
   pinned on first fetch, and one that later answers from somewhere else is
   refused before anything is downloaded from the new host.

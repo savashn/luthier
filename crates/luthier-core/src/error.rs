@@ -79,6 +79,14 @@ pub enum Error {
   #[error("{0}")]
   InvalidArgument(String),
 
+  /// A directory the user chose for `kind` is not there. Most likely a disk
+  /// that is not mounted, which is why nothing creates it instead.
+  #[error("the {kind} location {} does not exist or is not a directory", path.display())]
+  LocationUnavailable {
+    kind: crate::layout::LocationKind,
+    path: PathBuf,
+  },
+
   #[error("operation cancelled")]
   Cancelled,
 }
@@ -123,6 +131,10 @@ impl Error {
                  affected packages with `luthier install --force <package>`."
           .into(),
       ),
+      Error::LocationUnavailable { kind, .. } => Some(format!(
+        "If it is on an external disk, mount the disk and try again. To go back \
+         to the default location, run `luthier location reset {kind}`."
+      )),
       _ => None,
     }
   }

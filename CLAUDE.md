@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 428 tests, fully offline
+cargo test --workspace                     # 433 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -205,6 +205,12 @@ the crate map keeps that out of `luthier-manifest`.
   release. Shape is reported for *every* tree and acted on only where the
   artifact declares `library`; deriving content whenever no plugin turned up
   would install a broken plugin release as a folder of samples.
+- **A chosen location is never created.** `location set` needs an existing
+  directory and every write checks `unavailable_locations` first: creating
+  the path of an unmounted disk fills the disk underneath. Moving libraries
+  or plugins is refused while a package is installed there, since removal
+  only deletes under the current roots. `rename` from the cache to the data
+  directory can now cross a disk — use `fsutil::move_tree`.
 - **Only the workspace copy is transient.** `space_needed` charges the cache
   and the install root the plan's total but the workspace only its largest
   single package, because `InstallTransaction::commit` deletes the workspace
@@ -323,6 +329,10 @@ first fetch when one is configured (`bench add --key`, `bench trust`,
 one run without discarding the pin. The default bench's key is compiled in
 (`DEFAULT_BENCH_KEY`), so its release is a draft until it is signed by hand. `luthier-registry keygen` / `sign` are the
 publishing side, and `docs/REGISTRY.md` carries the rotation procedure.
+
+`luthier location` puts the cache, sample libraries or plugins in a directory
+of the user's choosing (`locations` in `config.json`); environments keep their
+own libraries and plugins inside themselves and share only the cache.
 
 `luthier cache list` / `cache clean` prune the content-addressed artifact
 cache; an entry is kept when some installed package recorded its digest.

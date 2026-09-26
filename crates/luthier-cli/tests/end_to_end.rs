@@ -2111,3 +2111,202 @@ fn a_bare_soundfont_installs_as_a_library_under_its_package_id() {
     .success();
   assert!(!installed.exists());
 }
+
+#[test]
+fn chosen_locations_receive_downloads_libraries_and_plugins() {
+  // What moving to another disk means: nothing of the three lands in the
+  // default place once a location is chosen for it.
+  let fixture = Fixture::new();
+  let library = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &library);
+  let plugin = fixture.make_artifact("Testsynth");
+  fixture.add_plugin("testsynth", "1.2.3", &plugin, &[]);
+
+  let disk = fixture.dir.path().join("external");
+  for part in ["cache", "libraries", "plugins"] {
+    std::fs::create_dir_all(disk.join(part)).unwrap();
+    fixture
+      .luthier()
+      .args(["location", "set", part])
+      .arg(disk.join(part))
+      .assert()
+      .success();
+  }
+
+  fixture
+    .luthier()
+    .args(["install", "vsco2", "testsynth"])
+    .assert()
+    .success();
+
+  assert!(
+    disk
+      .join("libraries/VSCO-2-CE/Strings/violin.sfz")
+      .is_file()
+  );
+  assert!(disk.join("plugins/clap/Testsynth.clap").is_file());
+  assert!(disk.join("plugins/vst3/Testsynth.vst3").is_dir());
+  assert!(disk.join("cache/artifacts").is_dir());
+  assert!(
+    !fixture
+      .root()
+      .join("share/luthier/libraries/VSCO-2-CE")
+      .exists()
+  );
+  assert!(!fixture.clap_dir().join("Testsynth.clap").exists());
+  assert!(!fixture.root().join("cache/luthier/artifacts").exists());
+
+  // Hosts are told where to look, and LV2 keeps its usual locations
+  // because its variable replaces them.
+  let exports = fixture
+    .luthier()
+    .args(["location", "search-path"])
+    .output()
+    .unwrap();
+  let text = stdout_of(&exports);
+  assert!(
+    text.contains(&format!(
+      "CLAP_PATH=\"{}",
+      disk.join("plugins/clap").display()
+    )),
+    "{text}"
+  );
+  assert!(text.contains(".lv2:/usr/lib/lv2"), "{text}");
+
+  fixture
+    .luthier()
+    .args(["remove", "vsco2", "testsynth"])
+    .assert()
+    .success();
+  assert!(!disk.join("libraries/VSCO-2-CE").exists());
+  assert!(!disk.join("plugins/clap/Testsynth.clap").exists());
+}
+
+#[test]
+fn a_missing_disk_is_refused_rather_than_written_underneath() {
+  // An unmounted disk leaves a path that does not exist, or an empty mount
+  // point. Creating it would put the samples on the disk the user was
+  // trying to spare, and removing from it would drop a package from state
+  // with its files still on the disk.
+  let fixture = Fixture::new();
+  let library = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &library);
+
+  let disk = fixture.dir.path().join("external");
+  std::fs::create_dir_all(&disk).unwrap();
+  fixture
+    .luthier()
+    .args(["location", "set", "libraries"])
+    .arg(&disk)
+    .assert()
+    .success();
+  fixture
+    .luthier()
+    .args(["install", "vsco2"])
+    .assert()
+    .success();
+
+  let unmounted = fixture.dir.path().join("unplugged");
+  std::fs::rename(&disk, &unmounted).unwrap();
+
+  for command in [&["install", "vsco2"][..], &["remove", "vsco2"], &["verify"]] {
+    let output = fixture.luthier().args(command).output().unwrap();
+    assert!(!output.status.success(), "{command:?} went ahead");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("mount the disk"), "{command:?}: {stderr}");
+  }
+  assert!(!disk.exists(), "the missing location was created");
+  // Still recorded, so plugging the disk back in is all it takes.
+  let list = fixture.luthier().arg("list").output().unwrap();
+  assert!(stdout_of(&list).contains("Vsco2"), "{}", stdout_of(&list));
+
+  // A missing disk says so where the locations are listed.
+  let show = fixture.luthier().arg("location").output().unwrap();
+  assert!(stdout_of(&show).contains("MISSING"), "{}", stdout_of(&show));
+
+  std::fs::rename(&unmounted, &disk).unwrap();
+  fixture
+    .luthier()
+    .args(["remove", "vsco2"])
+    .assert()
+    .success();
+}
+
+#[test]
+fn a_location_holding_installed_packages_cannot_be_moved_away_from() {
+  // State records absolute paths and removal deletes only under the current
+  // roots, so a package left in the old place could never be removed.
+  let fixture = Fixture::new();
+  let library = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &library);
+  fixture
+    .luthier()
+    .args(["install", "vsco2"])
+    .assert()
+    .success();
+
+  let disk = fixture.dir.path().join("external");
+  std::fs::create_dir_all(&disk).unwrap();
+  let output = fixture
+    .luthier()
+    .args(["location", "set", "libraries"])
+    .arg(&disk)
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("luthier remove vsco2"), "{stderr}");
+
+  // The cache holds nothing a package records a path into, so it moves.
+  std::fs::create_dir_all(disk.join("cache")).unwrap();
+  fixture
+    .luthier()
+    .args(["location", "set", "cache"])
+    .arg(disk.join("cache"))
+    .assert()
+    .success();
+}
+
+#[test]
+fn a_location_must_be_an_existing_directory_of_its_own() {
+  let fixture = Fixture::new();
+  let disk = fixture.dir.path().join("external");
+
+  // Not there: most likely a disk that is not mounted.
+  fixture
+    .luthier()
+    .args(["location", "set", "libraries"])
+    .arg(&disk)
+    .assert()
+    .code(2);
+  // Relative: there is no meaningful base for it.
+  fixture
+    .luthier()
+    .args(["location", "set", "libraries", "samples"])
+    .assert()
+    .code(2);
+
+  // Around another location: a package ID could then name the cache.
+  std::fs::create_dir_all(disk.join("cache")).unwrap();
+  fixture
+    .luthier()
+    .args(["location", "set", "cache"])
+    .arg(disk.join("cache"))
+    .assert()
+    .success();
+  fixture
+    .luthier()
+    .args(["location", "set", "libraries"])
+    .arg(&disk)
+    .assert()
+    .code(2);
+
+  // And a reset puts it back.
+  fixture
+    .luthier()
+    .args(["location", "reset", "cache"])
+    .assert()
+    .success();
+  let show = fixture.luthier().arg("location").output().unwrap();
+  assert!(!stdout_of(&show).contains("chosen"), "{}", stdout_of(&show));
+}

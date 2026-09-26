@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::fsutil;
-use crate::layout::Layout;
+use crate::layout::{Layout, Locations};
 use crate::registry::signature::PublicKey;
 use crate::registry::{HttpSnapshotRegistry, LocalRegistry, OasRegistry, RegistryProvider};
 use serde::{Deserialize, Serialize};
@@ -107,6 +107,10 @@ impl RegistryConfig {
 pub struct Config {
   #[serde(default = "default_registries")]
   pub registries: Vec<RegistryConfig>,
+  /// Directories chosen in place of the defaults. Left out of the file
+  /// while none is set, like a bench's keys.
+  #[serde(default, skip_serializing_if = "Locations::is_empty")]
+  pub locations: Locations,
 }
 
 /// The bench shipped with the client, published as a release asset.
@@ -180,6 +184,7 @@ impl Default for Config {
   fn default() -> Self {
     Self {
       registries: default_registries(),
+      locations: Locations::default(),
     }
   }
 }
@@ -194,6 +199,16 @@ impl Config {
       Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
       Err(e) => Err(Error::io("read", &path, e)),
     }
+  }
+
+  /// `layout` with the configured locations applied.
+  ///
+  /// Read from the file whatever registry override a command was given:
+  /// `--registry-path` replaces where manifests come from, not where
+  /// anything is installed.
+  pub fn located(layout: Layout) -> Result<Layout> {
+    let locations = Self::load(&layout)?.locations;
+    Ok(layout.with_locations(&locations))
   }
 
   pub fn save(&self, layout: &Layout) -> Result<()> {
@@ -264,6 +279,7 @@ pub fn from_path(path: impl Into<PathBuf>) -> Config {
       "local",
       RegistrySource::Path { path: path.into() },
     )],
+    locations: Locations::default(),
   }
 }
 

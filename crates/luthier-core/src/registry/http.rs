@@ -206,8 +206,8 @@ impl RegistryProvider for HttpSnapshotRegistry {
 
     fsutil::ensure_dir(self.snapshot_dir.parent().unwrap_or(&self.snapshot_dir))?;
     fsutil::remove_any(&self.snapshot_dir)?;
-    std::fs::rename(&extracted_root, &self.snapshot_dir)
-      .map_err(|e| Error::io("install registry snapshot", &self.snapshot_dir, e))?;
+    // The scratch directory is in the cache, which may be on another disk.
+    fsutil::move_tree(&extracted_root, &self.snapshot_dir)?;
     fsutil::remove_any(&scratch)?;
     provenance::record(
       &registries_dir,

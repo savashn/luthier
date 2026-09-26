@@ -379,6 +379,7 @@ async fn one_unreachable_bench_does_not_stop_the_others() {
         },
       ),
     ],
+    locations: Default::default(),
   };
 
   let session = Session::new(client.layout.clone(), config).unwrap();
@@ -405,6 +406,7 @@ async fn a_refresh_that_updated_nothing_at_all_is_an_error() {
         url: Url::parse("file:///nonexistent/bench.tar.gz").unwrap(),
       },
     )],
+    locations: Default::default(),
   };
 
   let session = Session::new(client.layout.clone(), config).unwrap();

@@ -9,8 +9,92 @@
 
 use crate::env::EnvName;
 use luthier_manifest::Format;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Something a user may move to another disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LocationKind {
+  /// Downloaded artifacts and fetched registry snapshots.
+  Cache,
+  /// Sample libraries and other content.
+  Libraries,
+  /// Plugins, one directory per format beneath it.
+  Plugins,
+}
+
+impl LocationKind {
+  pub const ALL: [LocationKind; 3] = [Self::Cache, Self::Libraries, Self::Plugins];
+
+  pub fn label(self) -> &'static str {
+    match self {
+      Self::Cache => "cache",
+      Self::Libraries => "libraries",
+      Self::Plugins => "plugins",
+    }
+  }
+
+  pub fn parse(raw: &str) -> Option<Self> {
+    Self::ALL.into_iter().find(|kind| kind.label() == raw)
+  }
+}
+
+impl std::fmt::Display for LocationKind {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.write_str(self.label())
+  }
+}
+
+/// Directories the user chose in place of the defaults, typically on another
+/// disk. Stored in `config.json`; absent means the default.
+///
+/// Each is a directory the user made, and this manager never creates one. An
+/// external disk that is not mounted leaves its mount point behind as an
+/// ordinary empty directory — or leaves nothing, and then creating the path
+/// would put gigabytes of samples on the disk the user was trying to spare.
+/// So a configured location that is missing is a refusal
+/// ([`Layout::unavailable_locations`]), never a `create_dir_all`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Locations {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<PathBuf>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub libraries: Option<PathBuf>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub plugins: Option<PathBuf>,
+}
+
+impl Locations {
+  pub fn is_empty(&self) -> bool {
+    self.configured().next().is_none()
+  }
+
+  pub fn get(&self, kind: LocationKind) -> Option<&Path> {
+    match kind {
+      LocationKind::Cache => self.cache.as_deref(),
+      LocationKind::Libraries => self.libraries.as_deref(),
+      LocationKind::Plugins => self.plugins.as_deref(),
+    }
+  }
+
+  pub fn set(&mut self, kind: LocationKind, path: Option<PathBuf>) {
+    let slot = match kind {
+      LocationKind::Cache => &mut self.cache,
+      LocationKind::Libraries => &mut self.libraries,
+      LocationKind::Plugins => &mut self.plugins,
+    };
+    *slot = path;
+  }
+
+  /// Every location that is set, in a stable order.
+  pub fn configured(&self) -> impl Iterator<Item = (LocationKind, &Path)> {
+    LocationKind::ALL
+      .into_iter()
+      .filter_map(|kind| self.get(kind).map(|path| (kind, path)))
+  }
+}
 
 /// Resolved filesystem locations for one installation.
 ///
@@ -42,6 +126,11 @@ pub struct Layout {
   /// baked in. Never written to, never deleted from, and deliberately absent
   /// from [`Layout::is_managed_location`].
   system_roots: BTreeMap<Format, Vec<PathBuf>>,
+  /// The user's choices this layout honours, kept so a command can refuse
+  /// when one of them is not there. Only what still applies: an environment
+  /// keeps its libraries and plugins inside itself, so redirecting into one
+  /// drops those two.
+  locations: Locations,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,7 +164,47 @@ impl Layout {
       plugin_roots: Self::default_plugin_roots(&home),
       environment: None,
       system_roots: Self::default_system_roots(),
+      locations: Locations::default(),
     })
+  }
+
+  /// Moves the parts `locations` names to where it says.
+  ///
+  /// Applied to the base layout, before any environment redirect. An
+  /// environment is one directory that `env remove` deletes whole, so its
+  /// libraries and plugins stay inside it; the cache is shared by every
+  /// environment and moves for all of them.
+  pub fn with_locations(mut self, locations: &Locations) -> Self {
+    if let Some(cache) = &locations.cache {
+      self.cache = cache.clone();
+    }
+    if let Some(libraries) = &locations.libraries {
+      self.libraries = libraries.clone();
+    }
+    if let Some(plugins) = &locations.plugins {
+      self.plugin_roots = Self::relocated_plugin_roots(plugins);
+    }
+    self.locations = locations.clone();
+    self
+  }
+
+  /// The locations this layout honours.
+  pub fn locations(&self) -> &Locations {
+    &self.locations
+  }
+
+  /// Configured locations that are not a directory right now — most likely
+  /// a disk that is not mounted.
+  ///
+  /// Anything that writes checks this first, so a missing disk costs a
+  /// refusal rather than a copy of everything on the disk underneath.
+  pub fn unavailable_locations(&self) -> Vec<(LocationKind, PathBuf)> {
+    self
+      .locations
+      .configured()
+      .filter(|(_, path)| !path.is_dir())
+      .map(|(kind, path)| (kind, path.to_path_buf()))
+      .collect()
   }
 
   /// The standard layout, redirected into the environment named `name`.
@@ -96,6 +225,10 @@ impl Layout {
       libraries: root.join("libraries"),
       plugin_roots: Self::default_plugin_roots(&root),
       environment: Some(name.clone()),
+      locations: Locations {
+        cache: self.locations.cache.clone(),
+        ..Locations::default()
+      },
       ..self
     }
   }
@@ -129,6 +262,7 @@ impl Layout {
       plugin_roots: Self::default_plugin_roots(root),
       environment: None,
       system_roots: BTreeMap::new(),
+      locations: Locations::default(),
     }
   }
 
@@ -213,6 +347,19 @@ impl Layout {
       (Format::Clap, home.join(".clap")),
       (Format::Vst3, home.join(".vst3")),
       (Format::Lv2, home.join(".lv2")),
+    ])
+  }
+
+  /// Plugin roots beneath a directory the user chose.
+  ///
+  /// Named without the leading dot the home-directory convention uses: on a
+  /// disk of its own there is nothing to hide them from, and a user looking
+  /// for them there should find them.
+  fn relocated_plugin_roots(base: &Path) -> BTreeMap<Format, PathBuf> {
+    BTreeMap::from([
+      (Format::Clap, base.join("clap")),
+      (Format::Vst3, base.join("vst3")),
+      (Format::Lv2, base.join("lv2")),
     ])
   }
 
@@ -549,6 +696,41 @@ mod tests {
     let layout = Layout::rooted_at("/home/u");
     assert!(!layout.is_managed_location(Path::new("/home/u/.clap/../Documents")));
     assert!(!layout.is_managed_location(Path::new("/home/u/.vst3/x/../../.ssh/id_ed25519")));
+  }
+
+  #[test]
+  fn an_environment_keeps_the_chosen_cache_and_nothing_else() {
+    // `env remove` deletes an environment's directory whole, so its plugins
+    // and libraries must live inside it; the cache is shared by design.
+    let locations = Locations {
+      cache: Some("/mnt/ext/cache".into()),
+      libraries: Some("/mnt/ext/samples".into()),
+      plugins: Some("/mnt/ext/plugins".into()),
+    };
+    let layout = Layout::rooted_at("/home/u").with_locations(&locations);
+    assert_eq!(layout.library_root(), Path::new("/mnt/ext/samples"));
+    assert_eq!(
+      layout.plugin_root(&Format::Clap).unwrap(),
+      Path::new("/mnt/ext/plugins/clap")
+    );
+    assert!(layout.is_managed_location(Path::new("/mnt/ext/samples/vsco2")));
+
+    let env = layout.into_env(&EnvName::new("mixing").unwrap());
+    assert_eq!(env.cache_dir(), Path::new("/mnt/ext/cache"));
+    assert!(
+      env
+        .library_root()
+        .starts_with("/home/u/share/luthier/envs/mixing")
+    );
+    assert!(
+      env
+        .plugin_root(&Format::Clap)
+        .unwrap()
+        .starts_with("/home/u/share/luthier/envs/mixing")
+    );
+    // And only what still applies is required to be present.
+    let required: Vec<_> = env.locations().configured().map(|(k, _)| k).collect();
+    assert_eq!(required, vec![LocationKind::Cache]);
   }
 
   #[test]

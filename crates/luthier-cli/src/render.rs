@@ -612,6 +612,33 @@ impl Reporter {
     println!("\nThese packages are not currently required.\n\nUse:\nluthier remove <package>");
   }
 
+  // -------------------------------------------------------------- location --
+
+  pub fn locations(&self, locations: &[luthier_core::api::LocationSummary]) {
+    if self.json {
+      return self.emit(&locations);
+    }
+    println!("{:<10}  {:<9}  PATH", "PART", "SOURCE");
+    for location in locations {
+      let source = match (&location.configured, location.available) {
+        (None, _) => "default",
+        (Some(_), true) => "chosen",
+        (Some(_), false) => "MISSING",
+      };
+      for (i, path) in location.paths.iter().enumerate() {
+        let (part, source) = if i == 0 {
+          (location.kind.label(), source)
+        } else {
+          ("", "")
+        };
+        println!("{part:<10}  {source:<9}  {}", path.display());
+      }
+    }
+    if locations.iter().any(|l| !l.available) {
+      println!("\nA MISSING location is on a disk that is not mounted, or was deleted.");
+    }
+  }
+
   // ----------------------------------------------------------------- bench --
 
   pub fn benches(&self, benches: &[BenchSummary]) {

@@ -223,6 +223,44 @@ pub fn activation(layout: &Layout, name: &EnvName) -> Activation {
   }
 }
 
+/// What to export so hosts see plugins installed under a location the user
+/// chose, which no host searches on its own.
+///
+/// `home` is the layout before any location is applied: its plugin roots are
+/// the conventional `~/.clap`, `~/.vst3` and `~/.lv2`. Only LV2 needs it,
+/// because `LV2_PATH` replaces the default search path — setting it to the
+/// new root alone would hide every bundle in `~/.lv2` and `/usr/lib/lv2`.
+/// `CLAP_PATH` and `VST3_PATH` add to the conventional locations, so the new
+/// root is all they need.
+///
+/// Empty when plugins are where hosts already look. Nothing here names an
+/// environment: this is the default one, which needs no `LUTHIER_ENV`.
+pub fn relocated_search_path(home: &Layout, located: &Layout) -> Activation {
+  let conventional = Layout::system_roots_from(|_| None);
+  let mut set = Vec::new();
+
+  for format in [Format::Lv2, Format::Clap, Format::Vst3] {
+    let Some(root) = located.plugin_root(&format) else {
+      continue;
+    };
+    let usual = home.plugin_root(&format);
+    if usual == Some(root) {
+      continue;
+    }
+    let mut paths = vec![root.to_path_buf()];
+    if format == Format::Lv2 {
+      paths.extend(usual.map(Path::to_path_buf));
+      paths.extend(conventional.get(&format).cloned().unwrap_or_default());
+    }
+    set.push((search_path_var(&format).to_string(), join_paths(&paths)));
+  }
+
+  Activation {
+    unset: set.iter().map(|(k, _)| k.clone()).collect(),
+    set,
+  }
+}
+
 /// The variables activation touches, and therefore the ones deactivation
 /// clears. Fixed, so undoing an activation needs no environment name.
 pub fn deactivation() -> Activation {
