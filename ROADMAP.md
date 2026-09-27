@@ -38,11 +38,11 @@ fetch, and the release workflow publishes a draft that is signed on the
 maintainer's machine before it becomes visible. Nothing is signed yet, because
 nothing is published yet.
 
-What it is *not*: published. The repository, bench included, is pushed to
-`savashn/luthier` but private, no workflow has ever run, and no release
-exists, so nobody but its author can install it. That is what Phase 0 is
-about, and what is left of it is the order `v0.1.0` goes out in: public, one
-green pull request, the tag, the signature, then publishing the draft.
+What it is *not*: released. The repository is public at `savashn/luthier`
+and `ci.yml` has run green on every push to `main`, but no release exists, so
+the default bench URL does not resolve and nobody but its author can install
+it without a toolchain. What is left of Phase 0 is the order `v0.1.0` goes
+out in: the tag, the signature, then publishing the draft.
 
 ---
 
@@ -51,12 +51,12 @@ green pull request, the tag, the signature, then publishing the draft.
 Nothing else matters until this is done. Every item below is small; together
 they are the difference between a local working directory and a project.
 
-### 0.1 Publish the repository — half done
+### 0.1 Publish the repository — done
 
-`luthier/` lives at `savashn/luthier`, still private. No workflow has ever
-executed, so everything CI checks — the `--no-default-features` build of the
-validator and schema drift among it — and the release's musl build have been
-verified only on one machine.
+`luthier/` is public at `savashn/luthier`. `ci.yml` has run on every push to
+`main` since 2026-09-18, the `--no-default-features` build of the validator
+and the schema-drift check included. The release's musl build has not run
+yet; that is 0.3.
 
 There used to be a second repository to publish. The bench now lives here
 under `bench/`, which removed the part of this item that was genuinely awkward:
@@ -66,8 +66,8 @@ manager meant a personal access token in the other repository's secrets. One
 repository needs none of that. Making the manager public remains the right
 answer anyway, and the one this project's licence assumes.
 
-**Done when:** the repository is pushed and `ci.yml` is green on a pull
-request, with the schema-drift check having run at least once.
+**Done when:** ~~the repository is pushed and public, and `ci.yml` is green
+with the schema-drift check having run at least once~~.
 
 ### 0.2 Add the licence texts — done
 
