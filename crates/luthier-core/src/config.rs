@@ -129,9 +129,8 @@ pub struct Config {
 /// It is signed with [`DEFAULT_BENCH_KEY`], and the key is required from the
 /// first fetch.
 ///
-/// Until the first release is tagged this URL will not resolve; use
-/// `--registry-path bench` (or a `path` entry in `config.json`) to point at
-/// the checkout in the meantime.
+/// `releases/latest` never serves a draft, so a release is invisible here
+/// until it has been signed and published by hand.
 pub const DEFAULT_REGISTRY_URL: &str =
   "https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz";
 

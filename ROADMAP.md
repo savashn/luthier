@@ -35,14 +35,10 @@ Ed25519 signature has it verified between the download and the extractor, with
 the signing key pinned the same way. The default bench goes further: its public
 key is built into the manager, so a signature is required from the very first
 fetch, and the release workflow publishes a draft that is signed on the
-maintainer's machine before it becomes visible. Nothing is signed yet, because
-nothing is published yet.
+maintainer's machine before it becomes visible.
 
-What it is *not*: released. The repository is public at `savashn/luthier`
-and `ci.yml` has run green on every push to `main`, but no release exists, so
-the default bench URL does not resolve and nobody but its author can install
-it without a toolchain. What is left of Phase 0 is the order `v0.1.0` goes
-out in: the tag, the signature, then publishing the draft.
+`v0.1.0` is released: a static binary for Linux x86_64 and the signed bench,
+from the public repository at `savashn/luthier`. Phase 0 is done.
 
 ---
 
@@ -101,16 +97,13 @@ LGPL-3.0-or-later, where the conflict does not arise. Dropping the "or later"
 would make the dependency tree unshippable, so it is a decision rather than a
 default.
 
-### 0.3 Publish a release, and make the default registry resolve
+### 0.3 Publish a release, and make the default registry resolve — done
 
 `config.rs` points at `https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz`.
-Until a release exists that URL does not resolve, `luthier refresh` fails out
-of the box and every user must pass `--registry-path`. The comment in the
-source says so; it stops being true with the first tag, which is this item —
-not 0.1, since the bench now ships from the same release as the binary.
-
-The only install path today is `cargo build --release` with a Rust 1.89
-toolchain. The people this tool is for are musicians.
+Until a release existed that URL did not resolve, `luthier refresh` failed out
+of the box and every user had to pass `--registry-path`; and the only install
+path was `cargo build --release` with a Rust 1.89 toolchain. The people this
+tool is for are musicians.
 
 The machinery for this exists: `.github/workflows/release.yml` builds a
 statically linked musl binary on a `v*` tag, asserts it really is static
@@ -121,12 +114,14 @@ URL that stays correct. Release notes come from `CHANGELOG.md`, and the job
 refuses a tag that disagrees with the workspace version. The README's install
 section leads with that download.
 
-What is left is the part only an account can do: tag, let it run, and publish
-the registry so `config.rs`'s default URL resolves.
+`v0.1.0` was tagged on 2026-09-27. The musl build passed on its first run,
+the bench was signed on the maintainer's machine and the draft published. On
+a clean root, the downloaded binary refreshed both benches with no flags,
+verifying the signature, and installed and verified `lsp-plugins`.
 
 **Done when:** ~~the README's install section leads with the binary rather
-than with cargo~~, a tagged `v0.1.0` publishes a static `luthier` binary for
-linux-x86_64, and `luthier refresh` works on a clean machine with no flags.
+than with cargo, a tagged `v0.1.0` publishes a static `luthier` binary for
+linux-x86_64, and `luthier refresh` works on a clean machine with no flags~~.
 
 ### 0.4 Repository hygiene — done
 
