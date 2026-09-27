@@ -8,6 +8,7 @@
 - [Where things go](#where-things-go)
 - [Environments](#environments)
 - [Moving a setup to another machine](#moving-a-setup-to-another-machine)
+- [Nix and Home Manager](#nix-and-home-manager)
 - [Documentation](#documentation)
 - [Licence](#licence)
 
@@ -285,12 +286,46 @@ environment can fully determine which LV2 bundles a host sees. `CLAP_PATH` and
 `VST3_PATH` only *extend* the standard locations, so `~/.clap` and `~/.vst3`
 stay visible alongside the environment's own.
 
+## Nix and Home Manager
+
+The repository is a flake with a package and a Home Manager module. Declare
+your plugins and sample libraries, and every `home-manager switch` installs
+them:
+
+```nix
+# flake inputs
+luthier.url = "github:savashn/luthier";
+
+# Home Manager modules
+imports = [ luthier.homeManagerModules.default ];
+
+programs.luthier = {
+  enable = true;
+  packages = [
+    "surge"
+    "lsp-plugins"
+    { id = "dragonfly-reverb"; version = "3.2.10"; }
+  ];
+  environments.drums.packages = [ "drskit" ];
+  prune = true;   # remove whatever is not listed
+};
+```
+
+nixpkgs carries many plugins and the engines; what it does not carry is sample
+content, and Luthier finds engines installed from nixpkgs in your profiles. See
+[Nix and Home Manager](docs/NIX.md) for every option.
+
+Without Home Manager, `nix run github:savashn/luthier -- search reverb` runs it
+once, and `luthier env import --prune <file>` makes an installation match a
+file on any system.
+
 ## Documentation
 
 - [Roadmap](ROADMAP.md) — what is next, and what is deliberately out of scope
 - [Changelog](CHANGELOG.md) — what changed, release by release
 - [Architecture](docs/ARCHITECTURE.md) — how the pieces fit together
 - [Environments](docs/ENVIRONMENTS.md) — export, import and reproducing a setup
+- [Nix and Home Manager](docs/NIX.md) — `programs.luthier`, and the flake
 - [Security model](SECURITY.md) — what is trusted, and what is not
 - [Manifest format](docs/MANIFEST.md) — the package schema
 - [Registry](docs/REGISTRY.md) — adding a package

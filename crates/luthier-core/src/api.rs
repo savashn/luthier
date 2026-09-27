@@ -1340,35 +1340,93 @@ impl Session {
   /// Only `explicit` entries become roots; dependency versions are supplied
   /// to the resolver as requirements so the same graph comes back, but they
   /// stay recorded as dependencies and so remain eligible for `cleanup`.
+  ///
+  /// With `prune`, the import converges rather than adds: once what the file
+  /// names is installed, every package it neither names nor needs is
+  /// removed ([`Session::prune_candidates`]). That is what makes the file a
+  /// description of the environment rather than a lower bound on it, and
+  /// what a declarative front end — the Home Manager module — relies on.
+  /// A file naming nothing is refused without `prune`, since it would do
+  /// nothing; with it, it empties the environment.
   pub async fn import_env(
     &self,
     file: &EnvFile,
+    prune: bool,
     progress: &mut dyn Progress,
   ) -> Result<ImportOutcome> {
     let roots = file.roots();
-    if roots.is_empty() {
+    if roots.is_empty() && !prune {
       return Err(Error::InvalidArgument(
         "the environment file lists no explicitly installed packages".into(),
       ));
     }
     let required = file.required_versions();
-    let outcome = self.install_at(&roots, false, &required, progress).await?;
+    let outcome = if roots.is_empty() {
+      InstallOutcome::default()
+    } else {
+      self.install_at(&roots, false, &required, progress).await?
+    };
 
     // Pins are reapplied afterwards: a pin is state about the user's
     // intent, and applying it before the package exists would be writing
     // state for something not installed.
     let (reapplied_pins, skipped_pins) = self.reapply_pins(file.pins())?;
 
+    // After the install, not before: a failed install then leaves what was
+    // there in place instead of an environment with things removed and
+    // nothing added.
+    let pruned = if prune {
+      let candidates = self.prune_candidates(file)?;
+      if candidates.is_empty() {
+        None
+      } else {
+        Some(self.remove(&candidates, false)?)
+      }
+    } else {
+      None
+    };
+
     Ok(ImportOutcome {
       installed: outcome,
       reapplied_pins,
       skipped_pins,
+      pruned,
     })
   }
 
-  /// Reports what importing `file` would do, without changing anything.
+  /// Reports what importing `file` would install, without changing anything.
   pub fn plan_import(&self, file: &EnvFile) -> Result<InstallPlan> {
-    self.plan_install_at(&file.roots(), false, &file.required_versions())
+    let roots = file.roots();
+    if roots.is_empty() {
+      return Ok(InstallPlan::default());
+    }
+    self.plan_install_at(&roots, false, &file.required_versions())
+  }
+
+  /// Installed packages that `file` neither names nor needs: what
+  /// `env import --prune` removes.
+  ///
+  /// Everything the resolved plan for the file touches is kept — its roots,
+  /// and every dependency of theirs, installed yet or not — so a package the
+  /// file lists only as a dependency survives exactly as long as something
+  /// named still needs it. The rest of the state goes, explicit or not,
+  /// which also collects dependencies that only a pruned package needed.
+  pub fn prune_candidates(&self, file: &EnvFile) -> Result<Vec<PackageId>> {
+    let wanted: BTreeSet<String> = self
+      .plan_import(file)?
+      .steps
+      .into_iter()
+      .map(|step| step.id)
+      .collect();
+    let state = crate::state::load(&self.layout)?;
+    Ok(
+      state
+        .packages
+        .keys()
+        .filter(|id| !wanted.contains(id.as_str()))
+        .cloned()
+        .collect(),
+    )
   }
 
   /// Resolves a user-supplied name to a package ID, with a useful error.
@@ -1812,6 +1870,9 @@ pub struct ImportOutcome {
   /// Pins the file carried for packages this import did not install.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub skipped_pins: Vec<String>,
+  /// What `--prune` removed, when it removed anything.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub pruned: Option<RemoveOutcome>,
 }
 
 /// The name an artifact was published under: the last segment of its URL,
@@ -1966,7 +2027,7 @@ pub struct EngineChoice {
   pub provisioning_hint: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct InstallPlan {
   pub steps: Vec<InstallStep>,
   pub missing_externals: Vec<MissingExternal>,
@@ -2068,7 +2129,7 @@ impl InstallPlan {
   }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct InstallOutcome {
   pub installed: Vec<InstalledSummary>,
   pub skipped: Vec<InstalledSummary>,

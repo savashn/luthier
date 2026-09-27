@@ -75,8 +75,9 @@ pin = "1.2.3"
 | Field | Meaning |
 |---|---|
 | `meta.schema` | Format revision. A file from a newer revision is refused rather than half-understood. |
-| `meta.pinned` | Whether `version` fields are authoritative. |
+| `meta.pinned` | Whether every package names a version. A `version` is a hard requirement wherever one is given, so a hand-written file with `pinned = false` can hold some packages at a version and let the rest follow the registry. |
 | `meta.environment` | Where it came from. Informational — import never switches environments on the strength of a file's contents. |
+| `package.registry` | Where the manifest came from. Informational, and may be left out. |
 | `package.reason` | `explicit` packages are what import asks for by name; `dependency` entries are recorded so their versions reproduce, but stay dependencies. |
 | `package.pin` | A pin the user had applied, reapplied after the install. |
 
@@ -126,6 +127,23 @@ $ eval "$(luthier env activate mixing)" && luthier env import studio.toml
 The `environment` field in the file is not consulted for this. A file that
 could redirect where it installs would be deciding something the person running
 the import should decide.
+
+### Making an environment match a file
+
+An import only adds: it installs what the file names and leaves everything
+else alone. With `--prune` it also removes every installed package the file
+neither names nor needs, so the environment ends up exactly as the file
+describes, and importing the same file again reports nothing to do:
+
+```console
+$ luthier env import --prune studio.toml
+```
+
+A dependency survives as long as something the file names needs it. With
+`--prune`, a file naming no packages empties the environment. Removal keeps
+any file changed since it was installed, as `luthier remove` does. This is what
+the Home Manager module runs when its `prune` option is on; see
+[Nix and Home Manager](NIX.md).
 
 ## Cross-machine and cross-OS notes
 

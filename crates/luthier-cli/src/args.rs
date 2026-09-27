@@ -287,6 +287,10 @@ pub enum EnvCommand {
   Import {
     /// The file to read, or `-` for standard input.
     file: PathBuf,
+    /// Also remove every installed package the file neither names nor
+    /// needs, so the environment ends up exactly as the file describes.
+    #[arg(long)]
+    prune: bool,
   },
 
   /// Print an environment's directory.

@@ -1,0 +1,72 @@
+# The flake builds, and the Home Manager module evaluates.
+#
+# Separate from ci.yml because it is slow — a Nix build compiles every crate
+# from scratch and runs the suite again inside the sandbox — and because it
+# only needs to run when something it depends on changes.
+name: nix
+
+on:
+  pull_request:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - '.github/workflows/nix.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - '.github/workflows/nix.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+
+      # `nix flake check` builds the package, which runs the test suite as its
+      # check phase, and evaluates every other output.
+      - name: Flake check
+        run: nix flake check --print-build-logs
+
+      # The module's options have to type-check and its activation script has
+      # to render; a mistake in either only shows up for someone switching.
+      - name: The Home Manager module evaluates
+        run: |
+          cat > /tmp/eval.nix <<'EOF'
+          let
+            flake = builtins.getFlake (toString ./.);
+            pkgs = flake.inputs.nixpkgs.legacyPackages.x86_64-linux;
+            hm = builtins.fetchTarball "https://github.com/nix-community/home-manager/archive/master.tar.gz";
+            config = (import "${hm}/modules" {
+              inherit pkgs;
+              configuration = {
+                imports = [ flake.homeManagerModules.default ];
+                home.username = "ci";
+                home.homeDirectory = "/home/ci";
+                home.stateVersion = "25.05";
+                programs.luthier = {
+                  enable = true;
+                  prune = true;
+                  packages = [ "surge" { id = "lsp-plugins"; version = "1.2.35"; } ];
+                  environments.drums.packages = [ "drskit" ];
+                  locations.plugins = "/mnt/plugins";
+                };
+              };
+            }).config;
+          in
+          config.home.activation.luthier.data
+          EOF
+          # An expression rather than a file, so `./.` is this checkout.
+          nix eval --impure --raw --expr "$(cat /tmp/eval.nix)"

@@ -15,6 +15,35 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **Nix: a flake and a Home Manager module.** `nix run github:savashn/luthier`
+  runs it; `programs.luthier` declares the packages to install in the home
+  directory and in named environments, where downloads, libraries and plugins
+  go, and whether anything not declared is removed, and applies it on every
+  `home-manager switch`. See `docs/NIX.md`.
+- **`env import --prune`.** Also removes every installed package the file
+  neither names nor needs, so the environment ends up exactly as the file
+  describes and importing it again does nothing. With `--prune`, a file
+  naming no packages empties the environment.
+- **Plugins from Nix profiles are detected.** `/run/current-system/sw/lib`,
+  `~/.nix-profile/lib`, `~/.local/state/nix/profile/lib` and
+  `/etc/profiles/per-user/<user>/lib` are searched alongside `/usr/lib`, so
+  an engine installed from nixpkgs counts for the sample libraries it plays.
+
+### Changed
+
+- **An environment file may hold some packages at a version and not others.**
+  A `version` is a hard requirement wherever one is given, not only in a
+  `pinned` file, and `registry` may be left out.
+
+### Fixed
+
+- **No CA certificates no longer means a crash.** The HTTP client was built
+  up front and panicked on a machine without a CA store, taking `file://`
+  URLs and `--offline` down with it. It is built on the first request, and a
+  missing store is an error that says what to install.
+
 ### Removed
 
 - **The `.sha256` files beside release assets.** GitHub shows every asset's

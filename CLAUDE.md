@@ -6,11 +6,17 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 410 tests, fully offline
+cargo test --workspace                     # 413 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
+nix build .#luthier -L                     # the flake; runs the suite in the sandbox
+nix fmt                                    # after editing flake.nix or nix/
 ```
+
+The Nix daemon is often stopped on this machine; `nix` then fails with
+"cannot connect to socket" and the user has to start it
+(`sudo systemctl start nix-daemon`).
 
 Manual run against the bench, which lives in this repository under `bench/`:
 
@@ -166,6 +172,23 @@ the crate map keeps that out of `luthier-manifest`.
   hand a `Session` different sources. Do not add `bench add` back, and do not
   add pinning of an origin: with the URL compiled in, a pin protects nothing
   and locks everyone out the day a release moves it.
+- **The Home Manager module runs luthier; it does not reimplement it.**
+  `nix/hm-module.nix` writes an environment file per environment and calls
+  `env import [--prune]` during activation, so verification and placement
+  have one implementation. Anything the module needs is a CLI feature first
+  (that is how `--prune` came to exist). Every call is wrapped so a failure
+  warns and the switch continues. Test changes to it against real Home
+  Manager by building `activationPackage` and running only the extracted
+  `home.activation.luthier` script with `HOME` and `XDG_*` pointed at a
+  scratch directory — never by activating, which touches the real profile.
+- **`env path <name>` succeeds for an environment that does not exist.** It
+  prints where one would live. Test existence with `[ -d "$(luthier env path
+  <name>)" ]`, as the module does.
+- **Build nothing that needs the network or a CA store eagerly.** The HTTP
+  client is built on the first request (`Downloader::client`): the Nix
+  sandbox has no CA store, and building it up front panicked every test that
+  only read `file://`. `nix/package.nix` adds `cacert` for the suite's local
+  HTTP server.
 - **Nothing is signed, by decision.** The bench is trusted on HTTPS and
   GitHub, as the binary is; `SECURITY.md` *Trusting GitHub* states the risk.
   0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both

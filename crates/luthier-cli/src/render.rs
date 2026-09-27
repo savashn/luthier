@@ -6,9 +6,9 @@
 //! piping `--json` into a tool stays clean.
 
 use luthier_core::api::{
-  AvailableUpdate, BenchSummary, CacheCleaned, CacheEntry, InstallOutcome, InstallPlan,
-  InstalledSummary, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult, StrandedContent,
-  VerifyResult,
+  AvailableUpdate, BenchSummary, CacheCleaned, CacheEntry, ImportOutcome, InstallOutcome,
+  InstallPlan, InstalledSummary, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult,
+  StrandedContent, VerifyResult,
 };
 use luthier_core::registry::RefreshOutcome;
 use luthier_core::scan::{DetectedPlugin, PluginStatus};
@@ -302,6 +302,32 @@ impl Reporter {
   }
 
   // ---------------------------------------------------------------- remove --
+
+  /// The removal plan as a preview of what is about to happen; silent under
+  /// `--json` for the same reason as [`Reporter::install_preview`].
+  pub fn removal_preview(&self, plan: &RemovalPlan) {
+    if self.json {
+      return;
+    }
+    self.removal_plan(plan);
+  }
+
+  /// An import's result: one document under `--json`, whatever it did.
+  pub fn import_outcome(&self, outcome: &ImportOutcome) {
+    if self.json {
+      return self.emit(outcome);
+    }
+    self.install_outcome(&outcome.installed);
+    for pin in &outcome.reapplied_pins {
+      self.note(format!("Reapplied pin: {pin}"));
+    }
+    for pin in &outcome.skipped_pins {
+      self.warn(format!("pin not reapplied: {pin}"));
+    }
+    if let Some(pruned) = &outcome.pruned {
+      self.remove_outcome(pruned);
+    }
+  }
 
   pub fn removal_plan(&self, plan: &RemovalPlan) {
     if self.json {

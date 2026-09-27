@@ -277,7 +277,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         }
       }
 
-      EnvCommand::Import { file } => {
+      EnvCommand::Import { file, prune } => {
         // Reading the file from stdin leaves nothing to ask the confirmation
         // on: stdin is at EOF by the time the question is put, so a pipe is
         // refused as non-interactive and a terminal reads an empty answer as
@@ -302,7 +302,12 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
           luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
 
         let plan = session.plan_import(&env_file)?;
-        if plan.is_blocked() || plan.actionable().next().is_none() {
+        let prunable = if *prune {
+          session.prune_candidates(&env_file)?
+        } else {
+          Vec::new()
+        };
+        if plan.is_blocked() || (plan.actionable().next().is_none() && prunable.is_empty()) {
           reporter.install_plan(&plan);
           if let Some(error) = plan.refusal() {
             return Err(error);
@@ -311,21 +316,21 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
           return Ok(());
         }
 
-        reporter.install_preview(&plan);
+        if plan.actionable().next().is_some() {
+          reporter.install_preview(&plan);
+        }
+        if !prunable.is_empty() {
+          reporter.note("\nNot in the file, so removed:");
+          reporter.removal_preview(&session.plan_remove(&prunable)?);
+        }
         if !confirm(global, "\nProceed?")? {
           return Err(Error::Cancelled);
         }
 
         let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
         let mut bar = BarProgress::new(show_progress);
-        let outcome = session.import_env(&env_file, &mut bar).await?;
-        reporter.install_outcome(&outcome.installed);
-        for pin in &outcome.reapplied_pins {
-          reporter.note(format!("Reapplied pin: {pin}"));
-        }
-        for pin in &outcome.skipped_pins {
-          reporter.warn(format!("pin not reapplied: {pin}"));
-        }
+        let outcome = session.import_env(&env_file, *prune, &mut bar).await?;
+        reporter.import_outcome(&outcome);
       }
 
       _ => unreachable!("dispatched earlier"),

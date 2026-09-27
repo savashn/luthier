@@ -323,11 +323,35 @@ impl Layout {
         })
         .unwrap_or_default();
 
-      let conventional = [
+      let mut conventional = vec![
         PathBuf::from("/usr/lib").join(dir),
         PathBuf::from("/usr/local/lib").join(dir),
         PathBuf::from("/usr/lib").join(multiarch).join(dir),
+        // NixOS has no /usr/lib: the system profile, and each user's
+        // profile — the classic one, the XDG one newer Nix uses, and the
+        // per-user one Home Manager's `useUserPackages` fills — are where
+        // an engine from nixpkgs lives.
+        PathBuf::from("/run/current-system/sw/lib").join(dir),
       ];
+      if let Some(home) = lookup("HOME")
+        .map(PathBuf::from)
+        .filter(|h| h.is_absolute())
+      {
+        conventional.push(home.join(".nix-profile/lib").join(dir));
+        conventional.push(home.join(".local/state/nix/profile/lib").join(dir));
+      }
+      if let Some(user) = lookup("USER").and_then(|u| u.into_string().ok()) {
+        // A name, used as one path segment: anything that could climb out
+        // of the directory is ignored rather than joined.
+        if !user.is_empty() && !user.contains('/') && user != "." && user != ".." {
+          conventional.push(
+            PathBuf::from("/etc/profiles/per-user")
+              .join(user)
+              .join("lib")
+              .join(dir),
+          );
+        }
+      }
 
       // A variable set to nothing usable falls back to the convention:
       // an empty search path is far more likely to be a broken
@@ -572,6 +596,42 @@ mod tests {
         "a file under {root:?} counted as managed"
       );
     }
+  }
+
+  #[test]
+  fn nix_profiles_are_system_roots_too() {
+    // On NixOS an engine from nixpkgs is in a profile, never in /usr/lib,
+    // and detection that missed it would call sfizz absent on every NixOS
+    // machine that has it.
+    let roots = Layout::system_roots_from(env(&[("HOME", "/home/u"), ("USER", "u")]));
+    for (format, dir) in [
+      (Format::Clap, "clap"),
+      (Format::Vst3, "vst3"),
+      (Format::Lv2, "lv2"),
+    ] {
+      for expected in [
+        format!("/run/current-system/sw/lib/{dir}"),
+        format!("/home/u/.nix-profile/lib/{dir}"),
+        format!("/home/u/.local/state/nix/profile/lib/{dir}"),
+        format!("/etc/profiles/per-user/u/lib/{dir}"),
+      ] {
+        assert!(
+          roots[&format].contains(&PathBuf::from(&expected)),
+          "{format} is missing {expected}: {:?}",
+          roots[&format]
+        );
+      }
+    }
+
+    // A user name that is not one segment is not joined into a path.
+    let roots = Layout::system_roots_from(env(&[("USER", "../../etc")]));
+    assert!(
+      roots[&Format::Clap]
+        .iter()
+        .all(|p| !p.starts_with("/etc/profiles")),
+      "{:?}",
+      roots[&Format::Clap]
+    );
   }
 
   #[test]

@@ -372,16 +372,26 @@ environment rather than the environment itself. A declaration has to be able
 to say what is not there, or applying it twice from different starting points
 gives two different machines.
 
-**Done when:** `env import --prune` removes packages the file does not name,
-and importing the same file into the resulting environment reports no work.
+**Done when:** ~~`env import --prune` removes packages the file does not name,
+and importing the same file into the resulting environment reports no work~~.
+Done: a dependency survives as long as something named needs it, and with
+`--prune` a file naming nothing empties the environment.
 
 Then the Nix-facing work, in order of what unblocks what:
 
-1. **A nixpkgs package.** A user who must `cargo build` before they can manage
-   plugins declaratively has not gained much. Depends on 3.1.
-2. **A Home Manager module.** `programs.luthier.environments.<name>.packages`
-   writes the file and runs a converging import during activation. This is
-   the thing a Nix user actually wants; 3 below is an alternative to it, not a
+1. **A nixpkgs package.** The repository's flake builds one
+   (`nix/package.nix`, the suite as its check phase), which is what 2 needed.
+   Upstreaming it to nixpkgs is still open, and would let a user without the
+   flake input have it.
+2. **A Home Manager module — done.** `programs.luthier` (`nix/hm-module.nix`,
+   documented in `docs/NIX.md`) writes an environment file per declared
+   environment and applies it during activation with `env import`, `--prune`
+   when asked, after `refresh` and `location set`. It runs luthier rather than
+   building plugins as derivations, so there is one implementation of
+   verification and placement; a failure warns rather than failing the
+   switch. Tested against real Home Manager: install, a second switch doing
+   nothing, pruning, a missing disk and a withdrawn version. This is the thing
+   a Nix user actually wants; 3 below is an alternative to it, not a
    prerequisite.
 3. **`luthier nix export`.** Emit a derivation set instead of installing one.
    Every artifact already carries a URL, a `sha256` and a size; no manifest can

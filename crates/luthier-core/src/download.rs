@@ -75,7 +75,11 @@ const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
 /// Fetches artifacts into a content-addressed cache.
 pub struct Downloader {
-  client: reqwest::Client,
+  /// Built on the first request rather than up front. It needs the system's
+  /// CA certificates, and a machine without any — a minimal container, a
+  /// build sandbox — can still read `file://` URLs, the cache and
+  /// `--offline`. Building it eagerly made all of those panic.
+  client: std::sync::OnceLock<std::result::Result<reqwest::Client, String>>,
   cache_dir: PathBuf,
   offline: bool,
   default_max_bytes: u64,
@@ -84,16 +88,28 @@ pub struct Downloader {
 impl Downloader {
   pub fn new(cache_dir: impl Into<PathBuf>) -> Self {
     Self {
-      client: reqwest::Client::builder()
-        .user_agent(concat!("luthier/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT)
-        .build()
-        .expect("default HTTP client builds"),
+      client: std::sync::OnceLock::new(),
       cache_dir: cache_dir.into(),
       offline: false,
       default_max_bytes: DEFAULT_MAX_BYTES,
     }
+  }
+
+  fn client(&self, url: &Url) -> Result<&reqwest::Client> {
+    let built = self.client.get_or_init(|| {
+      reqwest::Client::builder()
+        .user_agent(concat!("luthier/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
+        .build()
+        .map_err(|e| transport_reason(&e))
+    });
+    built.as_ref().map_err(|reason| {
+      Error::Download(DownloadError::NoHttpClient {
+        url: url.to_string(),
+        reason: reason.clone(),
+      })
+    })
   }
 
   /// Refuses any network access. Cached artifacts still work.
@@ -313,7 +329,7 @@ impl Downloader {
       }));
     }
 
-    let mut request = self.client.get(url.clone());
+    let mut request = self.client(url)?.get(url.clone());
     if resume_from > 0 {
       request = request.header(reqwest::header::RANGE, format!("bytes={resume_from}-"));
     }
@@ -499,6 +515,28 @@ mod tests {
 
   fn file_url(path: &Path) -> Url {
     Url::from_file_path(path).unwrap()
+  }
+
+  #[tokio::test]
+  async fn a_local_fetch_never_builds_the_http_client() {
+    // Building it needs the system's CA certificates. A machine without
+    // any used to panic here, before even a `file://` URL was read; the
+    // Nix build sandbox is one such machine.
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = dir.path().join("plugin.tar.gz");
+    std::fs::write(&artifact, b"payload").unwrap();
+
+    let downloader = Downloader::new(dir.path().join("cache"));
+    downloader
+      .fetch(
+        &file_url(&artifact),
+        &digest_of(b"payload"),
+        None,
+        &mut NoProgress,
+      )
+      .await
+      .unwrap();
+    assert!(downloader.client.get().is_none());
   }
 
   #[tokio::test]

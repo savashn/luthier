@@ -60,8 +60,10 @@ pub struct PackageEntry {
   /// Absent in a `--loose` export.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub version: Option<Version>,
-  /// Which registry the manifest came from, so a multi-registry setup
-  /// reproduces against the same source.
+  /// Which registry the manifest came from. Recorded for a reader; an import
+  /// resolves by ID against the built-in sources whatever this says, so a
+  /// hand-written or generated file may leave it out.
+  #[serde(default, skip_serializing_if = "String::is_empty")]
   pub registry: String,
   /// `explicit` packages are what the import asks for by name; dependencies
   /// are recorded so their versions can be reproduced, but are not roots.
@@ -132,11 +134,13 @@ impl EnvFile {
       .collect()
   }
 
-  /// Versions the resolver must land on, empty for a `--loose` file.
+  /// Versions the resolver must land on: every package that names one.
+  ///
+  /// A `--loose` export names none. A hand-written or generated file may name
+  /// some and not others, which is how the Home Manager module holds one
+  /// package at a version and lets the rest follow the registry; `pinned`
+  /// only asserts that every package names one.
   pub fn required_versions(&self) -> BTreeMap<PackageId, Version> {
-    if !self.meta.pinned {
-      return BTreeMap::new();
-    }
     self
       .packages
       .iter()

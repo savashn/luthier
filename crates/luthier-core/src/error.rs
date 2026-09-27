@@ -227,6 +227,9 @@ pub enum DownloadError {
 
   #[error("{url} does not name a readable local file")]
   BadFileUrl { url: String },
+
+  #[error("cannot download {url}: HTTPS is not available\n\nReason:\n{reason}")]
+  NoHttpClient { url: String, reason: String },
 }
 
 impl DownloadError {
@@ -249,6 +252,12 @@ impl DownloadError {
       DownloadError::Offline { .. } => {
         Some("Drop --offline, or install from a cached artifact.".into())
       }
+      DownloadError::NoHttpClient { .. } => Some(
+        "Luthier checks servers against the system's CA certificates and found none. \
+                 Install your distribution's `ca-certificates` package, or point \
+                 SSL_CERT_FILE at a CA bundle."
+          .into(),
+      ),
       _ => None,
     }
   }

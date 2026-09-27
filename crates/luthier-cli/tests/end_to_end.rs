@@ -1249,6 +1249,118 @@ fn an_import_refuses_a_version_the_registry_no_longer_has() {
   assert!(!fixture.clap_dir().join("One.clap").exists());
 }
 
+/// The IDs installed, sorted.
+fn installed(fixture: &Fixture) -> Vec<String> {
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let list: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let mut ids: Vec<String> = list
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|p| p["id"].as_str().unwrap().to_owned())
+    .collect();
+  ids.sort();
+  ids
+}
+
+/// A loose environment file naming `ids` as explicit.
+fn loose_env_file(fixture: &Fixture, ids: &[&str]) -> PathBuf {
+  let mut text = String::from(
+    "[meta]\nschema = 1\nluthier = \"0.2.0\"\nexported = \"2026-09-27T00:00:00Z\"\npinned = false\n",
+  );
+  for id in ids {
+    text.push_str(&format!(
+      "\n[[package]]\nid = \"{id}\"\nregistry = \"local\"\nreason = \"explicit\"\n"
+    ));
+  }
+  let file = fixture.dir.path().join("env.toml");
+  std::fs::write(&file, text).unwrap();
+  file
+}
+
+#[test]
+fn an_import_with_prune_converges_on_the_file() {
+  // Without --prune an import only adds, so the file is a lower bound on
+  // the environment. A declaration — the Home Manager module is one — needs
+  // it to be the environment: what it does not name, and nothing it names
+  // needs, goes.
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("one", &[][..]),
+    ("two", &[][..]),
+    ("three", &[][..]),
+    ("base", &[][..]),
+    ("host", &["base"][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "one", "two", "host"])
+    .assert()
+    .success();
+
+  // Additive: three arrives, nothing leaves.
+  let file = loose_env_file(&fixture, &["one", "three"]);
+  fixture
+    .luthier()
+    .args(["env", "import"])
+    .arg(&file)
+    .assert()
+    .success();
+  assert_eq!(installed(&fixture), ["base", "host", "one", "three", "two"]);
+
+  // Converging: two and host go, and base with them, since only host
+  // needed it.
+  fixture
+    .luthier()
+    .args(["env", "import", "--prune"])
+    .arg(&file)
+    .assert()
+    .success();
+  assert_eq!(installed(&fixture), ["one", "three"]);
+  assert!(!fixture.clap_dir().join("Two.clap").exists());
+  assert!(!fixture.clap_dir().join("Base.clap").exists());
+
+  // Applying it again is no work at all.
+  let again = fixture
+    .luthier()
+    .args(["env", "import", "--prune"])
+    .arg(&file)
+    .output()
+    .unwrap();
+  assert!(again.status.success());
+  let text = format!(
+    "{}{}",
+    stdout_of(&again),
+    String::from_utf8_lossy(&again.stderr)
+  );
+  assert!(text.contains("Nothing to do"), "{text}");
+
+  // A dependency the file names stays exactly as long as something named
+  // needs it; naming host keeps base.
+  let file = loose_env_file(&fixture, &["host"]);
+  fixture
+    .luthier()
+    .args(["env", "import", "--prune"])
+    .arg(&file)
+    .assert()
+    .success();
+  assert_eq!(installed(&fixture), ["base", "host"]);
+
+  // A file naming nothing empties the environment with --prune, and is
+  // refused as pointless without it.
+  let empty = loose_env_file(&fixture, &[]);
+  fixture
+    .luthier()
+    .args(["env", "import", "--prune"])
+    .arg(&empty)
+    .assert()
+    .success();
+  assert!(installed(&fixture).is_empty());
+}
+
 #[test]
 fn an_artifact_without_rules_installs_what_the_archive_holds() {
   // The same archive, installed both ways, must land the same files: a
