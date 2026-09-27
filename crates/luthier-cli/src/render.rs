@@ -646,7 +646,7 @@ impl Reporter {
       return self.emit(&benches);
     }
     if benches.is_empty() {
-      self.note("No benches configured; nothing can be installed.");
+      self.note("No sources; nothing can be installed.");
       return;
     }
     println!("{:<4}  {:<20}  {:<9}  LOCATION", "#", "NAME", "TYPE");
@@ -655,9 +655,9 @@ impl Reporter {
         "{:<4}  {:<20}  {:<9}  {}",
         bench.priority, bench.name, bench.kind, bench.location
       );
-      // Printed under the bench rather than as a column: a key is 64
-      // characters, and truncating the one thing a user might need to
-      // compare against an announcement would make it useless.
+      // Printed under the bench rather than as a column: truncating the one
+      // thing a user might compare against an announcement would make it
+      // useless.
       for key in &bench.keys {
         println!("{:<4}  {:<20}  {:<9}  signed by {key}", "", "", "");
       }

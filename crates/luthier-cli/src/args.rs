@@ -53,8 +53,11 @@ pub struct GlobalArgs {
   #[arg(long, global = true)]
   pub offline: bool,
 
-  /// Read manifests from this directory instead of the configured registry.
-  #[arg(long, global = true, value_name = "DIR")]
+  /// Read manifests from this directory instead of the built-in sources.
+  ///
+  /// For developing the bench against a checkout of `bench/`. Hidden: Luthier
+  /// reads the Open Audio Stack registry and its own bench, and nothing else.
+  #[arg(long, global = true, value_name = "DIR", hide = true)]
   pub registry_path: Option<PathBuf>,
 
   /// Confine every path to this directory. For testing and sandboxing.
@@ -130,13 +133,12 @@ pub enum Command {
 
   /// Fetch the latest registry metadata.
   Refresh {
-    /// Accept a snapshot from a bench that was signed before and is not now.
+    /// Accept the bench's snapshot even though no signature was published
+    /// beside it.
     ///
     /// For one run, and for that case only: a signature that does not verify,
-    /// or one made with a key the bench is not trusted to use, is refused
-    /// whatever this says. The pinned key is kept, so the next refresh asks
-    /// the same question again; `luthier bench untrust <name>` is how to stop
-    /// asking it.
+    /// or one made with a key this build does not carry, is refused whatever
+    /// this says. The next refresh asks the same question again.
     #[arg(long)]
     allow_unsigned: bool,
   },
@@ -166,7 +168,7 @@ pub enum Command {
     command: Option<LocationCommand>,
   },
 
-  /// Manage the registries packages are read from.
+  /// Show where packages are read from.
   Bench {
     #[command(subcommand)]
     command: BenchCommand,
@@ -199,53 +201,9 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum BenchCommand {
-  /// List configured benches in the order they are consulted.
+  /// List the sources packages are read from, in the order they are
+  /// consulted: Luthier's own bench, then the Open Audio Stack registry.
   List,
-
-  /// Add a bench.
-  ///
-  /// Added last, so it cannot override an existing bench without being asked
-  /// to. Use `--first` when the point is to correct one.
-  Add {
-    name: String,
-    /// A directory, a snapshot tarball URL, or an Open Audio Stack site root.
-    location: String,
-    /// Override what the location is taken to be.
-    #[arg(long, value_parser = ["path", "snapshot", "oas"])]
-    r#type: Option<String>,
-    /// Consult this bench before every other one.
-    #[arg(long)]
-    first: bool,
-    /// An Ed25519 public key, in hex, this bench must be signed with.
-    ///
-    /// Repeat for more than one. Without any, the first signature the bench
-    /// serves pins the key it names — which is enough for every refresh
-    /// after the first, and a key here is what covers the first as well.
-    #[arg(long = "key", value_name = "HEX")]
-    keys: Vec<String>,
-  },
-
-  /// Remove a bench and delete its cached snapshot.
-  Remove { name: String },
-
-  /// Trust a signing key for a bench.
-  ///
-  /// Rotating a key means trusting the new one before the old one stops
-  /// being used; `untrust` retires the old one once the bench has published
-  /// under the new.
-  Trust {
-    name: String,
-    /// The Ed25519 public key, in hex.
-    key: String,
-  },
-
-  /// Stop trusting a signing key.
-  Untrust {
-    name: String,
-    /// Leave empty to stop requiring signatures from this bench at all,
-    /// which also forgets the key pinned on the first fetch.
-    key: Option<String>,
-  },
 }
 
 #[derive(Debug, Subcommand)]

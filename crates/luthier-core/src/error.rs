@@ -174,22 +174,13 @@ pub enum RegistryError {
   #[error("registry {registry} sent something this build cannot read: {reason}")]
   Malformed { registry: String, reason: String },
 
-  #[error("bench {registry} was fetched from {previous} before and now points at {current}")]
-  OriginChanged {
-    registry: String,
-    previous: String,
-    current: String,
-  },
-
-  #[error("bench {registry} has been signed before and this snapshot is unsigned")]
+  #[error("bench {registry} must be signed and this snapshot is unsigned")]
   SignatureMissing { registry: String },
 
   #[error("the signature published for bench {registry} cannot be read: {reason}")]
   SignatureMalformed { registry: String, reason: String },
 
-  #[error(
-    "the signature published for bench {registry} does not verify under {key}, the key it names"
-  )]
+  #[error("the signature published for bench {registry} does not verify under {key}")]
   SignatureInvalid { registry: String, key: String },
 
   #[error(
@@ -214,18 +205,13 @@ impl RegistryError {
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }
-      RegistryError::OriginChanged { registry, .. } => Some(format!(
-        "A bench that starts answering from a different host is the change worth \
-                 noticing, since the checksums it carries are what everything else is \
-                 verified against. If this was you, run `luthier bench remove {registry}` \
-                 and add it again."
-      )),
-      RegistryError::SignatureMissing { registry } => Some(format!(
-        "Nothing was downloaded into place. If the bench has genuinely stopped \
-                 signing, `luthier refresh --allow-unsigned` accepts this one refresh \
-                 without forgetting the key, and `luthier bench untrust {registry}` \
-                 gives up on signatures for it for good."
-      )),
+      RegistryError::SignatureMissing { .. } => Some(
+        "Nothing was downloaded into place. A release published without its \
+                 signature is a mistake on the maintainers' side; `luthier refresh \
+                 --allow-unsigned` accepts this one refresh anyway, and the next one asks \
+                 again."
+          .into(),
+      ),
       RegistryError::SignatureInvalid { .. } => Some(
         "The snapshot and the signature published beside it do not agree. Either one \
                  of them is truncated or the bytes are not the ones that were signed; \
@@ -233,15 +219,10 @@ impl RegistryError {
                  maintainers if it persists."
           .into(),
       ),
-      RegistryError::SignatureUntrusted {
-        registry,
-        key,
-        trusted,
-      } => Some(format!(
-        "A new signing key is a deliberate change, and this is what a rotation looks \
-                 like from the outside. Check {key} against the bench's own announcement \
-                 and then run `luthier bench trust {registry} {key}`; the keys it \
-                 currently accepts are {}.",
+      RegistryError::SignatureUntrusted { trusted, .. } => Some(format!(
+        "This build accepts {}. A bench signed with any other key is refused \
+                 before anything is extracted; if the maintainers have rotated the key, \
+                 a new release of Luthier carries the new one.",
         trusted.join(", ")
       )),
       _ => None,

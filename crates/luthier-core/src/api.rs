@@ -7,7 +7,7 @@
 //! can render them however it likes, including as JSON (§33).
 
 use crate::archive::{self, ExtractLimits};
-use crate::config::{Config, RegistryConfig, RegistrySource};
+use crate::config::{Config, RegistrySource};
 use crate::download::{Downloader, Progress};
 use crate::engine;
 use crate::env::{self, Activation, EnvName, EnvSummary};
@@ -1104,145 +1104,16 @@ impl Session {
 
   // ---------------------------------------------------------------- bench --
 
-  /// The benches recorded in the configuration file, highest priority first.
+  /// The benches this build reads, highest priority first.
   ///
-  /// Order is the whole mechanism behind correcting a broader source, so it is
+  /// A fixed list: the curated bench, then the Open Audio Stack registry it
+  /// corrects. Order is the whole mechanism behind that correction, so it is
   /// what this reports: the first bench to claim an ID keeps it.
   ///
-  /// Read from the file rather than from this session, so that all three bench
-  /// commands describe the same thing. A session started with
-  /// `--registry-path` is running against an override, and listing the
-  /// override here would mean `bench add` appeared to do nothing.
-  pub fn configured_benches(&self) -> Result<Vec<BenchSummary>> {
-    Ok(Self::summarise(&Config::load(&self.layout)?))
-  }
-
-  /// Adds a bench to the configuration.
-  ///
-  /// Appended last unless `first` says otherwise, because priority decides
-  /// which manifest wins a collision: a bench added without a word about
-  /// precedence must not quietly start overriding the curated one.
-  pub fn add_bench(
-    &self,
-    name: &str,
-    source: RegistrySource,
-    keys: &[String],
-    first: bool,
-  ) -> Result<Vec<BenchSummary>> {
-    let name = validate_bench_name(name)?;
-    let mut config = Config::load(&self.layout)?;
-    if config.registries.iter().any(|r| r.name == name) {
-      return Err(Error::InvalidArgument(format!(
-        "a bench named {name:?} is already configured; remove it first"
-      )));
-    }
-    let mut entry = RegistryConfig::new(name, source);
-    for key in keys {
-      entry.keys.push(parse_key(&entry, key)?);
-    }
-    if first {
-      config.registries.insert(0, entry);
-    } else {
-      config.registries.push(entry);
-    }
-    config.save(&self.layout)?;
-    Ok(Self::summarise(&config))
-  }
-
-  /// Removes a bench from the configuration. Its snapshot is deleted too.
-  pub fn remove_bench(&self, name: &str) -> Result<Vec<BenchSummary>> {
-    let mut config = Config::load(&self.layout)?;
-    let before = config.registries.len();
-    config.registries.retain(|r| r.name != name);
-    if config.registries.len() == before {
-      return Err(Error::InvalidArgument(format!(
-        "no bench named {name:?} is configured"
-      )));
-    }
-
-    // A snapshot nothing reads is just occupancy, and leaving it would make
-    // re-adding the name silently reuse stale metadata. The pinned origin goes
-    // with it: the user has discarded this bench, so re-adding it under a
-    // different URL is a decision they have already made.
-    //
-    // The name becomes a path segment of a *recursive* delete, so it is
-    // validated here exactly as `add_bench` validates it, rather than trusted
-    // because it appeared in a file. Matching an entry in `config.json` proves
-    // only that some entry carried that string: a hand-edited or migrated
-    // `name = ".."` would otherwise resolve to the whole data directory.
-    // Nothing on disk can sit under an unusable name, since nothing could have
-    // created it, so the configuration entry still goes.
-    if validate_bench_name(name).is_ok() {
-      // Deleted before the configuration is saved: a failure here leaves the
-      // bench configured and its snapshot intact, which a second attempt
-      // fixes. The other order would leave a snapshot no configuration
-      // mentions — exactly the stale metadata this deletion exists to avoid.
-      fsutil::remove_any(&self.layout.registry_dir(name))?;
-      crate::registry::provenance::forget(&self.layout.registries_dir(), name);
-    }
-
-    config.save(&self.layout)?;
-    Ok(Self::summarise(&config))
-  }
-
-  /// Trusts a key for a bench, so a snapshot it signs is accepted and one
-  /// anybody else signs is not.
-  ///
-  /// Adding a key without removing the old one is what a rotation is: both
-  /// are accepted until the bench has published under the new key, and
-  /// `untrust` retires the old one afterwards. Doing it the other way round
-  /// leaves a window where no refresh can succeed.
-  pub fn trust_bench(&self, name: &str, key: &str) -> Result<Vec<BenchSummary>> {
-    let mut config = Config::load(&self.layout)?;
-    let entry = config
-      .registries
-      .iter_mut()
-      .find(|r| r.name == name)
-      .ok_or_else(|| Error::InvalidArgument(format!("no bench named {name:?} is configured")))?;
-
-    let key = parse_key(entry, key)?;
-    if entry.keys.contains(&key) {
-      return Err(Error::InvalidArgument(format!(
-        "bench {name:?} already trusts {key}"
-      )));
-    }
-    entry.keys.push(key);
-    config.save(&self.layout)?;
-    Ok(Self::summarise(&config))
-  }
-
-  /// Stops trusting a key, or every key when none is named.
-  ///
-  /// Dropping the last key also forgets the key pinned on the first fetch.
-  /// Otherwise "this bench is one I read unsigned" would be a decision the
-  /// user made and the pin quietly overruled.
-  pub fn untrust_bench(&self, name: &str, key: Option<&str>) -> Result<Vec<BenchSummary>> {
-    let mut config = Config::load(&self.layout)?;
-    let entry = config
-      .registries
-      .iter_mut()
-      .find(|r| r.name == name)
-      .ok_or_else(|| Error::InvalidArgument(format!("no bench named {name:?} is configured")))?;
-
-    match key {
-      Some(raw) => {
-        let key = parse_key(entry, raw)?;
-        let before = entry.keys.len();
-        entry.keys.retain(|k| k != &key);
-        if entry.keys.len() == before {
-          return Err(Error::InvalidArgument(format!(
-            "bench {name:?} does not trust {key}"
-          )));
-        }
-      }
-      None => entry.keys.clear(),
-    }
-
-    if entry.keys.is_empty() && validate_bench_name(name).is_ok() {
-      crate::registry::provenance::forget_key(&self.layout.registries_dir(), name);
-    }
-    config.save(&self.layout)?;
-    Ok(Self::summarise(&config))
+  /// The built-in list rather than this session's, so that a session started
+  /// with `--registry-path` still says where manifests normally come from.
+  pub fn benches(&self) -> Vec<BenchSummary> {
+    Self::summarise(&Config::default())
   }
 
   fn summarise(config: &Config) -> Vec<BenchSummary> {
@@ -2139,60 +2010,9 @@ pub struct BenchSummary {
   pub name: String,
   pub kind: String,
   pub location: String,
-  /// Keys this bench is trusted to be signed with, as hex.
-  ///
-  /// Empty means "whatever signs it first", which is what every bench
-  /// starts as. It is reported rather than left implicit because the
-  /// difference between a pinned key and no key at all is the difference
-  /// between the two threat models this answers.
+  /// Keys a snapshot from this bench must be signed with, in minisign's
+  /// form. Empty for a source that publishes no signature.
   pub keys: Vec<String>,
-}
-
-/// Reads a key for a bench that could actually use one.
-///
-/// Refusing it where it is written beats accepting a key that would never be
-/// checked: a path bench is a directory the user already controls, and an
-/// Open Audio Stack site publishes no signature to check it against.
-fn parse_key(bench: &RegistryConfig, raw: &str) -> Result<crate::registry::signature::PublicKey> {
-  if !bench.can_be_signed() {
-    return Err(Error::InvalidArgument(format!(
-      "bench {:?} is a {} bench, and nothing published there carries a signature to check",
-      bench.name,
-      match bench.source {
-        RegistrySource::Path { .. } => "local directory",
-        RegistrySource::Oas { .. } => "Open Audio Stack",
-        RegistrySource::Snapshot { .. } => "snapshot",
-      }
-    )));
-  }
-  raw
-    .parse()
-    .map_err(|e| Error::InvalidArgument(format!("{raw:?} is not an Ed25519 public key: {e}")))
-}
-
-/// Rejects a bench name that could not be a directory.
-///
-/// The name becomes a path segment under the snapshot directory, so it is
-/// validated rather than trusted — the same reason an environment name is.
-fn validate_bench_name(raw: &str) -> Result<String> {
-  let invalid =
-    |reason: &str| Error::InvalidArgument(format!("{raw:?} is not a usable bench name: {reason}"));
-  if raw.is_empty() {
-    return Err(invalid("it is empty"));
-  }
-  if raw.len() > 64 {
-    return Err(invalid("it is longer than 64 characters"));
-  }
-  if raw.starts_with('.') {
-    return Err(invalid("it starts with a dot"));
-  }
-  if !raw
-    .chars()
-    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-  {
-    return Err(invalid("use letters, digits, '.', '-' and '_'"));
-  }
-  Ok(raw.to_owned())
 }
 
 /// One file in the download cache.

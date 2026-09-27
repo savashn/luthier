@@ -1475,129 +1475,30 @@ fn removing_the_last_engine_warns_about_the_content_it_leaves_silent() {
 }
 
 #[test]
-fn benches_can_be_added_removed_and_ordered() {
-  // Without this, a third-party collection means hand-editing config.json.
+fn the_sources_are_built_in_and_cannot_be_added_to() {
+  // Luthier reads the Open Audio Stack registry and its own bench, in that
+  // precedence, and nothing else.
   let fixture = Fixture::new();
 
-  // A second bench, an empty directory of its own. What matters here is the
-  // configuration, not what it carries.
-  let second = fixture.dir.path().join("second");
-  std::fs::create_dir_all(second.join("plugins")).unwrap();
-
-  let listed = fixture.luthier().args(["bench", "list"]).output().unwrap();
-  let text = stdout_of(&listed);
-  assert!(
-    text.contains("the first to carry a package ID keeps it"),
-    "{text}"
-  );
-
-  fixture
-    .luthier()
-    .args(["bench", "add", "second", second.to_str().unwrap()])
-    .assert()
-    .success();
-
-  let after = fixture.luthier().args(["bench", "list"]).output().unwrap();
-  let after_text = stdout_of(&after);
-  assert!(after_text.contains("second"), "{after_text}");
-  assert!(after_text.contains("path"), "{after_text}");
-
-  // A name already taken is refused rather than silently duplicated.
-  let duplicate = fixture
-    .luthier()
-    .args(["bench", "add", "second", second.to_str().unwrap()])
-    .output()
-    .unwrap();
-  assert!(!duplicate.status.success());
-  assert!(
-    String::from_utf8_lossy(&duplicate.stderr).contains("already configured"),
-    "{}",
-    String::from_utf8_lossy(&duplicate.stderr)
-  );
-
-  fixture
-    .luthier()
-    .args(["bench", "remove", "second"])
-    .assert()
-    .success();
-  let gone = fixture.luthier().args(["bench", "list"]).output().unwrap();
-  assert!(!stdout_of(&gone).contains("second"), "{}", stdout_of(&gone));
-
-  // Removing one that is not there says so rather than succeeding quietly.
-  let missing = fixture
-    .luthier()
-    .args(["bench", "remove", "second"])
-    .output()
-    .unwrap();
-  assert!(!missing.status.success());
-}
-
-#[test]
-fn a_signing_key_can_be_trusted_and_given_up_on() {
-  // The user-facing half of registry signatures: the key a bench must be
-  // signed with is configuration, and changing it is a deliberate act.
-  let fixture = Fixture::new();
-  let key = "e0f2de1fa607bf5692013c9f18e6160f71826317444cec8590395b7d407949e0";
-
-  // A local directory publishes nothing to check a signature against, and
-  // saying so beats accepting a key that would never be used.
-  let local = fixture.dir.path().join("second");
-  std::fs::create_dir_all(local.join("plugins")).unwrap();
-  fixture
-    .luthier()
-    .args(["bench", "add", "second", local.to_str().unwrap()])
-    .assert()
-    .success();
-  let refused = fixture
-    .luthier()
-    .args(["bench", "trust", "second", key])
-    .output()
-    .unwrap();
-  assert!(!refused.status.success());
-  assert!(
-    String::from_utf8_lossy(&refused.stderr).contains("carries a signature"),
-    "{}",
-    String::from_utf8_lossy(&refused.stderr)
-  );
-
-  // A snapshot bench does. The key is shown in full: truncating the one
-  // thing a user compares against an announcement would make it useless.
-  fixture
-    .luthier()
-    .args([
-      "bench",
-      "add",
-      "signed",
-      "https://example.invalid/bench.tar.gz",
-      "--key",
-      key,
-    ])
-    .assert()
-    .success();
   let listed = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
-  assert!(listed.contains(key), "{listed}");
-
-  // Nonsense is refused where it is written, not at the next refresh.
-  let bad = fixture
-    .luthier()
-    .args(["bench", "trust", "signed", "not-a-key"])
-    .output()
-    .unwrap();
-  assert!(!bad.status.success());
+  let bench = listed.find("luthier-extras").expect(&listed);
+  let oas = listed.find("oas").expect(&listed);
+  assert!(bench < oas, "{listed}");
+  // The key is shown in full: truncating the one thing a user compares
+  // against an announcement would make it useless.
   assert!(
-    String::from_utf8_lossy(&bad.stderr).contains("not an Ed25519 public key"),
-    "{}",
-    String::from_utf8_lossy(&bad.stderr)
+    listed.contains(luthier_core::config::DEFAULT_BENCH_KEY),
+    "{listed}"
   );
 
-  fixture
-    .luthier()
-    .args(["bench", "untrust", "signed", key])
-    .assert()
-    .success();
-  let after = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
-  assert!(!after.contains(key), "{after}");
-  assert!(after.contains("signed"), "{after}");
+  for command in [
+    vec!["bench", "add", "second", "/tmp"],
+    vec!["bench", "remove", "luthier-extras"],
+    vec!["bench", "trust", "luthier-extras", "RWS"],
+  ] {
+    let output = fixture.luthier().args(&command).output().unwrap();
+    assert!(!output.status.success(), "{command:?}");
+  }
 }
 
 #[test]
@@ -1737,63 +1638,6 @@ fn naming_a_package_twice_removes_it_once() {
   assert!(!fixture.clap_dir().join("Testsynth.clap").exists());
   let listed = stdout_of(&fixture.luthier().arg("list").output().unwrap());
   assert!(!listed.contains("testsynth"), "{listed}");
-}
-
-#[test]
-fn a_bench_name_from_a_hand_edited_config_is_not_a_path() {
-  // `bench add` validates the name because it becomes a path segment of a
-  // recursive delete. A name that arrives some other way — a hand-edited or
-  // migrated config.json — must meet the same check, or removing that bench
-  // resolves to the data directory itself and takes every installed package
-  // with it.
-  let fixture = Fixture::new();
-  let artifact = fixture.make_artifact("Testsynth");
-  fixture.add_plugin("testsynth", "1.0.0", &artifact, &[]);
-  fixture
-    .luthier()
-    .args(["install", "testsynth"])
-    .assert()
-    .success();
-
-  let config = fixture.root().join("config/luthier/config.json");
-  std::fs::create_dir_all(config.parent().unwrap()).unwrap();
-  std::fs::write(
-    &config,
-    format!(
-      "{{\"registries\":[{{\"name\":\"..\",\"type\":\"path\",\"path\":{:?}}}]}}",
-      fixture.registry().display().to_string()
-    ),
-  )
-  .unwrap();
-
-  let data = fixture.root().join("share/luthier");
-  let state = data.join("state");
-  assert!(state.is_dir(), "the installation is there to begin with");
-  // The snapshot directory has to exist for `registries/..` to resolve to
-  // anything: without it the delete is a no-op and proves nothing.
-  std::fs::create_dir_all(data.join("registries")).unwrap();
-
-  // Removing the bench from the configuration is fine; deleting a directory
-  // named by it is not.
-  let output = Command::cargo_bin("luthier")
-    .unwrap()
-    .arg("--root")
-    .arg(fixture.root())
-    .arg("--no-system-plugins")
-    .arg("--yes")
-    .args(["bench", "remove", ".."])
-    .output()
-    .unwrap();
-  assert!(output.status.success(), "{}", stdout_of(&output));
-
-  assert!(
-    state.is_dir(),
-    "the data directory must survive removing a bench called '..'"
-  );
-  assert!(
-    fixture.clap_dir().join("Testsynth.clap").is_file(),
-    "installed files must survive it too"
-  );
 }
 
 #[test]

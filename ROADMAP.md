@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 433 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 435 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -30,12 +30,12 @@ adds to it. A library whose engines are all absent
 is reported before the download and installed anyway; the confirmation is where
 the user decides. Where both registries carry an ID, the bench wins.
 
-A bench's origin is pinned on first fetch, and a bench that publishes an
-Ed25519 signature has it verified between the download and the extractor, with
-the signing key pinned the same way. The default bench goes further: its public
-key is built into the manager, so a signature is required from the very first
-fetch, and the release workflow publishes a draft that is signed on the
-maintainer's machine before it becomes visible.
+Those two sources are the only ones, and users cannot add a third: the
+bench exists to correct OAS, not to host collections of its own. It is signed
+with minisign, and verified between the download and the extractor against a
+key built into the manager; the release workflow publishes a draft that is
+signed on the maintainer's machine before it becomes visible, and attests the
+build provenance of everything it publishes.
 
 `v0.1.0` is released: a static binary for Linux x86_64 and the signed bench,
 from the public repository at `savashn/luthier`. Phase 0 is done.
@@ -279,73 +279,54 @@ configuration cannot rot silently in the other repository.
 Neither item below was a live vulnerability. Both were places where the
 security model rested on something narrower than it should.
 
-### 2.1 Verify the registry snapshot — done
+### 2.1 Verify the registry snapshot — done, then superseded
 
-Package artifacts are checksummed against the manifest. The *registry itself* —
-the document carrying those checksums — is fetched by `download_unverified` in
-`registry/http.rs` and trusted on HTTPS alone. The chain is only as strong as
-its first link.
+The document carrying every checksum was trusted on HTTPS alone.
+`registry/provenance.rs` first answered that with trust on first use: each
+bench's origin was pinned on first fetch, and a later change of host refused.
 
-`registry/provenance.rs` closes the half of this that trust-on-first-use can
-close. What it pins is the thing that should never change rather than the thing
-that always does: a snapshot's *contents* change on every refresh — that is
-what a refresh is for — so pinning its digest would reject every genuine
-update. Its *origin* should not change at all. So scheme, host and port are
-recorded on first fetch and `check_origin` refuses a bench that later answers
-from somewhere else, before anything is downloaded from the new host. A path
-that moves within one origin is upstream reorganising itself, which is theirs
-to do. `bench remove` forgets the record, so re-adding a name under a different
-URL is not refused for a pin the user has already discarded.
+That only made sense while users could add benches. Once the sources became
+fixed in the binary (see 3.2), an origin pin protected nothing a compiled-in
+URL did not already fix, and would have locked every user out the day a
+release moved a URL — so it was removed. What remains is an audit record of
+each fetch: URL, digest, size, time, and the key that signed it.
 
-The digest and byte count are recorded rather than enforced, which makes a
-change auditable and gives a signature something to be checked against later.
-Enforcing them is 2.2's job, not this one's: without a signature there is
-nothing to say which digest is the right one.
+### 2.2 Signature verification — done
 
-**Done when:** ~~the recorded digest is checked against a signature over the
-snapshot — which is to say, when 2.2 lands~~. It is, and it does: the digest
-`provenance.rs` records is exactly what a signature covers, so the two halves
-are statements about the same bytes rather than two separate records. Both are
-in `SECURITY.md`, under *Registry provenance* and *Registry signatures*.
+Each release publishes a detached signature beside the bench, at the
+snapshot's own URL with `.minisig` on the end. `registry/signature.rs`
+verifies it between the download and the extractor, so a snapshot nothing
+vouched for is never opened and a refusal always leaves the previous one in
+place.
 
-### 2.2 Ed25519 signature verification — done
+Decisions worth keeping:
 
-A bench may publish a detached signature beside its snapshot, at the
-snapshot's own URL with `.sig` on the end. `registry/signature.rs` verifies it
-between the download and the extractor, so a snapshot nothing vouched for is
-never opened and a refusal always leaves the previous one in place.
-
-Four decisions worth keeping:
-
-- **What is signed is the digest, not the bytes.** It is the digest
-  `provenance.rs` already records, so verification needs no second pass over a
-  tarball and 2.1's audit trail becomes the thing a key vouches for. A context
-  string is prefixed before signing, so a signature over a snapshot can never
-  be replayed as a signature over anything else this project signs later.
-- **The signature file carries the public key.** That is what makes a first
-  fetch worth anything: there is nothing yet to check against, so the key it
-  names is pinned exactly as the origin is, and every refresh after it has
-  something to match. A key configured with `bench add --key` or `bench trust`
-  covers the first fetch too, which is the fetch an attacker would aim at.
+- **minisign's format, byte for byte.** 0.1 shipped a format of its own —
+  Ed25519 over the SHA-256 with a context string, the key carried in the
+  file. It worked, but nothing else could read it. minisign is the de facto
+  standard for signing release files, so a user can check the bench with
+  `minisign -V` without trusting the manager, and a maintainer can sign with
+  stock minisign. The tests hold the implementation to files written by
+  minisign 0.12 and to minisign's own Rust verifier. 0.1's format is still
+  written beside it (`.sig`) so 0.1 clients keep refreshing.
+- **The key is built in, never fetched.** A minisign signature names its key
+  only by ID, so it cannot vouch for itself — and with one bench, signed by
+  this project, there is nothing for a user to configure. An attacker who
+  controls the forge account can replace the bench and its signature, not the
+  key in binaries users already have.
 - **The override covers absence and nothing else.** `refresh
-  --allow-unsigned` accepts a bench that was signed before and is not now, for
-  one run, and never discards the pin — otherwise using it once would turn
-  verification off for good. A signature that fails to verify, or one from a
-  key the bench is not trusted to use, is refused whatever any flag says:
-  those are claims that did not hold up rather than absent ones. So is an
-  unreadable signature file, or publishing garbage would be a way to turn
-  verification off.
-- **A signed bench publishes an uploaded snapshot.** A forge generates a
-  branch tarball on demand and there is nowhere to put a signature beside it.
-  That is a change to how a bench is published, not to how it is read, and it
-  is why nothing here forces a bench to sign.
+  --allow-unsigned` accepts a bench published without a signature, for one
+  run. A signature that fails to verify, or one from any other key, is refused
+  whatever any flag says; so is an unreadable signature file, or publishing
+  garbage would be a way to turn verification off.
+- **Signing stays off CI.** The release is a draft until the maintainer signs
+  the bench on their own machine. CI instead attests build provenance through
+  Sigstore (`gh attestation verify`), which answers a different question —
+  "did CI build this" rather than "did the maintainer publish this" — with no
+  key to lose.
 
-`luthier-registry keygen` and `sign` are the publishing side. Key
-distribution remains what it always was — publish the public key where users
-already look — and the rotation procedure is in `docs/REGISTRY.md`: trust the
-new key before retiring the old one, because the other order leaves a window
-in which no refresh can succeed and teaches users to reach for
-`--allow-unsigned`.
+The rotation procedure is in `docs/REGISTRY.md`: a release carrying both keys
+first, the new key used only once that release is widespread.
 
 **Done when:** ~~the manager verifies a detached signature over the registry
 snapshot, refuses an unsigned or badly-signed one unless explicitly
@@ -363,35 +344,12 @@ asset. `cargo install` is not a distribution channel for this audience.
 **Done when:** at least the AUR package exists and is referenced from the
 README.
 
-### 3.2 `luthier bench add` — done
+### 3.2 Third-party benches — withdrawn
 
-`RegistryProvider` and `RegistrySource` already supported multiple registries;
-what was missing was a way to add one without hand-editing `config.json`. This
-is what makes third-party collections possible at all — Homebrew's taps,
-Scoop's buckets.
-
-`bench list`, `bench add <name> <url|path>` and `bench remove <name>` now exist.
-`add` takes a directory, a snapshot tarball URL or an Open Audio Stack site
-root, inferring which from the location and accepting `--type` to override. It
-appends rather than prepends, because priority decides which manifest wins a
-collision and a bench added without a word about precedence must not quietly
-start overriding the curated one; `--first` asks for that explicitly. All three
-read and write the persisted configuration rather than a `--registry-path`
-override, so they describe the same thing.
-
-Removing a bench deletes its snapshot and forgets its pinned origin, so
-re-adding the name under a different URL is not refused for a pin the user has
-already discarded.
-
-A collection of manifests is a *bench*; `luthier-extras` is the default one,
-and it ships in this repository under `bench/`
-(see [Open questions](#third-party-registries)). The naming convention there —
-whether `bench add savas/jazz` should expand to a repository URL — is still
-open; today the location is written out in full.
-
-**Done when:** ~~`luthier bench add <name>`, `bench list` and `bench remove`
-exist~~, and a package from a third-party bench can be searched, installed and
-removed.
+0.1 shipped `bench add`, `bench remove`, `bench trust` and `bench untrust`, so
+users could read collections of manifests beyond the default one. They were
+removed: Luthier reads the Open Audio Stack registry and its own bench, and
+nothing else. See *Deliberate ceilings*.
 
 ### 3.3 A `GitRegistry` backend
 
@@ -401,9 +359,9 @@ publish them. A `gix`-based backend would make incremental refresh cheap.
 It would need its own answer on signatures rather than inheriting 2.2's. A
 snapshot is one file, so a detached signature can sit beside it; a repository
 is a history, and what gets signed there is a tag or a commit. The policy —
-which key, pinned how, and what a refusal leaves in place — should be the
-same, which is why it lives in `registry/signature.rs` rather than inside the
-snapshot provider.
+which key, and what a refusal leaves in place — should be the same, which is
+why it lives in `registry/signature.rs` rather than inside the snapshot
+provider.
 
 **Done when:** `RegistrySource::Git` exists and `refresh` updates without
 re-downloading the whole tree.
@@ -513,6 +471,14 @@ kind of destination a manifest is forbidden from naming.
 later and would call `luthier_core::api::Session` unchanged, which is why
 `luthier-cli` holds no decisions.
 
+**Two sources, and users cannot add a third.** Luthier reads the Open Audio
+Stack registry and its own bench, which corrects it, and nothing else. A
+package with a downloadable release belongs upstream in OAS; the bench keeps
+only what OAS cannot express. Third-party benches existed in 0.1 and were
+removed: every source is one more publisher whose manifests can decide what
+lands in a user's plugin directories, and one more signing key to trust, for
+a need that contributing to OAS already meets.
+
 **No system-wide installation.** Everything is user-local; root is never
 required and system directories are never written to. They are read to detect
 `external` packages and are deliberately excluded from
@@ -539,89 +505,16 @@ updating one means updating its members — but a pack's own version bump and it
 members' bumps are different events, and `update` does not currently
 distinguish them.
 
-### Third-party registries
+### Third-party registries — decided: none
 
-Four decisions sit behind 3.2, and they are entangled: the repository naming
-convention is the visible end of a design question that has not been answered.
-Recorded together because deciding one in isolation will paint the others into
-a corner.
+This used to hold four entangled questions — what wins when two benches carry
+one ID, whether third-party repositories carry a name prefix, what a user
+types to add one, and what the thing is called. The first answer stands for
+the two sources that remain: the bench is consulted first and wins, because
+correcting OAS is what it is for. The rest went away with the decision not to
+have third-party benches at all (see *Deliberate ceilings*).
 
-**What happens when two registries carry the same package ID? — decided:
-precedence.** Configured order wins, and the curated bench is configured first.
-The reason is not abstract: reading the Open Audio Stack registry means
-correcting it in places, and the only way to correct a package is for a local
-manifest to beat the remote one. `refuse` would kill that outright; namespacing
-would make `PackageId` two-part for the sake of a collision that, across 559
-upstream packages and 28 local ones, happens three times. Each shadow says at
-the top of the file why it exists and what would retire it.
-
-The shapes considered:
-
-- *Namespacing* — `luthier install jazz/surge-xt`, ambiguity is a hard error.
-  Homebrew does this (`user/tap/formula`). Honest, but it makes `PackageId` a
-  two-part thing, and `PackageId` is currently a validated single segment used
-  as a path component — a security boundary, not just a string.
-- *Precedence* — configured order wins, first match resolves. Cheapest to
-  build, and the one that will silently install the wrong package one day.
-- *Refuse* — a collision is an error and the user disambiguates. Safest, and
-  annoying exactly when someone forks the default bench to change one
-  manifest, which is the common case.
-
-None is obviously right. What is clear is that state records `registry` per
-installed package already, so whatever is chosen, `verify` and `update` can
-tell where something came from.
-
-**Do third-party repositories carry a required name prefix?** Homebrew requires
-`homebrew-<name>` and adds the prefix itself, so `brew tap savas/jazz` fetches
-`github.com/savas/homebrew-jazz`. The user types something short, repositories
-are named consistently, and searching a forge for `homebrew-*` discovers every
-tap in existence — discoverability for free. Scoop takes the opposite line: a
-full URL, no convention, no discovery. A `luthier-bench-<name>` convention
-would buy the same thing here.
-
-**What does the user type?** A short handle resolved against a forge, a full
-URL, or both. Tied to the previous question: a prefix convention only pays off
-if the short form exists.
-
-**What is this thing called? — decided: a `bench`.** Homebrew coined "tap",
-Scoop coined "bucket"; ours is the workbench a luthier keeps their materials on.
-
-A bench is the **kind of thing**, not a second kind. Every collection of
-manifests is a bench, including the official one — exactly as `homebrew-core`
-*is* a tap and `ScoopInstaller/Main` *is* a bucket. Neither ecosystem invented
-a separate word for its own collection, and neither should this one.
-
-What stays is the distinction between the kind and an instance's name:
-
-| Term | Names |
-|---|---|
-| *bench* | The kind. A collection of manifests. |
-| `luthier-extras` | The default bench, by name — as `homebrew-core` names the default tap rather than being called `homebrew-tap`. It ships in this repository as `bench/`, so the name is the collection's rather than a directory's or a repository's. |
-| "registry" in code | The mechanism: `RegistryProvider`, `RegistryIndex`, `RegistrySource`. An implementation term, said 178 times, unchanged. |
-
-So the default bench is **not renamed**. An instance's name need not be
-the kind word, and in both precedents deliberately is not: `luthier-extras`
-says what that particular collection is — curated, reviewed, the default —
-where `luthier-bench` would only repeat the type and require knowing the
-metaphor to parse.
-
-Third-party benches are what the command exists for:
-
-```console
-$ luthier bench add savas/jazz     # fetches github.com/savas/luthier-bench-jazz
-$ luthier bench list
-$ luthier bench remove jazz
-```
-
-That implies the prefix convention above: third-party repositories are named
-`luthier-bench-<name>` and the client adds the prefix, so users type something
-short and a forge search for `luthier-bench-*` discovers every bench in
-existence. The default bench predates the convention and keeps its own name,
-which is also how `homebrew-core` sits alongside `homebrew-<tap>`.
-
-That difference in provenance is what the conflict question turns on: the
-default bench is curated and reviewed, a third-party one is whatever its author
-put there, so precedence between them is not a symmetric choice.
-
-Still open: whether `bench add` also accepts a bare URL for benches that do not
-follow the convention (Scoop allows this; Homebrew does not).
+The vocabulary stays. A *bench* is a collection of manifests; `luthier-extras`
+is the one Luthier ships, built from `bench/` in this repository; "registry"
+in code is the mechanism (`RegistryProvider`, `RegistryIndex`), which the Open
+Audio Stack registry is read through as well.

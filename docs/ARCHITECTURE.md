@@ -68,7 +68,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | Module | Holds |
 |---|---|
 | `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import — and `Environments`, which manages environments from outside one |
-| `registry` | Merging benches into one `RegistryIndex`, in configured order; `local`, `http` and `oas` providers; `provenance` for origin and key pinning; `signature` for Ed25519 over a snapshot |
+| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers; `provenance`, an audit record of each fetch; `signature`, minisign verification of the bench against the built-in key |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -128,8 +128,10 @@ than enums.
 directory; `HttpSnapshotRegistry` fetches a tarball of the registry repository
 over HTTPS and extracts it through the same hardened extractor as any plugin;
 `OasRegistry` reads an Open Audio Stack site, which publishes static JSON rather
-than TOML manifests. Each is a `RegistrySource` variant in `config.rs`, which is
-what `luthier bench add` writes. A `GitRegistry` using `gix` would slot in
+than TOML manifests. Each is a `RegistrySource` variant in `config.rs`. Which
+sources a user reads is fixed — `default_registries()` — so a new provider is
+for this project's own use, not a way for users to add one. A `GitRegistry`
+using `gix` would slot in
 without touching anything that consumes an index. The MVP deliberately has no
 git dependency: forges publish branch tarballs, and that is enough.
 
@@ -212,40 +214,30 @@ guesses.
 See [SECURITY.md](../SECURITY.md). A manifest names what to take out of an
 archive, never where to put it.
 
-### Benches are ordered, and their origins are pinned
+### Two sources, in a fixed order
 
-More than one registry is read at once — a *bench* is the kind, and
-`luthier-extras` is the default one's name, as `homebrew-core` names the default
-tap. That one ships in this repository under `bench/`; the name is the bench's,
-not a directory's. `Session::index()` merges what each configured bench carries into one
-`RegistryIndex`, memoised because building it three times in one `install` was
-a real regression rather than a hypothetical one.
+Two registries are read at once, and only two: Luthier's own bench
+(`luthier-extras`, built from `bench/` in this repository) and the Open Audio
+Stack registry. Users cannot add a source; `config.json` does not carry the
+list, and `--registry-path` — hidden, for developing the bench — is the only
+override. `Session::index()` merges both into one `RegistryIndex`, memoised
+because building it three times in one `install` was a real regression rather
+than a hypothetical one.
 
-Where two benches carry the same package ID, configured order decides and the
-first wins. That is not a tie-break: it is the mechanism by which a curated
-manifest corrects a derived one, which reading a large upstream registry makes
-necessary. `bench add` therefore appends rather than prepends — a bench added
-without a word about precedence must not quietly start overriding the curated
-one — and `--first` asks for the other behaviour explicitly.
+Where both carry the same package ID, the bench wins. That is not a tie-break:
+it is the mechanism by which a curated manifest corrects a derived one, which
+reading a large upstream registry makes necessary, and it is the bench's whole
+reason to exist.
 
-Ordering decides which document is believed; `registry/provenance.rs` decides
-whether it is the same document's author answering. Scheme, host and port are
-recorded on first fetch, and a bench that later answers from a different origin
-is refused before anything is downloaded from the new host. The digest is
-recorded for audit rather than enforced, because a snapshot's contents change
-on every refresh by design.
-
-What turns that record into more than an audit trail is
-`registry/signature.rs`. A bench may publish a detached Ed25519 signature
-beside its snapshot, over the same SHA-256 the record carries, and
-`HttpSnapshotRegistry::refresh` checks it between the download and the
-extractor — so a snapshot nothing vouched for is never opened. The key is
-pinned the same way the origin is: the first signature to arrive names the key
-every later refresh must match, and a key written into `config.json` covers
-the first fetch as well. `--allow-unsigned` accepts the *absence* of a
-signature for one run and never discards the pin; a signature that fails to
-verify, or one from a key this bench is not trusted to use, is refused
-whatever any flag says. See [SECURITY.md](../SECURITY.md).
+The bench is signed. `registry/signature.rs` verifies a
+[minisign](https://jedisct1.github.io/minisign/) signature published beside
+the snapshot against the key compiled into the manager, and
+`HttpSnapshotRegistry::refresh` does it between the download and the
+extractor — so a snapshot nothing vouched for is never opened.
+`--allow-unsigned` accepts the *absence* of a signature for one run; a
+signature that fails to verify, or one from any other key, is refused whatever
+any flag says. `registry/provenance.rs` records what each fetch brought, for
+audit only. See [SECURITY.md](../SECURITY.md).
 
 ### Environments vary the layout, not the code
 

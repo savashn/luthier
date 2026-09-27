@@ -16,7 +16,7 @@
 //! [`signature`](super::signature)'s business — this module fetches the file
 //! and refuses to extract anything the policy turned down.
 
-use super::signature::{self, PublicKey};
+use super::signature::{self, PublicKey, Requirement};
 use super::{
   RefreshOutcome, RegistryIndex, RegistryProvider, build_index, download_unverified, provenance,
 };
@@ -35,10 +35,11 @@ pub struct HttpSnapshotRegistry {
   snapshot_dir: PathBuf,
   cache_dir: PathBuf,
   offline: bool,
-  /// Keys this bench is trusted to be signed with, from the configuration.
+  /// Keys a snapshot must be signed with. Built in for the default bench;
+  /// empty means nothing served can be checked.
   keys: Vec<PublicKey>,
-  /// Accept an unsigned snapshot from a bench that was signed before. One
-  /// run only: it never discards the pinned key.
+  /// Accept an unsigned snapshot from a bench that requires a signature.
+  /// One run only.
   allow_unsigned: bool,
 }
 
@@ -91,7 +92,7 @@ impl HttpSnapshotRegistry {
   }
 
   /// Where a bench's detached signature lives: beside the snapshot, with
-  /// `.sig` on the end.
+  /// `.minisig` on the end, which is where minisign itself writes one.
   ///
   /// Convention rather than configuration, and the same convention the rest
   /// of the world uses. A URL for it in `config.json` would be one more thing
@@ -103,7 +104,7 @@ impl HttpSnapshotRegistry {
   /// bench that signs publishes a snapshot it uploaded itself.
   fn signature_url(&self) -> Url {
     let mut url = self.url.clone();
-    url.set_path(&format!("{}.sig", self.url.path()));
+    url.set_path(&format!("{}.minisig", self.url.path()));
     url
   }
 
@@ -118,7 +119,7 @@ impl HttpSnapshotRegistry {
     scratch: &Path,
   ) -> Result<Option<String>> {
     let url = self.signature_url();
-    let path = scratch.join("snapshot.sig");
+    let path = scratch.join("snapshot.minisig");
     match download_unverified(downloader, &url, &path, self.offline).await {
       Ok(_) => {
         let text = std::fs::read_to_string(&path).map_err(|e| Error::io("read", &path, e))?;
@@ -161,10 +162,7 @@ impl RegistryProvider for HttpSnapshotRegistry {
     fsutil::remove_any(&scratch)?;
     fsutil::ensure_dir(&scratch)?;
 
-    // Before a byte is fetched: a bench that has started answering from a
-    // different host is refused rather than quietly believed.
     let registries_dir = self.registries_dir();
-    provenance::check_origin(&registries_dir, &self.name, &self.url)?;
 
     let downloader = Downloader::new(&scratch).offline(self.offline);
     let archive_path = scratch.join("snapshot.tar.gz");
@@ -174,16 +172,19 @@ impl RegistryProvider for HttpSnapshotRegistry {
 
     // Before the archive is opened: a snapshot that fails this is untrusted
     // input that nothing has vouched for, and the extractor is the last
-    // place to find that out. What is verified is the digest just computed,
-    // which is also what gets recorded — so the audit trail and the
-    // signature are statements about the same bytes.
-    let requirement = provenance::requirement(&registries_dir, &self.name, &self.keys);
+    // place to find that out. What is verified is the file just downloaded,
+    // the same bytes whose SHA-256 gets recorded.
+    let requirement = if self.keys.is_empty() {
+      Requirement::Unknown
+    } else {
+      Requirement::Signed(self.keys.clone())
+    };
     let served = self.fetch_signature(&downloader, &scratch).await?;
     let verdict = signature::check(
       &self.name,
       &requirement,
       served.as_deref(),
-      &digest,
+      &signature::prehash_file(&archive_path)?,
       self.allow_unsigned,
     )?;
     if let Some(key) = verdict.key() {

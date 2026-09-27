@@ -36,7 +36,14 @@ sha2 = "0.10.9"
 # Ed25519 over a registry snapshot (§14). MSRV 1.85, below the workspace's
 # 1.89, so verification does not move the toolchain floor.
 ed25519-dalek = "3.0.0"
-# Only `keygen` needs randomness, and only 32 bytes of it. Reading the
+# minisign's signature format (§14): the snapshot is prehashed with BLAKE2b-512
+# and keys and signatures are base64, which was already in the tree.
+blake2 = "0.10"
+base64 = "0.22"
+# minisign's author's own verifier, for the tests only: what the manager
+# writes and reads is checked against an implementation that is not ours.
+minisign-verify = "0.3"
+# Only `keygen` needs randomness, and only 40 bytes of it (a seed and a key ID). Reading the
 # platform's CSPRNG directly keeps the `rand` stack out of the tree.
 getrandom = "0.4"
 zip = { version = "8.6.0", default-features = false, features = ["deflate", "bzip2"] }

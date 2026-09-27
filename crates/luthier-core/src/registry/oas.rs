@@ -167,14 +167,11 @@ impl RegistryProvider for OasRegistry {
     fsutil::remove_any(&scratch)?;
     fsutil::ensure_dir(&scratch)?;
 
-    // Before a byte is fetched: an index that has started answering from a
-    // different host is refused rather than quietly believed.
     let registries_dir = self
       .snapshot_dir
       .parent()
       .unwrap_or(&self.snapshot_dir)
       .to_path_buf();
-    provenance::check_origin(&registries_dir, &self.name, &url)?;
 
     let downloader = Downloader::new(&scratch).offline(self.offline);
     let staged = scratch.join("plugins.json");

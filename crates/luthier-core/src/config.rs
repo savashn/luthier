@@ -24,59 +24,12 @@ pub enum RegistrySource {
   Oas { url: Url },
 }
 
-impl RegistrySource {
-  /// Reads a bench location the way a user would write one.
-  ///
-  /// A local checkout is a path, a snapshot is a tarball URL, and anything
-  /// else over HTTP is an Open Audio Stack site root. The guess is only a
-  /// default: `kind` overrides it, because a site can be served from a URL
-  /// that looks like anything.
-  pub fn parse(spec: &str, kind: Option<&str>) -> Result<Self> {
-    let as_url = Url::parse(spec).ok().filter(|u| u.scheme() != "file");
-    let inferred = match (&as_url, kind) {
-      (_, Some(explicit)) => explicit,
-      (Some(url), None) => {
-        let path = url.path().to_ascii_lowercase();
-        if path.ends_with(".tar.gz") || path.ends_with(".tgz") {
-          "snapshot"
-        } else {
-          "oas"
-        }
-      }
-      (None, None) => "path",
-    };
-
-    match inferred {
-      "path" => Ok(RegistrySource::Path {
-        path: PathBuf::from(spec),
-      }),
-      "snapshot" | "oas" => {
-        let url = as_url
-          .ok_or_else(|| Error::InvalidArgument(format!("{spec:?} is not an http or https URL")))?;
-        Ok(if inferred == "snapshot" {
-          RegistrySource::Snapshot { url }
-        } else {
-          RegistrySource::Oas { url }
-        })
-      }
-      other => Err(Error::InvalidArgument(format!(
-        "unknown bench type {other:?}; use path, snapshot or oas"
-      ))),
-    }
-  }
-}
-
-/// One configured registry.
+/// One registry this build reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RegistryConfig {
   pub name: String,
-  /// Ed25519 keys this bench is trusted to be signed with.
-  ///
-  /// Empty is the common case and not a weakness by itself: the first
-  /// signature a bench serves pins the key it names, exactly as the first
-  /// fetch pins the origin. What a key here adds is that the pin is right
-  /// from the first fetch rather than from the second, which is the fetch an
-  /// attacker would have to beat.
+  /// Keys a snapshot must be signed with. Only the default bench has one,
+  /// built in; nothing a user writes can add or change it.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub keys: Vec<PublicKey>,
   #[serde(flatten)]
@@ -91,58 +44,59 @@ impl RegistryConfig {
       source,
     }
   }
-
-  /// Whether a signature could mean anything for this bench.
-  ///
-  /// A local checkout is a directory the user already controls, and an Open
-  /// Audio Stack site publishes no signatures. Saying so where a key is
-  /// added beats accepting one that would never be checked.
-  pub fn can_be_signed(&self) -> bool {
-    matches!(self.source, RegistrySource::Snapshot { .. })
-  }
 }
 
 /// The whole configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
-  #[serde(default = "default_registries")]
+  /// Where manifests come from: always [`default_registries`] for a user.
+  ///
+  /// Never read from or written to `config.json`. Luthier reads the Open
+  /// Audio Stack registry and the one bench that corrects it, and nothing
+  /// else; a `registries` list that 0.1 wrote into the file is ignored. The
+  /// field exists so a front end or a test can hand a session a different
+  /// list — `--registry-path`, for developing the bench, is the one way the
+  /// command line does.
+  #[serde(skip, default = "default_registries")]
   pub registries: Vec<RegistryConfig>,
   /// Directories chosen in place of the defaults. Left out of the file
-  /// while none is set, like a bench's keys.
+  /// while none is set.
   #[serde(default, skip_serializing_if = "Locations::is_empty")]
   pub locations: Locations,
 }
 
 /// The bench shipped with the client, published as a release asset.
 ///
-/// A release asset rather than the forge's branch tarball, for a reason that
-/// only shows up one phase later: a signature is fetched from the snapshot's
-/// own URL with `.sig` appended, and nothing can be published under
-/// `/archive/refs/heads/`. A branch tarball is therefore a snapshot that can
-/// never be signed. An asset is a path this project controls, so
-/// `bench.tar.gz.sig` sits beside it.
+/// A release asset rather than the forge's branch tarball: a signature is
+/// fetched from the snapshot's own URL with `.minisig` appended, and nothing
+/// can be published under `/archive/refs/heads/`. A branch tarball is
+/// therefore a snapshot that can never be signed. An asset is a path this
+/// project controls, so `bench.tar.gz.minisig` sits beside it.
 ///
 /// It is built from `bench/` by the release workflow rather than being a
 /// tarball of the repository: the manager's own `Cargo.toml` files would
 /// otherwise be read as manifests, since discovery walks whatever it is given.
 ///
-/// It is signed with [`DEFAULT_BENCH_KEY`], and the key is required from the
-/// first fetch.
+/// It is signed with [`DEFAULT_BENCH_KEY`], and every fetch requires it.
 ///
 /// `releases/latest` never serves a draft, so a release is invisible here
 /// until it has been signed and published by hand.
 pub const DEFAULT_REGISTRY_URL: &str =
   "https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz";
 
-/// The key the default bench is signed with, as the release publishes it.
+/// The minisign public key the default bench is signed with.
 ///
-/// Built in so the first fetch is verified too. Without it the first
-/// signature a user ever saw would pin whatever key it named, and that first
-/// fetch is exactly the one an attacker who controls the forge account would
-/// aim at. Rotation is `docs/REGISTRY.md`'s procedure, and a release that
-/// changes this constant is the announcement.
-pub const DEFAULT_BENCH_KEY: &str =
-  "e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa";
+/// Built in, so every fetch is verified including the first, and so nothing
+/// fetched from the forge can say which key to believe: an attacker who
+/// controls the account can replace a snapshot and its signature, not this.
+/// Rotation is `docs/REGISTRY.md`'s procedure, and a release that changes
+/// this constant is the announcement.
+///
+/// The same Ed25519 key 0.1 carried as
+/// `e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa`, with
+/// the ID [`signature::legacy_id`](crate::registry::signature::legacy_id)
+/// derives for it, so the key 0.1 recorded equals this one.
+pub const DEFAULT_BENCH_KEY: &str = "RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq";
 
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///
@@ -155,6 +109,10 @@ pub const DEFAULT_BENCH_KEY: &str =
 pub const DEFAULT_OAS_URL: &str = "https://open-audio-stack.github.io/open-audio-stack-registry/";
 
 /// The curated bench first, so it wins any ID both registries carry.
+///
+/// This is the whole list. Users do not add benches: anything downloadable
+/// belongs in the Open Audio Stack registry, and the bench holds only what
+/// cannot be expressed there.
 ///
 /// That order is the whole mechanism behind correcting a broader source: where
 /// a derived entry would install the wrong thing, the bench's manifest is the
@@ -303,68 +261,49 @@ mod tests {
   fn config_round_trips_through_disk() {
     let dir = tempfile::tempdir().unwrap();
     let layout = Layout::rooted_at(dir.path());
-    let config = from_path("/srv/luthier-extras");
+    let mut config = Config::default();
+    config.locations.cache = Some(dir.path().join("elsewhere"));
     config.save(&layout).unwrap();
     assert_eq!(Config::load(&layout).unwrap(), config);
   }
 
   #[test]
-  fn the_default_bench_is_verified_from_its_first_fetch() {
-    // A key configured up front is required from the first fetch; with none
-    // the first signature would pin whatever key it named.
-    let config = Config::default();
-    let bench = &config.registries[0];
-    assert_eq!(bench.name, "luthier-extras");
-    assert_eq!(bench.keys.len(), 1);
-    assert_eq!(bench.keys[0].to_string(), DEFAULT_BENCH_KEY);
-    // The Open Audio Stack publishes no signatures; a key there would be a
-    // promise nothing checks.
-    assert!(config.registries[1].keys.is_empty());
-  }
-
-  #[test]
-  fn a_configuration_written_before_keys_existed_still_reads() {
-    // Every `config.json` in existence predates signatures, and an upgrade
-    // that could not read one would be worse than no verification at all.
+  fn registries_in_the_file_are_neither_read_nor_written() {
+    // 0.1 wrote the registry list into `config.json` and let users add to
+    // it. An upgrade reads the built-in list whatever the file says, and a
+    // save stops carrying one.
     let dir = tempfile::tempdir().unwrap();
     let layout = Layout::rooted_at(dir.path());
     std::fs::create_dir_all(layout.config_dir()).unwrap();
     std::fs::write(
       layout.config_file(),
-      br#"{"registries":[{"name":"bench","type":"snapshot","url":"https://example.com/p.tar.gz"}]}"#,
+      br#"{"registries":[{"name":"bench","type":"snapshot","url":"https://example.com/p.tar.gz","keys":["e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa"]}]}"#,
     )
     .unwrap();
 
     let config = Config::load(&layout).unwrap();
-    assert!(config.registries[0].keys.is_empty());
-    // And a bench with no keys writes none back, rather than growing an
-    // empty field in everyone's configuration.
+    assert_eq!(config.registries, Config::default().registries);
     config.save(&layout).unwrap();
     let text = std::fs::read_to_string(layout.config_file()).unwrap();
-    assert!(!text.contains("keys"), "{text}");
+    assert!(!text.contains("registries"), "{text}");
   }
 
   #[test]
-  fn only_a_snapshot_bench_can_carry_a_signature() {
-    // A local checkout is the user's own directory and an OAS site
-    // publishes nothing to check, so a key on either would never be used.
-    let snapshot = RegistryConfig::new(
-      "bench",
-      RegistrySource::Snapshot {
-        url: Url::parse("https://example.com/p.tar.gz").unwrap(),
-      },
+  fn the_default_bench_is_verified_from_its_first_fetch() {
+    // Built in, so it is required from the very first fetch.
+    let config = Config::default();
+    let bench = &config.registries[0];
+    assert_eq!(bench.name, "luthier-extras");
+    assert_eq!(bench.keys.len(), 1);
+    assert_eq!(bench.keys[0].to_string(), DEFAULT_BENCH_KEY);
+    // The key 0.1 carried and pinned, as hex: the same key, the same ID.
+    assert_eq!(
+      bench.keys[0],
+      PublicKey::parse("e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa").unwrap()
     );
-    assert!(snapshot.can_be_signed());
-    assert!(!from_path("/srv/pkgs").registries[0].can_be_signed());
-    assert!(
-      !RegistryConfig::new(
-        "oas",
-        RegistrySource::Oas {
-          url: Url::parse(DEFAULT_OAS_URL).unwrap(),
-        },
-      )
-      .can_be_signed()
-    );
+    // The Open Audio Stack publishes no signatures; a key there would be a
+    // promise nothing checks.
+    assert!(config.registries[1].keys.is_empty());
   }
 
   #[test]

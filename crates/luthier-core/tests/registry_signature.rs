@@ -1,10 +1,10 @@
 //! Refreshing a signed bench, and refusing one that cannot prove who it is.
 //!
-//! The unit tests in `registry::signature` cover the policy in isolation.
-//! What is checked here is that the policy is wired into the one place it
-//! matters: between the download and the extractor, so a snapshot nothing
-//! vouched for is never opened, and the snapshot already on disk survives
-//! every refusal.
+//! The unit tests in `registry::signature` cover the format and the policy in
+//! isolation. What is checked here is that the policy is wired into the one
+//! place it matters: between the download and the extractor, so a snapshot
+//! nothing vouched for is never opened, and the snapshot already on disk
+//! survives every refusal.
 //!
 //! Benches are served over `file://`, which is what the suite does wherever
 //! the behaviour under test is not HTTP itself (§55).
@@ -15,11 +15,9 @@
 mod support;
 
 use luthier_core::Layout;
-use luthier_core::registry::signature::SecretKey;
+use luthier_core::registry::signature::{SecretKey, prehash};
 use luthier_core::registry::{HttpSnapshotRegistry, RegistryProvider, provenance};
-use luthier_manifest::Sha256Hash;
-use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use support::{TarEntry, build_tar, gzip};
 use url::Url;
 
@@ -40,15 +38,15 @@ impl Published {
   }
 
   fn signature_path(&self) -> PathBuf {
-    self.dir.path().join("bench.tar.gz.sig")
+    self.dir.path().join("bench.tar.gz.minisig")
   }
 
   fn url(&self) -> Url {
     Url::from_file_path(self.snapshot_path()).unwrap()
   }
 
-  /// Publishes a snapshot carrying one manifest, and returns its digest.
-  fn publish(&self, id: &str) -> Sha256Hash {
+  /// Publishes a snapshot carrying one manifest.
+  fn publish(&self, id: &str) {
     let manifest = format!(
       "schema = 1\nid = \"{id}\"\nname = \"{id}\"\nkind = \"external\"\n\
        category = \"effect\"\nlicense = {{ kind = \"open-source\", spdx = \"MIT\" }}\n\
@@ -63,11 +61,18 @@ impl Published {
       ),
     ]));
     std::fs::write(self.snapshot_path(), &bytes).unwrap();
-    Sha256Hash::from_bytes(Sha256::digest(&bytes).into())
   }
 
-  fn sign(&self, key: &SecretKey, digest: &Sha256Hash) {
-    std::fs::write(self.signature_path(), key.sign(digest).render()).unwrap();
+  /// Signs what is published now.
+  fn sign(&self, key: &SecretKey) {
+    let bytes = std::fs::read(self.snapshot_path()).unwrap();
+    self.sign_bytes(key, &bytes);
+  }
+
+  /// Publishes a genuine signature over bytes that are not the snapshot's.
+  fn sign_bytes(&self, key: &SecretKey, bytes: &[u8]) {
+    let signed = key.sign(&prehash(bytes), "bench.tar.gz", 1_790_000_000);
+    std::fs::write(self.signature_path(), signed.render()).unwrap();
   }
 
   fn unpublish_signature(&self) {
@@ -100,12 +105,13 @@ impl Client {
     )
   }
 
-  fn registries_dir(&self) -> PathBuf {
-    self.layout.registries_dir()
+  /// The bench as the default one is built: with its key.
+  fn signed_bench(&self, url: &Url, key: &SecretKey) -> HttpSnapshotRegistry {
+    self.bench(url).keys(vec![key.public()])
   }
 
   fn signed_by(&self) -> Option<String> {
-    provenance::load(&self.registries_dir(), "bench")?
+    provenance::load(&self.layout.registries_dir(), "bench")?
       .signed_by
       .map(|k| k.to_string())
   }
@@ -123,55 +129,52 @@ impl Client {
   }
 }
 
-fn exists(path: &Path) -> bool {
-  path.exists()
-}
-
 #[tokio::test]
-async fn a_bench_that_publishes_no_signature_still_refreshes() {
-  // Every bench in existence today. Nothing to check against is not the
-  // same as a failed check, and refusing here would leave the manager
-  // unable to read any registry that has not started signing yet.
+async fn a_source_with_no_key_is_read_unsigned() {
+  // What a `--registry-path` checkout or a test bench is: nothing to check
+  // against, which is not the same as a failed check.
   let published = Published::new();
   published.publish("sfizz");
-  assert!(!exists(&published.signature_path()));
 
   let client = Client::new();
   let outcome = client.bench(&published.url()).refresh().await.unwrap();
-
   assert_eq!(outcome.packages, 1);
+  assert_eq!(client.signed_by(), None);
+
+  // A signature beside it changes nothing without a key to check it with:
+  // a minisign file names only a key ID, so it cannot vouch for itself.
+  let key = SecretKey::generate().unwrap();
+  published.sign(&key);
+  client.bench(&published.url()).refresh().await.unwrap();
   assert_eq!(client.signed_by(), None);
 }
 
 #[tokio::test]
-async fn the_first_signature_pins_the_key_and_the_next_refresh_needs_it() {
-  // Trust on first use, applied to the key exactly as it is to the origin:
-  // the first fetch cannot prove anything, and every one after it can.
+async fn a_bench_with_a_key_is_verified_from_the_first_fetch() {
   let published = Published::new();
   let key = SecretKey::generate().unwrap();
-  let digest = published.publish("sfizz");
-  published.sign(&key, &digest);
+  published.publish("sfizz");
+  published.sign(&key);
 
   let client = Client::new();
-  client.bench(&published.url()).refresh().await.unwrap();
+  client
+    .signed_bench(&published.url(), &key)
+    .refresh()
+    .await
+    .unwrap();
   assert_eq!(client.signed_by(), Some(key.public().to_string()));
 
-  // The bench stops signing. That is the downgrade this pin exists to
-  // notice, and noticing it is worth more than the refresh it costs.
+  // The bench stops signing: refused, and what was there is untouched.
   published.publish("sfizz-2");
   published.unpublish_signature();
-
   let err = client
-    .bench(&published.url())
+    .signed_bench(&published.url(), &key)
     .refresh()
     .await
     .unwrap_err()
     .to_string();
   assert!(err.contains("unsigned"), "{err}");
-
-  // Refused before extraction, so what was already there is untouched.
   assert_eq!(client.installed_manifest().as_deref(), Some("sfizz.toml"));
-  assert_eq!(client.signed_by(), Some(key.public().to_string()));
 }
 
 #[tokio::test]
@@ -181,11 +184,11 @@ async fn a_signature_that_covers_other_bytes_is_refused() {
   let published = Published::new();
   let key = SecretKey::generate().unwrap();
   published.publish("sfizz");
-  published.sign(&key, &Sha256Hash::from_bytes([0xab; 32]));
+  published.sign_bytes(&key, b"some other snapshot");
 
   let client = Client::new();
   let err = client
-    .bench(&published.url())
+    .signed_bench(&published.url(), &key)
     .refresh()
     .await
     .unwrap_err()
@@ -198,32 +201,27 @@ async fn a_signature_that_covers_other_bytes_is_refused() {
 }
 
 #[tokio::test]
-async fn a_configured_key_is_checked_on_the_very_first_fetch() {
-  // What a key in the configuration buys over the pin: the first fetch is
-  // checked too, which is the fetch an attacker would otherwise aim at.
+async fn a_stranger_s_signature_is_refused() {
   let published = Published::new();
   let trusted = SecretKey::generate().unwrap();
   let stranger = SecretKey::generate().unwrap();
-  let digest = published.publish("sfizz");
-  published.sign(&stranger, &digest);
+  published.publish("sfizz");
+  published.sign(&stranger);
 
   let client = Client::new();
   let err = client
-    .bench(&published.url())
-    .keys(vec![trusted.public()])
+    .signed_bench(&published.url(), &trusted)
     .refresh()
     .await
     .unwrap_err()
     .to_string();
-
   assert!(err.contains("not one of the keys"), "{err}");
   assert_eq!(client.installed_manifest(), None);
 
-  // The same bench, signed by the key it was trusted with.
-  published.sign(&trusted, &digest);
+  // The same bench, signed by the key the build carries.
+  published.sign(&trusted);
   client
-    .bench(&published.url())
-    .keys(vec![trusted.public()])
+    .signed_bench(&published.url(), &trusted)
     .refresh()
     .await
     .unwrap();
@@ -233,60 +231,45 @@ async fn a_configured_key_is_checked_on_the_very_first_fetch() {
 #[tokio::test]
 async fn a_rotation_works_because_both_keys_are_trusted_at_once() {
   // Retiring the old key first would leave a window in which no refresh
-  // can succeed, so a rotation overlaps: trust the new key, publish under
-  // it, then drop the old one.
+  // can succeed, so a rotation overlaps: a release carries both keys, the
+  // bench is signed with the new one, and a later release drops the old.
   let published = Published::new();
   let old = SecretKey::generate().unwrap();
   let new = SecretKey::generate().unwrap();
-
-  let digest = published.publish("sfizz");
-  published.sign(&old, &digest);
   let client = Client::new();
-  client
-    .bench(&published.url())
-    .keys(vec![old.public(), new.public()])
-    .refresh()
-    .await
-    .unwrap();
-  assert_eq!(client.signed_by(), Some(old.public().to_string()));
 
-  let digest = published.publish("sfizz-2");
-  published.sign(&new, &digest);
-  client
-    .bench(&published.url())
-    .keys(vec![old.public(), new.public()])
-    .refresh()
-    .await
-    .unwrap();
-  assert_eq!(client.signed_by(), Some(new.public().to_string()));
+  for (id, key) in [("sfizz", &old), ("sfizz-2", &new)] {
+    published.publish(id);
+    published.sign(key);
+    client
+      .bench(&published.url())
+      .keys(vec![old.public(), new.public()])
+      .refresh()
+      .await
+      .unwrap();
+    assert_eq!(client.signed_by(), Some(key.public().to_string()));
+  }
 }
 
 #[tokio::test]
-async fn allow_unsigned_accepts_the_absence_once_and_keeps_the_pin() {
+async fn allow_unsigned_accepts_the_absence_once() {
   let published = Published::new();
   let key = SecretKey::generate().unwrap();
-  let digest = published.publish("sfizz");
-  published.sign(&key, &digest);
+  published.publish("sfizz");
 
   let client = Client::new();
-  client.bench(&published.url()).refresh().await.unwrap();
-
-  published.publish("sfizz-2");
-  published.unpublish_signature();
   client
-    .bench(&published.url())
+    .signed_bench(&published.url(), &key)
     .allow_unsigned(true)
     .refresh()
     .await
     .unwrap();
-  assert_eq!(client.installed_manifest().as_deref(), Some("sfizz-2.toml"));
+  assert_eq!(client.installed_manifest().as_deref(), Some("sfizz.toml"));
 
-  // One run, not a setting: the key is still pinned, so the next plain
-  // refresh asks the same question again.
-  assert_eq!(client.signed_by(), Some(key.public().to_string()));
+  // One run, not a setting: the next plain refresh asks again.
   assert!(
     client
-      .bench(&published.url())
+      .signed_bench(&published.url(), &key)
       .refresh()
       .await
       .unwrap_err()
@@ -301,17 +284,20 @@ async fn allow_unsigned_does_not_wave_through_a_signature_that_fails() {
   // claim did not hold up, carry on".
   let published = Published::new();
   let key = SecretKey::generate().unwrap();
-  let digest = published.publish("sfizz");
-  published.sign(&key, &digest);
+  published.publish("sfizz");
+  published.sign(&key);
 
   let client = Client::new();
-  client.bench(&published.url()).refresh().await.unwrap();
+  client
+    .signed_bench(&published.url(), &key)
+    .refresh()
+    .await
+    .unwrap();
 
   published.publish("sfizz-2");
-  published.sign(&key, &Sha256Hash::from_bytes([7; 32]));
-
+  published.sign_bytes(&key, b"not this snapshot");
   let err = client
-    .bench(&published.url())
+    .signed_bench(&published.url(), &key)
     .allow_unsigned(true)
     .refresh()
     .await
@@ -325,25 +311,28 @@ async fn allow_unsigned_does_not_wave_through_a_signature_that_fails() {
 async fn a_signature_file_that_cannot_be_read_is_refused_not_ignored() {
   // The tempting failure mode: an unreadable signature treated as no
   // signature, which would make "publish garbage" a way to turn
-  // verification off.
+  // verification off. Refused with or without a key to check it against.
   let published = Published::new();
   let key = SecretKey::generate().unwrap();
-  let digest = published.publish("sfizz");
-  published.sign(&key, &digest);
+  published.publish("sfizz");
+  published.sign(&key);
 
   let client = Client::new();
-  client.bench(&published.url()).refresh().await.unwrap();
+  client
+    .signed_bench(&published.url(), &key)
+    .refresh()
+    .await
+    .unwrap();
 
   published.publish("sfizz-2");
   std::fs::write(published.signature_path(), b"algorithm rsa\n").unwrap();
-
-  let err = client
-    .bench(&published.url())
-    .refresh()
-    .await
-    .unwrap_err()
-    .to_string();
-  assert!(err.contains("cannot be read"), "{err}");
+  for bench in [
+    client.signed_bench(&published.url(), &key),
+    client.bench(&published.url()),
+  ] {
+    let err = bench.refresh().await.unwrap_err().to_string();
+    assert!(err.contains("cannot be read"), "{err}");
+  }
   assert_eq!(client.installed_manifest().as_deref(), Some("sfizz.toml"));
 }
 

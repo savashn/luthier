@@ -11,7 +11,6 @@ mod render;
 use args::{BenchCommand, CacheCommand, Cli, Command, EnvCommand, GlobalArgs, LocationCommand};
 use clap::Parser;
 use luthier_core::api::{Environments, Session, Storage};
-use luthier_core::config::RegistrySource;
 use luthier_core::env::EnvName;
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
@@ -428,32 +427,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
 
     Command::Bench { command } => match command {
       BenchCommand::List => {
-        // The override is what this session reads, but the configuration is
-        // what `add` and `remove` change. Saying so beats listing one and
-        // editing the other.
         if global.registry_path.is_some() {
-          reporter.warn("--registry-path overrides the configuration below for this command only");
+          reporter.warn("--registry-path replaces the sources below for this command only");
         }
-        reporter.benches(&session.configured_benches()?);
-      }
-      BenchCommand::Add {
-        name,
-        location,
-        r#type,
-        first,
-        keys,
-      } => {
-        let source = RegistrySource::parse(location, r#type.as_deref())?;
-        reporter.benches(&session.add_bench(name, source, keys, *first)?);
-      }
-      BenchCommand::Remove { name } => {
-        reporter.benches(&session.remove_bench(name)?);
-      }
-      BenchCommand::Trust { name, key } => {
-        reporter.benches(&session.trust_bench(name, key)?);
-      }
-      BenchCommand::Untrust { name, key } => {
-        reporter.benches(&session.untrust_bench(name, key.as_deref())?);
+        reporter.benches(&session.benches());
       }
     },
 

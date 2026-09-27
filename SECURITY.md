@@ -8,7 +8,9 @@ document states what is trusted, what is not, and what the code does about it.
 | Input | Trusted? | Why |
 |---|---|---|
 | Registry manifests | Reviewed, not trusted | Manifests are reviewed in pull requests, but a manifest still cannot name a destination path or run a command |
-| Registry snapshots | On first use | The document carrying every checksum arrives on HTTPS alone; its origin is pinned on first fetch and a later change of host is refused |
+| Registry sources | Fixed in the binary | Luthier reads the Open Audio Stack registry and its own bench, and nothing else; users cannot add a source |
+| The bench snapshot | Only if signed with the built-in key | Verified with minisign against a key compiled into the manager, before it is extracted |
+| The Open Audio Stack index | HTTPS alone | Its publisher signs nothing, so the bench — which is signed — is what corrects it |
 | Downloaded artifacts | Never | An artifact is bytes from the internet; the checksum only proves it is *the* expected bytes, not that they are safe |
 | Local state file | Structurally, not blindly | Removal re-checks that every path it is about to delete lies inside a managed directory |
 | The user's existing plugins | Never modified | Anything Luthier did not install is left alone |
@@ -127,79 +129,92 @@ The cache is content-addressed: an entry's filename *is* its SHA-256. A cache
 hit is still re-verified, so a corrupted or tampered cache entry is discarded
 and refetched rather than trusted.
 
-## Registry provenance
+## Registry sources
 
-An artifact is verified against a checksum in a manifest. The document carrying
-that checksum — a bench tarball, an Open Audio Stack index — arrives on the
-strength of HTTPS alone, which makes it the weakest link in the chain.
-`registry/provenance.rs` applies trust on first use to the part of a snapshot
-that should never change rather than the part that always does.
+An artifact is verified against a checksum in a manifest, so the document
+carrying that checksum is the weakest link in the chain. Luthier reads exactly
+two, and both are fixed in the binary:
 
-A snapshot's *contents* change on every refresh; that is what a refresh is for,
-so pinning its digest would reject every genuine update. Its *origin* should
-not change at all. Scheme, host and port are therefore recorded beside the
-snapshot on first fetch, and a bench that later answers from a different origin
-is refused — before the fetch, so nothing is downloaded from the new host. A
-path that moves within one origin is upstream reorganising itself, which is
-theirs to do.
+1. **Luthier's own bench** (`luthier-extras`), built from `bench/` in this
+   repository and published as the `bench.tar.gz` asset of each release. It
+   is consulted first, so it wins any package ID both sources carry — which is
+   how it corrects the other one.
+2. **The Open Audio Stack registry**, which carries almost every package.
 
-The digest and byte count are recorded for audit. Where the bench is signed,
-that record is also what the signature covers — see below. There is no way to
-accept a new origin in place: `bench remove` forgets the record and re-adding
-pins afresh, which makes accepting one a deliberate act rather than a flag on
-an ordinary refresh. A record that is missing or unreadable is treated as
-absent — it caches a previous observation, and refusing to work because it was
-corrupted would turn a hint into an outage.
+There is no command to add a source, and `config.json` cannot name one: a
+`registries` list written there by 0.1 is ignored. `--registry-path` replaces
+both with a local directory for one command; it is hidden, and exists for
+developing the bench.
 
-## Registry signatures
+`registry/provenance.rs` records, for each source, the URL, the SHA-256 and
+size of what arrived, when, and the key that signed it. The record is for
+audit and enforces nothing. (0.1 also pinned each source's origin and key on
+first use, because users could add sources; with the URLs and the key fixed in
+the binary a pin protects nothing and would lock everyone out the day a
+release moved either.)
 
-A bench may publish a detached Ed25519 signature beside its snapshot, at the
-snapshot's own URL with `.sig` on the end. What it signs is the snapshot's
-SHA-256 — the digest the manager computes as it downloads and records in the
-provenance file — prefixed with a context string so a signature over a
-snapshot can never be replayed as a signature over anything else. The file is
-plain text and carries the public key as well as the signature.
+## Bench signatures
 
-Verification happens **between the download and the extractor**, so a snapshot
-nothing vouched for is never opened, and a refusal always leaves the previous
-snapshot in place.
+Each release publishes a detached signature beside the bench, at the
+snapshot's own URL with `.minisig` on the end. The format is
+[minisign](https://jedisct1.github.io/minisign/)'s, byte for byte: Ed25519
+over the snapshot's BLAKE2b-512 (minisign's prehashed `ED` form), plus a
+signed trusted comment. The manager verifies it **between the download and the
+extractor**, so a snapshot nothing vouched for is never opened, and a refusal
+always leaves the previous snapshot in place.
 
-Which key counts is decided the same way the origin is:
+The key is built into the manager (`DEFAULT_BENCH_KEY` in `config.rs`) and is
+the only one accepted:
 
-- A key in `config.json` — written there by `luthier bench add --key` or
-  `luthier bench trust` — is required from the very first fetch, which is the
-  fetch an attacker would otherwise aim at.
-- With no key configured, the first signature a bench serves pins the key it
-  names. That first fetch proves nothing by itself; what it buys is that every
-  refresh after it has something to check against, including the case where
-  the bench simply stops signing.
-- With neither a key nor a pin, the bench is unsigned and says so. Refusing
-  it would mean refusing to read any registry that has not started signing
-  yet.
+```text
+RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq
+```
 
-The default bench is the first case from the start: its public key is built
-into the manager (`DEFAULT_BENCH_KEY` in `config.rs`), so no first fetch of it
-is ever taken on trust. The cost is that a release of it without a signature
-is a bench nobody can refresh, which is why the release workflow publishes a
-draft — invisible to `releases/latest` — and the signature is added before it
-is made public.
+A minisign signature names its key only by ID, so nothing fetched from the
+forge can say which key to believe: an attacker who controls the account can
+replace the bench and its signature, but not the key in a binary users already
+have. Anyone can check a bench without trusting the manager at all:
 
-Three refusals follow from that, and only one of them can be overridden:
+```console
+$ minisign -Vm bench.tar.gz -P RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq
+```
+
+The cost of a built-in key is that a release without a signature is a bench
+nobody can refresh. The release workflow therefore publishes a draft —
+invisible to `releases/latest` — and the signature is made on the
+maintainer's machine, with a key CI never sees, before the draft is published.
+
+Three refusals follow, and only one of them can be overridden:
 
 | | |
 |---|---|
-| No signature, but one was expected | `refresh --allow-unsigned` accepts it for **one run**. The pinned key is kept, so the next refresh asks again; `bench untrust <name>` is how to stop being asked. |
+| No signature published | `refresh --allow-unsigned` accepts it for **one run**; the next refresh asks again. |
 | A signature that does not verify | Refused. No flag relaxes this: it is a claim that did not hold up, not an absent one. |
-| A signature from a key this bench is not trusted to use | Refused, and the key is named so it can be checked against the bench's own announcement before `bench trust` accepts it. This is also what a key rotation looks like from the outside. |
+| A signature from any other key | Refused. A rotation reaches users as a release carrying the new key. |
 
 An unreadable signature file is refused rather than treated as no signature,
-or publishing garbage would be a way to turn verification off. The signing
-side is `luthier-registry keygen` and `luthier-registry sign`; the procedure,
-including rotation, is in [docs/REGISTRY.md](docs/REGISTRY.md#signing-a-snapshot).
+or publishing garbage would be a way to turn verification off.
 
-A generated branch tarball has no signature beside it and cannot have one, so
-a bench that signs publishes a snapshot it uploaded itself. That is a change
-to how a bench is published, not to how it is read.
+Releases also publish `bench.tar.gz.sig`, the format 0.1 reads, so 0.1 clients
+keep refreshing; nothing newer reads it. The signing side is
+`luthier-registry keygen` and `luthier-registry sign`, which write minisign's
+files (stock `minisign` works too); the procedure, including rotation, is in
+[docs/REGISTRY.md](docs/REGISTRY.md#signing-a-snapshot).
+
+## Release provenance
+
+The binary and the bench are also covered by a GitHub build provenance
+attestation, made by the release workflow through Sigstore with the
+workflow's own identity. It says the file was built by this repository's
+`release.yml`, from which commit:
+
+```console
+$ gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+```
+
+The two answer different questions. The attestation says CI built it, with no
+key for anyone to lose; the bench's minisign signature says the maintainer
+published it, with a key CI never holds.
 
 ## Installation
 

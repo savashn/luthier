@@ -66,11 +66,11 @@ enum Command {
     id: Option<String>,
   },
 
-  /// Generate an Ed25519 key pair for signing this bench's snapshots.
+  /// Generate a minisign key pair for signing the bench's snapshots.
   ///
-  /// The secret key is written to a file only its owner can read; the public
-  /// key is printed, to publish where users can find it and to hand to
-  /// `luthier bench trust`.
+  /// The same files `minisign -G -W` writes: an unencrypted secret key only
+  /// its owner can read, and `<out>.pub` beside it. The public key is what
+  /// `DEFAULT_BENCH_KEY` in `luthier-core/src/config.rs` carries.
   #[cfg(feature = "authoring")]
   Keygen {
     /// Where to write the secret key. Never overwritten.
@@ -78,22 +78,21 @@ enum Command {
     out: PathBuf,
   },
 
-  /// Sign a snapshot, writing the detached signature beside it.
+  /// Sign a snapshot, writing `<snapshot>.minisig` and `<snapshot>.sig`
+  /// beside it.
   ///
-  /// What is signed is the snapshot's SHA-256, which is what the manager
-  /// records and what it checks the signature against.
+  /// The `.minisig` is minisign's own format, which the manager verifies and
+  /// `minisign -V` can too. The `.sig` is the format 0.1 reads, published
+  /// until no 0.1 client is left.
   #[cfg(feature = "authoring")]
   Sign {
     /// The snapshot tarball to sign.
     snapshot: PathBuf,
 
-    /// The secret key file written by `keygen`.
+    /// The secret key: a file `keygen` or `minisign -G -W` wrote, or 0.1's
+    /// hex seed.
     #[arg(long)]
     key: PathBuf,
-
-    /// Write the signature here instead of <snapshot>.sig.
-    #[arg(long)]
-    out: Option<PathBuf>,
   },
 
   /// Report which manifests are behind their upstream project.
@@ -168,7 +167,7 @@ fn main() -> ExitCode {
     Command::Keygen { out } => cmd_keygen(&out),
 
     #[cfg(feature = "authoring")]
-    Command::Sign { snapshot, key, out } => cmd_sign(&snapshot, &key, out.as_deref()),
+    Command::Sign { snapshot, key } => cmd_sign(&snapshot, &key),
 
     #[cfg(feature = "authoring")]
     Command::CheckUpdates {
@@ -629,51 +628,72 @@ fn render_entry(entry: &install::Listed) -> String {
 fn cmd_keygen(out: &Path) -> Result<bool, Box<dyn std::error::Error>> {
   use luthier_core::registry::signature::SecretKey;
 
-  if out.exists() {
-    return Err(format!("{} already exists; move it aside first", out.display()).into());
+  let public_path = PathBuf::from(format!("{}.pub", out.display()));
+  for path in [out, public_path.as_path()] {
+    if path.exists() {
+      return Err(format!("{} already exists; move it aside first", path.display()).into());
+    }
   }
 
   let secret = SecretKey::generate()?;
-  std::fs::write(out, format!("{}\n", secret.to_hex()))?;
+  std::fs::write(out, secret.to_file())?;
   restrict(out)?;
+  std::fs::write(&public_path, secret.public().to_file())?;
 
   println!("Secret key written to {}", out.display());
+  println!("Public key written to {}", public_path.display());
   println!("Public key:  {}", secret.public());
   println!(
-    "\nPublish the public key where users can check it against a signature, and keep \n\
-     the secret key off the machine that builds snapshots if you can. Users pin it with\n\
-     \n    luthier bench trust <bench> {}\n",
-    secret.public()
+    "\nKeep the secret key off the machine that builds snapshots. The public key goes\n\
+     into DEFAULT_BENCH_KEY, and a release carrying it is how users learn of it."
   );
   Ok(true)
 }
 
-/// Signs a snapshot, writing `<snapshot>.sig` beside it.
+/// Signs a snapshot, writing `<snapshot>.minisig` and `<snapshot>.sig`.
 #[cfg(feature = "authoring")]
-fn cmd_sign(
-  snapshot: &Path,
-  key_file: &Path,
-  out: Option<&Path>,
-) -> Result<bool, Box<dyn std::error::Error>> {
-  use luthier_core::registry::signature::SecretKey;
+fn cmd_sign(snapshot: &Path, key_file: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+  use luthier_core::registry::signature::{SecretKey, prehash_file};
 
   let secret = SecretKey::parse(&std::fs::read_to_string(key_file)?)?;
-  // The digest the manager computes as it downloads, and records: signing
-  // the same thing is what ties the audit trail to a key.
+  let file_name = snapshot
+    .file_name()
+    .map(|n| n.to_string_lossy().into_owned())
+    .unwrap_or_default();
+  let timestamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)?
+    .as_secs() as i64;
+
+  // Appended to the whole name, not to the stem: the manager looks for each
+  // beside the snapshot under exactly these names.
+  let minisig = PathBuf::from(format!("{}.minisig", snapshot.display()));
+  std::fs::write(
+    &minisig,
+    secret
+      .sign(&prehash_file(snapshot)?, &file_name, timestamp)
+      .render(),
+  )?;
   let digest = luthier_core::fsutil::hash_file(snapshot)?;
+  let legacy = PathBuf::from(format!("{}.sig", snapshot.display()));
+  std::fs::write(&legacy, secret.sign_legacy(&digest).render())?;
 
-  let destination = match out {
-    Some(path) => path.to_path_buf(),
-    // `.sig` appended to the whole name, not to the stem: the manager
-    // looks for it beside the snapshot under exactly this name.
-    None => PathBuf::from(format!("{}.sig", snapshot.display())),
-  };
-  std::fs::write(&destination, secret.sign(&digest).render())?;
-
+  println!(
+    "key    {} (ID {})",
+    secret.public(),
+    secret.public().id_hex()
+  );
   println!("sha256 {digest}");
-  println!("key    {}", secret.public());
-  println!("Signature written to {}", destination.display());
-  println!("\nPublish it beside the snapshot, at the snapshot's own URL with `.sig` on the end.");
+  println!(
+    "Signatures written to {} and {}",
+    minisig.display(),
+    legacy.display()
+  );
+  println!(
+    "\nPublish both beside the snapshot. Anyone can check the first with\n\
+     \n    minisign -Vm {} -P {}\n",
+    snapshot.display(),
+    secret.public()
+  );
   Ok(true)
 }
 

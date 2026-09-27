@@ -18,6 +18,10 @@ on:
 
 permissions:
   contents: write
+  # For the build provenance attestation: a short-lived OIDC token proves to
+  # Sigstore which workflow, commit and repository produced the files.
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -122,6 +126,24 @@ jobs:
           sha256sum "$BENCH_ASSET" > "$BENCH_ASSET.sha256"
           cat "$BENCH_ASSET.sha256"
 
+      # Build provenance, the standard way for a release on this forge to
+      # say where its files came from. Signed through Sigstore with the
+      # workflow's own identity, so there is no key to keep: anyone can check
+      # that a download was built here, from this commit, by this workflow,
+      #
+      #     gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+      #
+      # This answers "was this built by the project's CI". The bench's
+      # minisign signature answers a different question — "did the
+      # maintainer publish this" — with a key CI never sees, which is why it
+      # is not replaced by this.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ env.ASSET }}
+            ${{ env.BENCH_ASSET }}
+
       # Release notes come from the changelog rather than from the tag
       # message: the changelog is the version of this that gets reviewed.
       - name: Extract the changelog section
@@ -141,7 +163,8 @@ jobs:
       #
       # The manager ships with the bench's public key and requires a
       # signature from the very first fetch, so a published release without
-      # `bench.tar.gz.sig` is a bench nobody can refresh. A draft is invisible
+      # `bench.tar.gz.minisig` is a bench nobody can refresh — and one without
+      # `bench.tar.gz.sig` is one no 0.1 client can. A draft is invisible
       # to `releases/latest`, which is the URL every client reads, so there is
       # no window between publishing and signing for anyone to fall into.
       - name: Publish as a draft
@@ -165,7 +188,9 @@ jobs:
               "$BENCH_ASSET" "$BENCH_ASSET.sha256" --clobber
             # A signature over the bench this run just replaced verifies
             # nothing, so it goes with it.
-            gh release delete-asset "$tag" "$BENCH_ASSET.sig" --yes 2> /dev/null || true
+            for sig in minisig sig; do
+              gh release delete-asset "$tag" "$BENCH_ASSET.$sig" --yes 2> /dev/null || true
+            done
           else
             gh release create "$tag" --draft \
               --title "luthier $tag" \
@@ -182,5 +207,5 @@ jobs:
           echo "::notice::$tag is a draft. Sign the bench and publish it:"
           echo "  gh release download $tag -p $BENCH_ASSET"
           echo "  luthier-registry sign $BENCH_ASSET --key <secret key>"
-          echo "  gh release upload $tag $BENCH_ASSET.sig"
+          echo "  gh release upload $tag $BENCH_ASSET.minisig $BENCH_ASSET.sig"
           echo "  gh release edit $tag --draft=false"
