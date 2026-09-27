@@ -175,7 +175,7 @@ jobs:
             gh release edit "$tag" --draft=false
           else
             gh release create "$tag" \
-              --title "luthier $tag" \
+              --title "$tag" \
               --notes-file notes.md \
               "$ASSET" "$BENCH_ASSET"
           fi

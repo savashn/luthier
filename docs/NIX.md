@@ -62,7 +62,7 @@ home-manager.users.you = {
 ```
 
 To follow a release rather than `main`, pin the input to a tag:
-`url = "github:savashn/luthier/v0.2.0"`.
+`url = "github:savashn/luthier/v0.3.0"`.
 
 ## A first configuration
 
