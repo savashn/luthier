@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 413 tests, fully offline
+cargo test --workspace                     # 403 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -33,7 +33,7 @@ real `~/.clap` and `~/.vst3`.
 | Crate | Contains | Must not contain |
 |---|---|---|
 | `luthier-manifest` | schema types, parse, validate, SPDX, path/hash newtypes, manifest discovery | async, HTTP, *installation* policy |
-| `luthier-core` | registry, resolver, download, archive, install, state, scan, `api::{Session, Environments}` | anything CLI-shaped |
+| `luthier-core` | registry, resolver, download, archive, install, state, scan, `api::{Session, Storage}` | anything CLI-shaped |
 | `luthier-cli` | `luthier` binary: clap args, rendering | **any business logic** |
 | `luthier-registry-tool` | `luthier-registry` binary: validator + authoring helpers | dependency on `luthier-cli` |
 
@@ -44,11 +44,8 @@ carries; this table is only the boundary rules.
 `api::Session` unchanged. If the CLI needs to decide something, add it to
 `luthier-core::api`.
 
-Environment management is `api::Environments`, not `Session`: a session's
-`Layout` is already redirected into the selected environment, and `env create`
-/ `env remove` act on environments from outside one. `Environments` also owns
-the selection itself — `selected_layout()` is what turns `--env`/`LUTHIER_ENV`
-into paths, and refuses a name that is not there.
+Changing a location is `api::Storage`, not `Session`: a session's `Layout`
+already has the locations applied, and a reset needs the layout from before.
 
 Modules are files, not `mod.rs` directories: `archive.rs` beside `archive/`.
 The one exception is `crates/luthier-core/tests/support/mod.rs`, which must
@@ -173,17 +170,21 @@ the crate map keeps that out of `luthier-manifest`.
   add pinning of an origin: with the URL compiled in, a pin protects nothing
   and locks everyone out the day a release moves it.
 - **The Home Manager module runs luthier; it does not reimplement it.**
-  `nix/hm-module.nix` writes an environment file per environment and calls
-  `env import [--prune]` during activation, so verification and placement
+  `nix/hm-module.nix` writes the declared packages to a file in the export
+  format and calls `import [--prune]` during activation, so verification and placement
   have one implementation. Anything the module needs is a CLI feature first
   (that is how `--prune` came to exist). Every call is wrapped so a failure
   warns and the switch continues. Test changes to it against real Home
   Manager by building `activationPackage` and running only the extracted
   `home.activation.luthier` script with `HOME` and `XDG_*` pointed at a
   scratch directory — never by activating, which touches the real profile.
-- **`env path <name>` succeeds for an environment that does not exist.** It
-  prints where one would live. Test existence with `[ -d "$(luthier env path
-  <name>)" ]`, as the module does.
+- **There are no environments, by decision.** 0.2 had `luthier env`,
+  `--env` and `LUTHIER_ENV`; 0.3 removed them because `CLAP_PATH` and
+  `VST3_PATH` only extend the standard locations (no real isolation), the
+  variables reach only hosts started from that shell, and every environment
+  duplicated its sample libraries. Reproducibility is `export`/`import
+  --prune`, pins and the Home Manager module. Do not bring environments back;
+  `~/.local/share/luthier/envs` from 0.2 is left alone and never read.
 - **Build nothing that needs the network or a CA store eagerly.** The HTTP
   client is built on the first request (`Downloader::client`): the Nix
   sandbox has no CA store, and building it up front panicked every test that
@@ -247,9 +248,8 @@ the crate map keeps that out of `luthier-manifest`.
   warning is raised in `validate.rs`, and report the allowance as doing nothing
   when it silences nothing. Never add one that relaxes a check on *where* a
   file is written; these name conventions, not safety.
-- **An environment-aware path** → do nothing. Every path comes from `Layout`,
-  and `into_env` redirects the per-installation parts. Code that builds a path
-  from `$HOME` or from `data_dir()` by hand is the bug.
+- **A new path** → add it to `Layout`. Every path comes from there, and code
+  that builds one from `$HOME` or from `data_dir()` by hand is the bug.
 
 - **A registry backend** → implement `RegistryProvider` (see `registry/local.rs`)
   and a `RegistrySource` variant in `config.rs`. It is for this project's own
@@ -308,8 +308,7 @@ hardened extractor.
 
 LV2 and sample libraries install; 7z extracts; a bare CLAP or SoundFont installs; tar hard links are materialised
 as copies; `external` detection searches the system plugin directories as well
-as the managed roots; environments (`luthier env`, `--env`, `LUTHIER_ENV`)
-redirect the per-installation parts of a `Layout`.
+as the managed roots, including the Nix profiles.
 
 A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
 `builtin_engines()` maps content to engine package IDs, and an `engines.toml`
@@ -323,10 +322,11 @@ not a dependency: any one engine satisfies it.
 
 Manifests are TOML (`<id>.toml`). Every package declares exactly one
 `category` from a closed list (`Category` in `types.rs`, enforced in
-`validate.rs`) plus free-form `tags`. `luthier env export` / `env import`
+`validate.rs`) plus free-form `tags`. `luthier export` / `import`
 reproduce an installation elsewhere: export pins every version including
 dependencies, import feeds them to the resolver as `required_versions`, which
-behaves like a pin but is fatal when the version is gone.
+behaves like a pin but is fatal when the version is gone. `import --prune`
+removes what the file neither names nor needs.
 
 `luthier-registry check-updates` reports what upstream has moved past. It reads
 the repo from the **artifact URL**, not `repository` — those disagree (Surge XT
@@ -340,8 +340,7 @@ A `v*` tag publishes a release directly: the static binary and
 (`gh attestation verify`). Nothing is signed by hand.
 
 `luthier location` puts the cache, sample libraries or plugins in a directory
-of the user's choosing (`locations` in `config.json`); environments keep their
-own libraries and plugins inside themselves and share only the cache.
+of the user's choosing (`locations` in `config.json`).
 
 `luthier cache list` / `cache clean` prune the content-addressed artifact
 cache; an entry is kept when some installed package recorded its digest.

@@ -19,7 +19,6 @@ play it.
 - [A first configuration](#a-first-configuration)
 - [Options](#options)
 - [What a switch does](#what-a-switch-does)
-- [Environments](#environments)
 - [Another disk](#another-disk)
 - [Without Home Manager](#without-home-manager)
 
@@ -99,7 +98,6 @@ from the list does **not** uninstall it until you turn on `prune`; see below.
 | `enable` | `false` | Install `luthier` and apply the declaration on every switch. |
 | `package` | built from the flake | The luthier package to use. |
 | `packages` | `[ ]` | Packages to install in your home directory. |
-| `environments.<name>.packages` | `{ }` | Named environments and their packages. |
 | `prune` | `false` | Remove installed packages the declaration does not list. |
 | `refresh` | `true` | Fetch the package lists before applying. |
 | `systemPlugins` | `true` | Count plugins from nixpkgs or your distribution as engines. |
@@ -135,8 +133,7 @@ enabling the module safe on a machine that already has plugins.
 
 On, a switch makes the installation match the declaration exactly: every
 package the declaration neither lists nor needs is removed, including any
-you installed by hand. It applies to your home directory and to every declared
-environment.
+you installed by hand.
 
 ```nix
 programs.luthier = {
@@ -180,11 +177,8 @@ During activation, after Home Manager has written your files, the module runs
 
 1. `luthier refresh`, unless `refresh = false`.
 2. `luthier location set <kind> <dir>` for each location that is set.
-3. `luthier env import <file>` for your home directory, with `--prune` if
-   `prune` is on. The file is generated from `packages`, in the same format
-   `luthier env export` writes.
-4. For each environment: `luthier env create <name>` if it does not exist yet,
-   then the same import into it.
+3. `luthier import <file>`, with `--prune` if `prune` is on. The file is
+   generated from `packages`, in the same format `luthier export` writes.
 
 If a step fails — no network, a registry that is down, a disk that is not
 mounted — Home Manager prints a warning and the rest of the switch goes ahead.
@@ -196,26 +190,6 @@ reachable. Run `home-manager switch` again once the problem is gone.
 Everything is installed in your home directory; nothing needs root, and
 nothing is added to the Nix store except `luthier` itself and the generated
 files.
-
-## Environments
-
-An environment is a separate set of installed software, with its own plugin
-directories; see [Environments](ENVIRONMENTS.md).
-
-```nix
-programs.luthier.environments = {
-  mixing.packages = [ "lsp-plugins" "dragonfly-reverb" ];
-  drums.packages  = [ "drskit" ];
-};
-```
-
-A switch creates each environment that does not exist and installs its
-packages. Use one from a shell with `eval "$(luthier env activate mixing)"`,
-or for a single command with `luthier --env mixing ...`.
-
-An environment you remove from the configuration is not deleted, because
-deleting it would delete everything in it. Remove it yourself with
-`luthier env remove <name>`.
 
 ## Another disk
 
@@ -263,6 +237,6 @@ the same by hand. Write the file once, keep it in version control, and apply
 it on any machine:
 
 ```console
-$ luthier env export --loose -o plugins.toml
-$ luthier env import --prune plugins.toml
+$ luthier export --loose -o plugins.toml
+$ luthier import --prune plugins.toml
 ```

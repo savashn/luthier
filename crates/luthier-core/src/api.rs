@@ -10,7 +10,6 @@ use crate::archive::{self, ExtractLimits};
 use crate::config::{Config, RegistrySource};
 use crate::download::{Downloader, Progress};
 use crate::engine;
-use crate::env::{self, Activation, EnvName, EnvSummary};
 use crate::envfile::EnvFile;
 use crate::error::{Error, InstallError, ResolveError, Result, StateError};
 use crate::fsutil;
@@ -1323,18 +1322,17 @@ impl Session {
 
   // -------------------------------------------------- export and import --
 
-  /// Captures what is installed as a portable environment file (§51).
+  /// Captures what is installed as a portable file (§51).
   ///
   /// `pinned` records the exact version of every package, including ones
   /// that arrived as dependencies, so the file reproduces an installation
   /// rather than merely listing it. `false` produces the `--loose` shape.
-  pub fn export_env(&self, pinned: bool) -> Result<EnvFile> {
+  pub fn export(&self, pinned: bool) -> Result<EnvFile> {
     let state = crate::state::load(&self.layout)?;
-    let environment = self.layout.environment().map(|e| e.as_str().to_owned());
-    Ok(EnvFile::from_state(&state, environment.as_deref(), pinned))
+    Ok(EnvFile::from_state(&state, pinned))
   }
 
-  /// Installs everything an environment file describes, then reapplies its
+  /// Installs everything an exported file describes, then reapplies its
   /// pins.
   ///
   /// Only `explicit` entries become roots; dependency versions are supplied
@@ -1344,11 +1342,11 @@ impl Session {
   /// With `prune`, the import converges rather than adds: once what the file
   /// names is installed, every package it neither names nor needs is
   /// removed ([`Session::prune_candidates`]). That is what makes the file a
-  /// description of the environment rather than a lower bound on it, and
+  /// description of the installation rather than a lower bound on it, and
   /// what a declarative front end — the Home Manager module — relies on.
   /// A file naming nothing is refused without `prune`, since it would do
-  /// nothing; with it, it empties the environment.
-  pub async fn import_env(
+  /// nothing; with it, it removes everything.
+  pub async fn import(
     &self,
     file: &EnvFile,
     prune: bool,
@@ -1357,7 +1355,7 @@ impl Session {
     let roots = file.roots();
     if roots.is_empty() && !prune {
       return Err(Error::InvalidArgument(
-        "the environment file lists no explicitly installed packages".into(),
+        "the file lists no explicitly installed packages".into(),
       ));
     }
     let required = file.required_versions();
@@ -1404,7 +1402,7 @@ impl Session {
   }
 
   /// Installed packages that `file` neither names nor needs: what
-  /// `env import --prune` removes.
+  /// `import --prune` removes.
   ///
   /// Everything the resolved plan for the file touches is kept — its roots,
   /// and every dependency of theirs, installed yet or not — so a package the
@@ -1444,15 +1442,9 @@ impl Session {
 
 /// Where the parts a user may move to another disk are, and moving them.
 ///
-/// Apart from [`Session`] for the reason [`Environments`] is: a session's
-/// layout already has the locations applied, and possibly an environment on
-/// top, while changing a location needs the layout from before either — a
-/// reset has to know what the default was.
-///
-/// Locations belong to the default environment and to the cache every
-/// environment shares. A named environment keeps its plugins and libraries
-/// inside its own directory, because `env remove` deletes that directory
-/// whole and must not have to go looking on other disks.
+/// Apart from [`Session`] because a session's layout already has the
+/// locations applied, while changing a location needs the layout from before
+/// — a reset has to know what the default was.
 pub struct Storage {
   /// The layout with no location applied.
   home: Layout,
@@ -1626,136 +1618,12 @@ impl Storage {
   }
 
   /// The exports that let hosts find plugins in a location the user chose.
-  pub fn search_path(&self) -> Result<Activation> {
+  pub fn search_path(&self) -> Result<crate::layout::SearchPath> {
     let config = Config::load(&self.home)?;
-    Ok(env::relocated_search_path(
+    Ok(crate::layout::search_path(
       &self.home,
       &self.located(&config),
     ))
-  }
-}
-
-// ----------------------------------------------------------- environments --
-
-/// Managing environments, as opposed to working inside one.
-///
-/// Deliberately not part of [`Session`]. A session's `Layout` is already
-/// redirected into whichever environment was selected, and these operations
-/// act *on* environments from outside: `env create` must work when nothing
-/// exists yet, and `env remove` must work on one that is not the active one.
-/// So this takes the base layout and the selection, and every decision an
-/// environment command makes — what a valid name is, what "not there" means,
-/// which environment `path` defaults to — lives here rather than in a front
-/// end, for the same reason the rest of `api` does.
-pub struct Environments {
-  layout: Layout,
-  active: Option<EnvName>,
-}
-
-impl Environments {
-  /// `layout` is the base layout, never one already redirected by `into_env`.
-  pub fn new(layout: Layout, active: Option<EnvName>) -> Self {
-    Self { layout, active }
-  }
-
-  /// Validates a user-supplied name.
-  ///
-  /// The name becomes a path segment, so it is checked rather than trusted;
-  /// the error is an invalid argument because that is what it is.
-  pub fn name(&self, raw: &str) -> Result<EnvName> {
-    EnvName::new(raw.to_owned()).map_err(|e| Error::InvalidArgument(e.to_string()))
-  }
-
-  /// Every environment, with the selected one marked.
-  pub fn list(&self) -> Result<Vec<EnvSummary>> {
-    env::list(&self.layout, self.active.as_ref())
-  }
-
-  /// Creates one, returning where it went.
-  pub fn create(&self, name: &EnvName) -> Result<PathBuf> {
-    env::create(&self.layout, name)
-  }
-
-  /// Where an environment lives, whether or not it exists yet.
-  pub fn path(&self, name: &EnvName) -> PathBuf {
-    env::path(&self.layout, name)
-  }
-
-  /// Where an existing environment lives, refusing a name that is not there.
-  ///
-  /// Separate from [`Environments::remove`] so a front end can put the path
-  /// in a confirmation prompt and still refuse a typo before asking anything.
-  pub fn locate(&self, name: &EnvName) -> Result<PathBuf> {
-    self.must_exist(name, None)?;
-    Ok(self.path(name))
-  }
-
-  /// Refuses a selection naming an environment that does not exist.
-  pub fn require(&self, name: &EnvName) -> Result<()> {
-    self.must_exist(name, Some("Create it with: luthier env create"))
-  }
-
-  /// The layout a command acts through: the base one, or the selected
-  /// environment's.
-  ///
-  /// This is where `--env` and `LUTHIER_ENV` stop being a name and become
-  /// paths, which is why the selection is checked here rather than wherever a
-  /// front end happens to read the flag.
-  pub fn selected_layout(&self) -> Result<Layout> {
-    match self.active.as_ref() {
-      Some(name) => {
-        self.require(name)?;
-        Ok(self.layout.clone().into_env(name))
-      }
-      None => Ok(self.layout.clone()),
-    }
-  }
-
-  /// Deletes an environment and everything installed in it.
-  pub fn remove(&self, name: &EnvName) -> Result<PathBuf> {
-    self.must_exist(name, None)?;
-    env::remove(&self.layout, name)
-  }
-
-  /// The shell commands that put an environment on the search path.
-  pub fn activation(&self, name: &EnvName) -> Result<Activation> {
-    self.require(name)?;
-    let redirected = self.layout.clone().into_env(name);
-    Ok(env::activation(&redirected, name))
-  }
-
-  /// The shell commands that undo an activation.
-  pub fn deactivation(&self) -> Activation {
-    env::deactivation()
-  }
-
-  /// The environment in use and where it lives, if one is selected.
-  pub fn active(&self) -> Option<(&EnvName, PathBuf)> {
-    let name = self.active.as_ref()?;
-    Some((name, env::path(&self.layout, name)))
-  }
-
-  /// The directory `env path` prints: the one named, else the active one.
-  pub fn path_of(&self, name: Option<&EnvName>) -> Result<PathBuf> {
-    match name {
-      Some(name) => Ok(self.path(name)),
-      None => match self.active.as_ref() {
-        Some(active) => Ok(self.path(active)),
-        None => Err(Error::InvalidArgument(
-          "no environment active; name one, or activate it first".into(),
-        )),
-      },
-    }
-  }
-
-  fn must_exist(&self, name: &EnvName, hint: Option<&str>) -> Result<()> {
-    if env::exists(&self.layout, name) {
-      return Ok(());
-    }
-    Err(Error::InvalidArgument(match hint {
-      Some(hint) => format!("no environment named {name}. {hint} {name}"),
-      None => format!("no environment named {name}"),
-    }))
   }
 }
 

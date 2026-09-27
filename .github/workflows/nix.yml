@@ -60,7 +60,6 @@ jobs:
                   enable = true;
                   prune = true;
                   packages = [ "surge" { id = "lsp-plugins"; version = "1.2.35"; } ];
-                  environments.drums.packages = [ "drskit" ];
                   locations.plugins = "/mnt/plugins";
                 };
               };

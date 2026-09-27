@@ -253,16 +253,6 @@ one policy decides whether any of them may touch the disk. The
 malicious-archive corpus exercises every container against the same attacks, so
 a container added later could not bring a policy of its own.
 
-## Environment names
-
-`--env <name>` and `LUTHIER_ENV` become a path segment under the data
-directory, so the name is validated before any path is built from it: letters,
-digits, `.`, `-` and `_`, no leading dot, at most 64 characters. That rejects
-`..`, `../escape`, absolute paths and separators. `env remove` re-checks that
-the directory it is about to delete recursively is inside the environments
-directory, because a validated name is not a reason to skip the check on a
-recursive delete.
-
 ## Reporting
 
 Please report security issues privately to the maintainers rather than in a

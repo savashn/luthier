@@ -8,11 +8,11 @@
 #
 # What each option turns into:
 #
-#   packages / environments  an environment file, applied with
-#                            `luthier env import [--prune]`
-#   locations                `luthier location set`
-#   refresh                  `luthier refresh` first, so a newly declared
-#                            package can be found
+#   packages   a file in the format `luthier export` writes, applied with
+#              `luthier import [--prune]`
+#   locations  `luthier location set`
+#   refresh    `luthier refresh` first, so a newly declared package can be
+#              found
 #
 # A failure — no network, a disk that is not mounted — is reported as a
 # warning and does not fail the switch: the rest of a Home Manager
@@ -63,54 +63,51 @@ let
     }
   );
 
-  packagesOption =
-    what:
-    mkOption {
-      type = types.listOf packageType;
-      default = [ ];
-      example = literalExpression ''
-        [
-          "surge"
-          "lsp-plugins"
-          { id = "dragonfly-reverb"; version = "3.2.10"; }
-        ]
-      '';
-      description = ''
-        Packages to install ${what}. A plain string is a package ID; an
-        attribute set can also hold it at a version. Dependencies need not be
-        listed.
-      '';
-    };
+  packagesOption = mkOption {
+    type = types.listOf packageType;
+    default = [ ];
+    example = literalExpression ''
+      [
+        "surge"
+        "lsp-plugins"
+        { id = "dragonfly-reverb"; version = "3.2.10"; }
+      ]
+    '';
+    description = ''
+      Packages to install: plugins into `~/.clap`, `~/.vst3` and `~/.lv2`,
+      sample libraries into the library directory. A plain string is a
+      package ID; an attribute set can also hold it at a version.
+      Dependencies need not be listed.
+    '';
+  };
 
-  # The same format `luthier env export --loose` writes. A version is a hard
+  # The same format `luthier export --loose` writes. A version is a hard
   # requirement where one is given; the timestamp is fixed so the file, and
   # therefore the derivation, only changes when the declaration does.
-  envFile =
-    name: packages:
-    toml.generate "luthier-${name}.toml" {
-      meta = {
-        schema = 1;
-        luthier = cfg.package.version;
-        exported = "1970-01-01T00:00:00Z";
-        pinned = false;
-      };
-      package = map (
-        p:
-        {
-          inherit (p) id;
-          reason = "explicit";
-        }
-        // optionalAttrs (p.version != null) { inherit (p) version; }
-      ) packages;
+  declared = toml.generate "luthier-packages.toml" {
+    meta = {
+      schema = 1;
+      luthier = cfg.package.version;
+      exported = "1970-01-01T00:00:00Z";
+      pinned = false;
     };
+    package = map (
+      p:
+      {
+        inherit (p) id;
+        reason = "explicit";
+      }
+      // optionalAttrs (p.version != null) { inherit (p) version; }
+    ) cfg.packages;
+  };
 
   exe = lib.getExe cfg.package;
   globalFlags = [ "--yes" ] ++ lib.optional (!cfg.systemPlugins) "--no-system-plugins";
   pruneFlag = optionalString cfg.prune " --prune";
 
-  # Applying an empty list only makes sense when it is meant to empty the
-  # environment; without prune it would ask for nothing and change nothing.
-  applies = packages: packages != [ ] || cfg.prune;
+  # Applying an empty list only makes sense when it is meant to remove
+  # everything; without prune it would ask for nothing and change nothing.
+  applies = cfg.packages != [ ] || cfg.prune;
 
   pluginsDir = cfg.locations.plugins;
 in
@@ -125,36 +122,14 @@ in
       description = "The luthier package to install and to apply the declaration with.";
     };
 
-    packages = packagesOption "into your home directory — `~/.clap`, `~/.vst3`, `~/.lv2` and the sample library directory";
-
-    environments = mkOption {
-      type = types.attrsOf (
-        types.submodule {
-          options.packages = packagesOption "into this environment";
-        }
-      );
-      default = { };
-      example = literalExpression ''
-        {
-          mixing.packages = [ "lsp-plugins" "dragonfly-reverb" ];
-          drums.packages = [ "drumgizmo" "drskit" ];
-        }
-      '';
-      description = ''
-        Named environments, each with its own plugin directories and its own
-        packages; see `luthier env`. An environment is created if it does not
-        exist. One removed from this set is left in place, packages and all:
-        delete it with `luthier env remove <name>`.
-      '';
-    };
+    packages = packagesOption;
 
     prune = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Remove installed packages the declaration does not list, in the home
-        directory and in every declared environment, so each ends up exactly
-        as declared. Off by default, so enabling the module never removes
+        Remove installed packages the declaration does not list, so the
+        installation ends up exactly as declared. Off by default, so enabling the module never removes
         something installed by hand; turn it on once the declaration lists
         everything you want to keep. Files changed since they were installed
         are kept either way.
@@ -253,26 +228,9 @@ in
         )
       }
 
-      ${optionalString (applies cfg.packages) ''
-        luthier env import ${envFile "home" cfg.packages}${pruneFlag}
+      ${optionalString applies ''
+        luthier import ${declared}${pruneFlag}
       ''}
-
-      ${concatMapStrings (
-        name:
-        let
-          env = cfg.environments.${name};
-        in
-        ''
-          # `env path` prints where the environment lives whether or not it
-          # exists yet, so existence is the directory's.
-          if [ ! -d "$(${exe} env path ${escapeShellArg name})" ]; then
-            luthier env create ${escapeShellArg name}
-          fi
-          ${optionalString (applies env.packages) ''
-            luthier --env ${escapeShellArg name} env import ${envFile name env.packages}${pruneFlag}
-          ''}
-        ''
-      ) (builtins.attrNames cfg.environments)}
     '';
   };
 }

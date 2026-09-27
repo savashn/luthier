@@ -390,77 +390,19 @@ impl Reporter {
     self.stranded(&outcome.stranded, "is left");
   }
 
-  // ------------------------------------------------------------------- env --
-
-  pub fn envs(&self, envs: &[luthier_core::env::EnvSummary]) {
-    if self.json {
-      return self.emit(&envs);
-    }
-    if envs.is_empty() {
-      self.note("No environments. Create one with: luthier env create <name>");
-      return;
-    }
-    let rows: Vec<Vec<String>> = envs
-      .iter()
-      .map(|e| {
-        vec![
-          if e.active {
-            format!("* {}", e.name)
-          } else {
-            format!("  {}", e.name)
-          },
-          e.packages.to_string(),
-          e.path.display().to_string(),
-        ]
-      })
-      .collect();
-    table(&["NAME", "PACKAGES", "PATH"], &rows);
-  }
+  // ---------------------------------------------------------- search path --
 
   /// Shell commands, printed bare so they can be evaluated.
   ///
   /// Nothing else may reach stdout here: the caller pipes this into `eval`,
   /// so a stray status line would be executed.
-  pub fn activation(&self, activation: &luthier_core::env::Activation) {
+  pub fn search_path(&self, search_path: &luthier_core::layout::SearchPath) {
     if self.json {
-      return self.emit(activation);
+      return self.emit(search_path);
     }
-    for (key, value) in &activation.set {
+    for (key, value) in &search_path.set {
       println!("export {key}=\"{value}\"");
     }
-  }
-
-  pub fn deactivation(&self, activation: &luthier_core::env::Activation) {
-    if self.json {
-      return self.emit(activation);
-    }
-    for key in &activation.unset {
-      println!("unset {key}");
-    }
-  }
-
-  pub fn env_show(&self, active: Option<&str>, path: Option<&std::path::Path>) {
-    if self.json {
-      return self.emit(&serde_json::json!({
-          "active": active,
-          "path": path.map(|p| p.display().to_string()),
-      }));
-    }
-    match (active, path) {
-      (Some(name), Some(path)) => {
-        println!("{name}");
-        println!("{}", path.display());
-      }
-      _ => self.note("No environment active; using the default locations."),
-    }
-  }
-
-  /// A bare path, for use in shell substitution.
-  pub fn path(&self, path: &std::path::Path) {
-    if self.json {
-      return self.emit(&path.display().to_string());
-    }
-    println!("{}", path.display());
   }
 
   // ------------------------------------------------------------------ list --

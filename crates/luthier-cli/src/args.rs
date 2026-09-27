@@ -72,22 +72,10 @@ pub struct GlobalArgs {
   /// somewhere else.
   #[arg(long, global = true)]
   pub no_system_plugins: bool,
-
-  /// Act on this environment instead of the default one.
-  ///
-  /// Overrides LUTHIER_ENV, which is what `luthier env activate` exports.
-  #[arg(long, global = true, value_name = "NAME")]
-  pub env: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-  /// Create and switch between named sets of installed software.
-  Env {
-    #[command(subcommand)]
-    command: EnvCommand,
-  },
-
   /// Find packages by name, category or description.
   Search {
     /// What to look for. Omit to list everything.
@@ -138,6 +126,34 @@ pub enum Command {
   Verify {
     /// Leave empty to verify everything.
     packages: Vec<String>,
+  },
+
+  /// Write what is installed to a file, to reinstall it elsewhere.
+  ///
+  /// The file pins the exact version of every package, so importing it on
+  /// another machine reproduces the same set rather than whatever is newest.
+  Export {
+    /// Write here instead of standard output.
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Record package names without versions.
+    ///
+    /// Produces a file that installs the current release of each package
+    /// on whatever machine reads it. Portable between registry states,
+    /// but not reproducible.
+    #[arg(long)]
+    loose: bool,
+  },
+
+  /// Install everything an exported file describes.
+  Import {
+    /// The file to read, or `-` for standard input.
+    file: PathBuf,
+    /// Also remove every installed package the file neither names nor
+    /// needs, so the installation ends up exactly as the file describes.
+    #[arg(long)]
+    prune: bool,
   },
 
   /// List packages nothing needs any more. Removes nothing.
@@ -243,62 +259,3 @@ pub enum LocationCommand {
 
 /// What `location set` and `location reset` accept.
 const LOCATION_KINDS: [&str; 3] = ["cache", "libraries", "plugins"];
-
-#[derive(Debug, Subcommand)]
-pub enum EnvCommand {
-  /// List environments.
-  List,
-
-  /// Create an environment.
-  Create { name: String },
-
-  /// Delete an environment and everything installed in it.
-  Remove { name: String },
-
-  /// Print the shell commands that put an environment on the search path.
-  ///
-  /// Made effective by evaluating them:
-  ///
-  ///     eval "$(luthier env activate mixing)"
-  Activate { name: String },
-
-  /// Print the shell commands that undo `activate`.
-  Deactivate,
-
-  /// Write what is installed to a portable environment file.
-  ///
-  /// The file pins the exact version of every package, so importing it on
-  /// another machine reproduces the same set rather than whatever is newest.
-  Export {
-    /// Write here instead of standard output.
-    #[arg(short, long, value_name = "FILE")]
-    output: Option<PathBuf>,
-
-    /// Record package names without versions.
-    ///
-    /// Produces a file that installs the current release of each package
-    /// on whatever machine reads it. Portable between registry states,
-    /// but not reproducible.
-    #[arg(long)]
-    loose: bool,
-  },
-
-  /// Install everything an exported environment file describes.
-  Import {
-    /// The file to read, or `-` for standard input.
-    file: PathBuf,
-    /// Also remove every installed package the file neither names nor
-    /// needs, so the environment ends up exactly as the file describes.
-    #[arg(long)]
-    prune: bool,
-  },
-
-  /// Print an environment's directory.
-  Path {
-    /// Defaults to the active environment.
-    name: Option<String>,
-  },
-
-  /// Show which environment is in use.
-  Show,
-}

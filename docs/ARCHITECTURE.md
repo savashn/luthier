@@ -67,7 +67,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 
 | Module | Holds |
 |---|---|
-| `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import — and `Environments`, which manages environments from outside one |
+| `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import, and `--prune`'s convergence |
 | `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers; `provenance`, an audit record of each fetch |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
@@ -75,8 +75,8 @@ call; the rest is one pipeline, from a request to a recorded install.
 | `install` | Journalled, atomic placement (`InstallTransaction`), per-format installers, and `derive`, which reads rules out of a verified tree |
 | `state` | What is installed and which files belong to it — the authority on ownership |
 | `scan` | What is present on the system but not installed by Luthier |
-| `layout` | Every path, injected rather than computed from `$HOME` |
-| `env`, `envfile` | Named environments, and the portable file `env export` writes |
+| `layout` | Every path, injected rather than computed from `$HOME`; the search path a relocated plugin root needs |
+| `envfile` | The portable file `export` writes and `import` reads |
 | `engine` | Whether anything on the machine can play the content about to be installed |
 | `config` | The persisted bench list and `RegistrySource` |
 | `error`, `fsutil` | The error model with exit codes and hints; the filesystem primitives the state store and installer share |
@@ -234,34 +234,21 @@ serves them, which for the bench is this repository's releases.
 `registry/provenance.rs` records what each fetch brought, for audit only. See
 *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
-### Environments vary the layout, not the code
+### There are no environments
 
-An environment is not a new subsystem: it is a [`Layout`] whose per-installation
-parts — plugin roots, state, libraries — point under
-`~/.local/share/luthier/envs/<name>`. Everything downstream is unchanged,
-because nothing downstream ever built a path of its own. That is the payoff of
-injecting `Layout` everywhere rather than reading `$HOME` where it is needed.
-
-What deliberately stays shared is the artifact cache and the registry
-snapshots. The cache is keyed by content hash, so two environments installing
-the same plugin cost one download and two extractions. Libraries are per
-environment, which can duplicate multi-gigabyte content; hardlinking a shared
-store is the obvious later optimisation and needs no format change.
-
-Selection is by `--env` or `LUTHIER_ENV`, never by a file recording a
-"current" environment. A stored pointer would mean one terminal could change
-what another terminal is about to install into.
-
-The environment name becomes a path segment, so it is validated rather than
-trusted: `--env ../../etc` is refused before any path is built from it.
+0.2 had named environments: a `Layout` whose plugin roots, state and libraries
+pointed under `~/.local/share/luthier/envs/<name>`, selected by `--env` or
+`LUTHIER_ENV`. They were removed in 0.3. Hosts reach an environment's plugins
+only through `CLAP_PATH`, `VST3_PATH` and `LV2_PATH`, the first two of which add
+to the standard locations rather than replacing them, so CLAP and VST3 were
+never isolated; the variables reach only a host started from that shell; and
+each environment held its own copy of every sample library. What they were for
+is served by `export`, `import --prune` and pins. See `docs/EXPORT.md`.
 
 ### Locations move roots, and never create them
 
 `config.json` may name a directory for the cache, for sample libraries and for
-plugins (`Locations`, applied by `Layout::with_locations` to the base layout
-before any environment redirect). The cache moves for every environment; the
-other two apply to the default one only, because an environment is a single
-directory `env remove` deletes whole.
+plugins (`Locations`, applied by `Layout::with_locations`).
 
 A chosen directory is typically on an external disk, so it is never created:
 an unmounted disk leaves either nothing or an empty mount point, and
@@ -328,7 +315,7 @@ is why the built-in list is narrow.
 ### Determinism
 
 The same registry, target and request must always produce the same plan, or lock
-files and reproducible environments are impossible later. Every point where
+files and reproducible exports are impossible later. Every point where
 resolution could branch on iteration order branches on package ID instead:
 worklists are `BTreeSet`, edges are sorted, releases are sorted by version
 rather than trusted in file order, and search ties break on ID.

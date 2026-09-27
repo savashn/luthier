@@ -1,5 +1,5 @@
-//! Portable environment files: what `luthier env export` writes and
-//! `luthier env import` reads (§51).
+//! Portable installation files: what `luthier export` writes and
+//! `luthier import` reads (§51).
 //!
 //! The point of the format is that a creative setup survives a move to another
 //! machine. That means it has to record enough to *reproduce* an installation,
@@ -7,8 +7,7 @@
 //! every package, including the ones that arrived as dependencies, and an
 //! import feeds those versions to the resolver as hard requirements.
 //!
-//! It deliberately records no absolute paths, no plugin directories and no
-//! environment name to install into. Where things land is the receiving
+//! It deliberately records no absolute paths and no plugin directories. Where things land is the receiving
 //! machine's business, decided by its own [`crate::layout::Layout`]; a file
 //! that could name destinations would be the same arbitrary-write primitive
 //! that manifests are forbidden from being.
@@ -21,7 +20,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// On-disk revision of the environment-file format.
+/// On-disk revision of the export format.
 pub const ENV_FILE_VERSION: u32 = 1;
 
 /// A serialised environment.
@@ -42,9 +41,10 @@ pub struct Meta {
   pub luthier: String,
   #[serde(with = "timestamp_string")]
   pub exported: Timestamp,
-  /// The environment this came from. Informational only — import never
-  /// switches environments on the strength of a file's contents.
-  #[serde(default, skip_serializing_if = "Option::is_none")]
+  /// The environment a file from 0.2 or earlier was exported from, when
+  /// there were environments. Read so such a file still imports; never
+  /// written, and never acted on.
+  #[serde(default, skip_serializing)]
   pub environment: Option<String>,
   /// Whether `version` fields are authoritative.
   ///
@@ -94,7 +94,7 @@ impl EnvFile {
   ///
   /// `pinned` false produces the `--loose` shape: package identities without
   /// versions, for "give me these, current is fine".
-  pub fn from_state(state: &State, environment: Option<&str>, pinned: bool) -> Self {
+  pub fn from_state(state: &State, pinned: bool) -> Self {
     let mut packages: Vec<PackageEntry> = state
       .packages
       .values()
@@ -113,7 +113,7 @@ impl EnvFile {
         schema: ENV_FILE_VERSION,
         luthier: env!("CARGO_PKG_VERSION").to_string(),
         exported: Timestamp::now(),
-        environment: environment.map(ToOwned::to_owned),
+        environment: None,
         pinned,
       },
       packages,
@@ -161,7 +161,7 @@ impl EnvFile {
     toml::to_string_pretty(self).map_err(|e| {
       Error::State(StateError::EnvFile {
         source_name: "<export>".into(),
-        reason: format!("could not serialise the environment: {e}"),
+        reason: format!("could not serialise the export: {e}"),
       })
     })
   }
@@ -234,11 +234,21 @@ mod tests {
       package("surge-xt", "1.3.4", InstallReason::Explicit),
       package("engine", "0.9.0", InstallReason::Dependency),
     ]);
-    let file = EnvFile::from_state(&state, Some("mixing"), true);
+    let file = EnvFile::from_state(&state, true);
     let text = file.to_toml().unwrap();
     let back = EnvFile::from_toml(&text, "env.toml").unwrap();
     assert_eq!(back, file);
-    assert_eq!(back.meta.environment.as_deref(), Some("mixing"));
+  }
+
+  #[test]
+  fn a_file_from_when_there_were_environments_still_reads() {
+    // 0.2 wrote the environment it exported from. That is read and ignored,
+    // so an old file still imports, and never written again.
+    let text = "[meta]\nschema = 1\nluthier = \"0.2.0\"\n\
+                exported = \"2026-09-27T00:00:00Z\"\nenvironment = \"mixing\"\n\
+                pinned = false\n";
+    let file = EnvFile::from_toml(text, "old.toml").unwrap();
+    assert!(!file.to_toml().unwrap().contains("environment"));
   }
 
   #[test]
@@ -249,7 +259,7 @@ mod tests {
       package("surge-xt", "1.3.4", InstallReason::Explicit),
       package("engine", "0.9.0", InstallReason::Dependency),
     ]);
-    let file = EnvFile::from_state(&state, None, true);
+    let file = EnvFile::from_state(&state, true);
     let roots = file.roots();
     assert_eq!(roots.len(), 1);
     assert_eq!(roots[0].as_str(), "surge-xt");
@@ -260,7 +270,7 @@ mod tests {
   #[test]
   fn a_loose_export_records_no_versions() {
     let state = state_with(vec![package("dexed", "1.0.1", InstallReason::Explicit)]);
-    let file = EnvFile::from_state(&state, None, false);
+    let file = EnvFile::from_state(&state, false);
     assert!(file.packages[0].version.is_none());
     assert!(file.required_versions().is_empty());
     let text = file.to_toml().unwrap();
@@ -273,7 +283,7 @@ mod tests {
       package("zam-plugins", "4.5.0", InstallReason::Explicit),
       package("dexed", "1.0.1", InstallReason::Explicit),
     ]);
-    let file = EnvFile::from_state(&a, None, true);
+    let file = EnvFile::from_state(&a, true);
     let ids: Vec<&str> = file.packages.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(ids, vec!["dexed", "zam-plugins"]);
   }
@@ -288,7 +298,7 @@ mod tests {
       .unwrap()
       .pin
       .replace("1.3.3".parse().unwrap());
-    let file = EnvFile::from_state(&state, None, true);
+    let file = EnvFile::from_state(&state, true);
     let back = EnvFile::from_toml(&file.to_toml().unwrap(), "env.toml").unwrap();
     assert_eq!(back.pins().len(), 1);
     assert_eq!(back.pins()[0].1.to_string(), "1.3.3");
@@ -297,7 +307,7 @@ mod tests {
   #[test]
   fn a_file_from_a_newer_format_is_refused() {
     let state = state_with(vec![package("dexed", "1.0.1", InstallReason::Explicit)]);
-    let text = EnvFile::from_state(&state, None, true)
+    let text = EnvFile::from_state(&state, true)
       .to_toml()
       .unwrap()
       .replace("schema = 1", "schema = 99");

@@ -18,14 +18,13 @@ about.
 ### Added
 
 - **Nix: a flake and a Home Manager module.** `nix run github:savashn/luthier`
-  runs it; `programs.luthier` declares the packages to install in the home
-  directory and in named environments, where downloads, libraries and plugins
-  go, and whether anything not declared is removed, and applies it on every
+  runs it; `programs.luthier` declares the packages to install, where
+  downloads, libraries and plugins go, and whether anything not declared is removed, and applies it on every
   `home-manager switch`. See `docs/NIX.md`.
-- **`env import --prune`.** Also removes every installed package the file
-  neither names nor needs, so the environment ends up exactly as the file
+- **`import --prune`.** Also removes every installed package the file
+  neither names nor needs, so the installation ends up exactly as the file
   describes and importing it again does nothing. With `--prune`, a file
-  naming no packages empties the environment.
+  naming no packages removes everything.
 - **Plugins from Nix profiles are detected.** `/run/current-system/sw/lib`,
   `~/.nix-profile/lib`, `~/.local/state/nix/profile/lib` and
   `/etc/profiles/per-user/<user>/lib` are searched alongside `/usr/lib`, so
@@ -33,7 +32,10 @@ about.
 
 ### Changed
 
-- **An environment file may hold some packages at a version and not others.**
+- **`luthier export` and `luthier import` replace `env export` and
+  `env import`**, with the same file format and the same options. A file
+  0.2 exported still imports.
+- **An exported file may hold some packages at a version and not others.**
   A `version` is a hard requirement wherever one is given, not only in a
   `pinned` file, and `registry` may be left out.
 
@@ -46,6 +48,16 @@ about.
 
 ### Removed
 
+- **Environments.** `luthier env create`, `list`, `activate`, `deactivate`,
+  `show`, `path` and `remove`, the global `--env` flag and `LUTHIER_ENV` are
+  gone, and so is `environments` in the Home Manager module. Hosts see
+  CLAP and VST3 plugins in `~/.clap` and `~/.vst3` whatever `CLAP_PATH` and
+  `VST3_PATH` say, so an environment never isolated them; the variables
+  reached only a DAW started from that shell; and each environment kept its own
+  copy of every sample library. `export`, `import --prune` and pins do what they
+  were for. Directories 0.2 created under `~/.local/share/luthier/envs` are
+  left in place and no longer read; delete them when you no longer need what
+  is in them.
 - **The `.sha256` files beside release assets.** GitHub shows every asset's
   SHA-256 on the release page, and `gh attestation verify` checks it along
   with where the file was built.

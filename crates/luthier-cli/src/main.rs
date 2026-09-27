@@ -8,10 +8,9 @@ mod args;
 mod progress;
 mod render;
 
-use args::{BenchCommand, CacheCommand, Cli, Command, EnvCommand, GlobalArgs, LocationCommand};
+use args::{BenchCommand, CacheCommand, Cli, Command, GlobalArgs, LocationCommand};
 use clap::Parser;
-use luthier_core::api::{Environments, Session, Storage};
-use luthier_core::env::EnvName;
+use luthier_core::api::{Session, Storage};
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
@@ -99,7 +98,7 @@ fn init_logging(global: &GlobalArgs) {
     .try_init();
 }
 
-/// The layout before any location or environment redirect.
+/// The layout before any location is applied.
 ///
 /// `--root` confines what is *written*; the system search paths govern what is
 /// *seen*. They are orthogonal, so a rooted layout still sees the machine
@@ -121,42 +120,18 @@ fn home_layout(global: &GlobalArgs) -> Result<Layout> {
   })
 }
 
-/// The layout before any environment redirect: the base, with the locations
-/// the configuration names applied.
+/// The layout with the locations the configuration names applied.
 fn build_layout(global: &GlobalArgs) -> Result<Layout> {
   Config::located(home_layout(global)?)
 }
 
-/// Which environment this invocation acts on: `--env`, else `LUTHIER_ENV`.
-///
-/// Selection is never read from a file on disk. A stored "current environment"
-/// would let one terminal change what another is about to install into.
-fn selected_env(global: &GlobalArgs) -> Result<Option<EnvName>> {
-  let raw = match &global.env {
-    Some(name) => Some(EnvName::new(name.clone())),
-    None => luthier_core::env::from_environment(),
-  };
-  raw
-    .transpose()
-    .map_err(|e| Error::InvalidArgument(e.to_string()))
-}
-
 fn build_session(global: &GlobalArgs) -> Result<Session> {
-  let layout = environments(global)?.selected_layout()?;
+  let layout = build_layout(global)?;
   let config = match &global.registry_path {
     Some(path) => luthier_core::config::from_path(path),
     None => Config::load(&layout)?,
   };
   Ok(Session::new(layout, config)?.offline(global.offline))
-}
-
-/// The environment surface, over the base layout: `env` acts *on*
-/// environments, so it must work when the selected one does not exist yet.
-fn environments(global: &GlobalArgs) -> Result<Environments> {
-  Ok(Environments::new(
-    build_layout(global)?,
-    selected_env(global)?,
-  ))
 }
 
 fn ids(session: &Session, raw: &[String]) -> Result<Vec<PackageId>> {
@@ -218,15 +193,6 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     return run_location(global, command.as_ref(), reporter);
   }
 
-  if let Command::Env { command } = &cli.command
-    && !matches!(
-      command,
-      EnvCommand::Export { .. } | EnvCommand::Import { .. }
-    )
-  {
-    return run_env(global, command, reporter);
-  }
-
   let session = build_session(global)?;
 
   // A registry that could not be read is reported before the command
@@ -245,9 +211,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       | Command::Install { .. }
       | Command::Update { .. }
       | Command::Remove { .. }
-      | Command::Env {
-        command: EnvCommand::Import { .. }
-      }
+      | Command::Import { .. }
   ) {
     for problem in session.registry_problems() {
       reporter.warn(format!("registry unavailable: {problem}"));
@@ -255,86 +219,77 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
   }
 
   match &cli.command {
-    // The rest of `env` is handled before `build_session`, because managing
-    // environments must work when the selected one does not exist yet.
-    // Export and import need a session, so they land here.
-    Command::Env { command } => match command {
-      EnvCommand::Export { output, loose } => {
-        let file = session.export_env(!*loose)?;
-        let text = file.to_toml()?;
-        match output {
-          Some(path) => {
-            std::fs::write(path, &text)
-              .map_err(|e| Error::io("write environment file", path, e))?;
-            reporter.note(format!(
-              "Exported {} package(s) to {}",
-              file.packages.len(),
-              path.display()
-            ));
-          }
-          // Straight to stdout, so it can be piped or redirected.
-          None => print!("{text}"),
-        }
-      }
-
-      EnvCommand::Import { file, prune } => {
-        // Reading the file from stdin leaves nothing to ask the confirmation
-        // on: stdin is at EOF by the time the question is put, so a pipe is
-        // refused as non-interactive and a terminal reads an empty answer as
-        // no. Said here, before the file is read, rather than discovered
-        // after the work.
-        if file.as_os_str() == "-" && !global.yes {
-          return Err(Error::InvalidArgument(
-            "reading the environment file from stdin leaves nothing to confirm on; \
-             pass --yes, or give the file a path"
-              .into(),
+    Command::Export { output, loose } => {
+      let file = session.export(!*loose)?;
+      let text = file.to_toml()?;
+      match output {
+        Some(path) => {
+          std::fs::write(path, &text).map_err(|e| Error::io("write the exported file", path, e))?;
+          reporter.note(format!(
+            "Exported {} package(s) to {}",
+            file.packages.len(),
+            path.display()
           ));
         }
-        let text = if file.as_os_str() == "-" {
-          let mut buffer = String::new();
-          std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
-            .map_err(|e| Error::io("read environment file", file, e))?;
-          buffer
-        } else {
-          std::fs::read_to_string(file).map_err(|e| Error::io("read environment file", file, e))?
-        };
-        let env_file =
-          luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
+        // Straight to stdout, so it can be piped or redirected.
+        None => print!("{text}"),
+      }
+    }
 
-        let plan = session.plan_import(&env_file)?;
-        let prunable = if *prune {
-          session.prune_candidates(&env_file)?
-        } else {
-          Vec::new()
-        };
-        if plan.is_blocked() || (plan.actionable().next().is_none() && prunable.is_empty()) {
-          reporter.install_plan(&plan);
-          if let Some(error) = plan.refusal() {
-            return Err(error);
-          }
-          reporter.note("Nothing to do; the environment already matches.");
-          return Ok(());
-        }
+    Command::Import { file, prune } => {
+      // Reading the file from stdin leaves nothing to ask the confirmation
+      // on: stdin is at EOF by the time the question is put, so a pipe is
+      // refused as non-interactive and a terminal reads an empty answer as
+      // no. Said here, before the file is read, rather than discovered
+      // after the work.
+      if file.as_os_str() == "-" && !global.yes {
+        return Err(Error::InvalidArgument(
+          "reading the file from stdin leaves nothing to confirm on; \
+             pass --yes, or give the file a path"
+            .into(),
+        ));
+      }
+      let text = if file.as_os_str() == "-" {
+        let mut buffer = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+          .map_err(|e| Error::io("read the file to import", file, e))?;
+        buffer
+      } else {
+        std::fs::read_to_string(file).map_err(|e| Error::io("read the file to import", file, e))?
+      };
+      let env_file = luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
 
-        if plan.actionable().next().is_some() {
-          reporter.install_preview(&plan);
+      let plan = session.plan_import(&env_file)?;
+      let prunable = if *prune {
+        session.prune_candidates(&env_file)?
+      } else {
+        Vec::new()
+      };
+      if plan.is_blocked() || (plan.actionable().next().is_none() && prunable.is_empty()) {
+        reporter.install_plan(&plan);
+        if let Some(error) = plan.refusal() {
+          return Err(error);
         }
-        if !prunable.is_empty() {
-          reporter.note("\nNot in the file, so removed:");
-          reporter.removal_preview(&session.plan_remove(&prunable)?);
-        }
-        if !confirm(global, "\nProceed?")? {
-          return Err(Error::Cancelled);
-        }
-
-        let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
-        let mut bar = BarProgress::new(show_progress);
-        let outcome = session.import_env(&env_file, *prune, &mut bar).await?;
-        reporter.import_outcome(&outcome);
+        reporter.note("Nothing to do; the installation already matches.");
+        return Ok(());
       }
 
-      _ => unreachable!("dispatched earlier"),
-    },
+      if plan.actionable().next().is_some() {
+        reporter.install_preview(&plan);
+      }
+      if !prunable.is_empty() {
+        reporter.note("\nNot in the file, so removed:");
+        reporter.removal_preview(&session.plan_remove(&prunable)?);
+      }
+      if !confirm(global, "\nProceed?")? {
+        return Err(Error::Cancelled);
+      }
+
+      let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
+      let mut bar = BarProgress::new(show_progress);
+      let outcome = session.import(&env_file, *prune, &mut bar).await?;
+      reporter.import_outcome(&outcome);
+    }
 
     Command::Refresh => {
       let outcomes = session.refresh().await?;
@@ -509,7 +464,7 @@ fn run_location(
     LocationCommand::Set { kind: raw, dir } => storage.set(kind(raw)?, dir)?,
     LocationCommand::Reset { kind: raw } => storage.reset(kind(raw)?)?,
     LocationCommand::SearchPath => {
-      reporter.activation(&storage.search_path()?);
+      reporter.search_path(&storage.search_path()?);
       return Ok(());
     }
   };
@@ -520,71 +475,5 @@ fn run_location(
        eval \"$(luthier location search-path)\"",
     );
   }
-  Ok(())
-}
-
-/// Environment management: prompts and rendering only. Every decision —
-/// what a valid name is, what "not there" means, which environment `path`
-/// defaults to — belongs to `api::Environments`.
-fn run_env(global: &GlobalArgs, command: &EnvCommand, reporter: &Reporter) -> Result<()> {
-  let envs = environments(global)?;
-
-  match command {
-    EnvCommand::List => {
-      reporter.envs(&envs.list()?);
-    }
-
-    EnvCommand::Create { name } => {
-      let name = envs.name(name)?;
-      let path = envs.create(&name)?;
-      reporter.note(format!("Created environment {name} at {}", path.display()));
-      reporter.note(format!(
-        "Activate it with: eval \"$(luthier env activate {name})\""
-      ));
-    }
-
-    EnvCommand::Remove { name } => {
-      let name = envs.name(name)?;
-      // Located first, so a typo is refused before anything is asked.
-      let path = envs.locate(&name)?;
-      if !confirm(
-        global,
-        &format!(
-          "Delete environment {name} and everything in {}?",
-          path.display()
-        ),
-      )? {
-        reporter.note("Cancelled.");
-        return Ok(());
-      }
-      let removed = envs.remove(&name)?;
-      reporter.note(format!("Removed {}", removed.display()));
-    }
-
-    EnvCommand::Activate { name } => {
-      let name = envs.name(name)?;
-      reporter.activation(&envs.activation(&name)?);
-    }
-
-    EnvCommand::Deactivate => {
-      reporter.deactivation(&envs.deactivation());
-    }
-
-    EnvCommand::Path { name } => {
-      let name = name.as_deref().map(|raw| envs.name(raw)).transpose()?;
-      reporter.path(&envs.path_of(name.as_ref())?);
-    }
-
-    // Both need a session, so `run` handles them before reaching here.
-    EnvCommand::Export { .. } | EnvCommand::Import { .. } => {
-      unreachable!("dispatched in run()")
-    }
-
-    EnvCommand::Show => match envs.active() {
-      Some((name, path)) => reporter.env_show(Some(name.as_str()), Some(&path)),
-      None => reporter.env_show(None, None),
-    },
-  }
-
   Ok(())
 }

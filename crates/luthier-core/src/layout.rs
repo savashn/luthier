@@ -7,7 +7,6 @@
 //! a temporary directory and there is then no code path that could reach the
 //! real `~/.clap`.
 
-use crate::env::EnvName;
 use luthier_manifest::Format;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -97,19 +96,13 @@ impl Locations {
 }
 
 /// Resolved filesystem locations for one installation.
-///
-/// An *environment* varies the per-installation parts — state, plugin roots,
-/// sample libraries — while leaving the shared parts alone. Registry snapshots
-/// and the artifact cache stay global on purpose: the cache is keyed by
-/// content hash, so sharing it means a second environment installing the same
-/// plugin re-extracts rather than re-downloads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
-  /// Managed data: registry snapshots, environments. `~/.local/share/luthier`.
+  /// Managed data: registry snapshots and state. `~/.local/share/luthier`.
   data: PathBuf,
-  /// Installation state for *this* environment.
+  /// Installation state.
   state: PathBuf,
-  /// Sample libraries and other non-plugin content for this environment.
+  /// Sample libraries and other non-plugin content.
   libraries: PathBuf,
   /// Re-fetchable data only. `~/.cache/luthier`.
   cache: PathBuf,
@@ -118,18 +111,13 @@ pub struct Layout {
   /// Where each plugin format is installed. Keyed by format so adding one is
   /// a data change rather than a new field.
   plugin_roots: BTreeMap<Format, PathBuf>,
-  /// Which environment this layout was redirected into, if any. Recorded so
-  /// an export can name its source; nothing resolves a path from it.
-  environment: Option<EnvName>,
   /// Read-only locations searched for software this manager does not install:
   /// distribution packages, vendor installers, or whatever a container image
   /// baked in. Never written to, never deleted from, and deliberately absent
   /// from [`Layout::is_managed_location`].
   system_roots: BTreeMap<Format, Vec<PathBuf>>,
   /// The user's choices this layout honours, kept so a command can refuse
-  /// when one of them is not there. Only what still applies: an environment
-  /// keeps its libraries and plugins inside itself, so redirecting into one
-  /// drops those two.
+  /// when one of them is not there.
   locations: Locations,
 }
 
@@ -162,18 +150,12 @@ impl Layout {
       cache: xdg("XDG_CACHE_HOME", ".cache").join("luthier"),
       config: xdg("XDG_CONFIG_HOME", ".config").join("luthier"),
       plugin_roots: Self::default_plugin_roots(&home),
-      environment: None,
       system_roots: Self::default_system_roots(),
       locations: Locations::default(),
     })
   }
 
   /// Moves the parts `locations` names to where it says.
-  ///
-  /// Applied to the base layout, before any environment redirect. An
-  /// environment is one directory that `env remove` deletes whole, so its
-  /// libraries and plugins stay inside it; the cache is shared by every
-  /// environment and moves for all of them.
   pub fn with_locations(mut self, locations: &Locations) -> Self {
     if let Some(cache) = &locations.cache {
       self.cache = cache.clone();
@@ -207,42 +189,6 @@ impl Layout {
       .collect()
   }
 
-  /// The standard layout, redirected into the environment named `name`.
-  ///
-  /// Plugin roots, state and libraries move under the environment; the
-  /// registry snapshots and the artifact cache do not.
-  pub fn for_env(name: &EnvName) -> Result<Self, LayoutError> {
-    let base = Self::from_env()?;
-    Ok(base.into_env(name))
-  }
-
-  /// Redirects this layout into an environment. Kept separate from
-  /// [`Layout::for_env`] so tests can build one over a temporary root.
-  pub fn into_env(self, name: &EnvName) -> Self {
-    let root = self.data.join("envs").join(name.as_str());
-    Self {
-      state: root.join("state"),
-      libraries: root.join("libraries"),
-      plugin_roots: Self::default_plugin_roots(&root),
-      environment: Some(name.clone()),
-      locations: Locations {
-        cache: self.locations.cache.clone(),
-        ..Locations::default()
-      },
-      ..self
-    }
-  }
-
-  /// The environment this layout points into, if it is not the default one.
-  pub fn environment(&self) -> Option<&EnvName> {
-    self.environment.as_ref()
-  }
-
-  /// Where environments live.
-  pub fn envs_dir(&self) -> PathBuf {
-    self.data.join("envs")
-  }
-
   /// A complete layout confined to `root`, for tests and `--root`.
   ///
   /// System roots are deliberately empty here. They are the one part of a
@@ -260,7 +206,6 @@ impl Layout {
       cache: root.join("cache/luthier"),
       config: root.join("config/luthier"),
       plugin_roots: Self::default_plugin_roots(root),
-      environment: None,
       system_roots: BTreeMap::new(),
       locations: Locations::default(),
     }
@@ -403,7 +348,7 @@ impl Layout {
     self.config.join("config.json")
   }
 
-  /// Directory holding installation state for this environment.
+  /// Directory holding installation state.
   pub fn state_dir(&self) -> PathBuf {
     self.state.clone()
   }
@@ -539,6 +484,56 @@ fn dedup_preserving_order(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     .into_iter()
     .filter(|p| seen.insert(p.clone()))
     .collect()
+}
+
+/// Shell variables that let hosts find plugins where this manager put them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SearchPath {
+  /// Variables to set, in a stable order.
+  pub set: Vec<(String, String)>,
+}
+
+/// What to export so hosts see plugins installed under a location the user
+/// chose, which no host searches on its own.
+///
+/// `home` is the layout before any location is applied: its plugin roots are
+/// the conventional `~/.clap`, `~/.vst3` and `~/.lv2`. Only LV2 needs it,
+/// because `LV2_PATH` replaces the default search path — setting it to the
+/// new root alone would hide every bundle in `~/.lv2` and `/usr/lib/lv2`.
+/// `CLAP_PATH` and `VST3_PATH` add to the conventional locations, so the new
+/// root is all they need.
+///
+/// Empty when plugins are where hosts already look.
+pub fn search_path(home: &Layout, located: &Layout) -> SearchPath {
+  let conventional = Layout::system_roots_from(|_| None);
+  let mut set = Vec::new();
+
+  for (format, var) in [
+    (Format::Lv2, "LV2_PATH"),
+    (Format::Clap, "CLAP_PATH"),
+    (Format::Vst3, "VST3_PATH"),
+  ] {
+    let Some(root) = located.plugin_root(&format) else {
+      continue;
+    };
+    let usual = home.plugin_root(&format);
+    if usual == Some(root) {
+      continue;
+    }
+    let mut paths = vec![root.to_path_buf()];
+    if format == Format::Lv2 {
+      paths.extend(usual.map(Path::to_path_buf));
+      paths.extend(conventional.get(&format).cloned().unwrap_or_default());
+    }
+    let joined = paths
+      .iter()
+      .map(|p| p.display().to_string())
+      .collect::<Vec<_>>()
+      .join(":");
+    set.push((var.to_owned(), joined));
+  }
+
+  SearchPath { set }
 }
 
 #[cfg(test)]
@@ -759,38 +754,40 @@ mod tests {
   }
 
   #[test]
-  fn an_environment_keeps_the_chosen_cache_and_nothing_else() {
-    // `env remove` deletes an environment's directory whole, so its plugins
-    // and libraries must live inside it; the cache is shared by design.
+  fn chosen_locations_move_what_they_name() {
     let locations = Locations {
       cache: Some("/mnt/ext/cache".into()),
       libraries: Some("/mnt/ext/samples".into()),
       plugins: Some("/mnt/ext/plugins".into()),
     };
     let layout = Layout::rooted_at("/home/u").with_locations(&locations);
+    assert_eq!(layout.cache_dir(), Path::new("/mnt/ext/cache"));
     assert_eq!(layout.library_root(), Path::new("/mnt/ext/samples"));
     assert_eq!(
       layout.plugin_root(&Format::Clap).unwrap(),
       Path::new("/mnt/ext/plugins/clap")
     );
     assert!(layout.is_managed_location(Path::new("/mnt/ext/samples/vsco2")));
+  }
 
-    let env = layout.into_env(&EnvName::new("mixing").unwrap());
-    assert_eq!(env.cache_dir(), Path::new("/mnt/ext/cache"));
+  #[test]
+  fn a_relocated_plugin_root_is_put_on_the_search_path() {
+    let home = Layout::rooted_at("/home/u");
+    assert!(search_path(&home, &home).set.is_empty());
+
+    let located = home.clone().with_locations(&Locations {
+      plugins: Some("/mnt/ext/plugins".into()),
+      ..Locations::default()
+    });
+    let set: BTreeMap<String, String> = search_path(&home, &located).set.into_iter().collect();
+    assert_eq!(set["CLAP_PATH"], "/mnt/ext/plugins/clap");
+    assert_eq!(set["VST3_PATH"], "/mnt/ext/plugins/vst3");
+    // LV2_PATH replaces a host's default, so ~/.lv2 is listed again.
     assert!(
-      env
-        .library_root()
-        .starts_with("/home/u/share/luthier/envs/mixing")
+      set["LV2_PATH"].starts_with("/mnt/ext/plugins/lv2:/home/u/.lv2:"),
+      "{}",
+      set["LV2_PATH"]
     );
-    assert!(
-      env
-        .plugin_root(&Format::Clap)
-        .unwrap()
-        .starts_with("/home/u/share/luthier/envs/mixing")
-    );
-    // And only what still applies is required to be present.
-    let required: Vec<_> = env.locations().configured().map(|(k, _)| k).collect();
-    assert_eq!(required, vec![LocationKind::Cache]);
   }
 
   #[test]

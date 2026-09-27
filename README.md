@@ -6,7 +6,6 @@
   - [First steps](#first-steps)
 - [Use](#use)
 - [Where things go](#where-things-go)
-- [Environments](#environments)
 - [Moving a setup to another machine](#moving-a-setup-to-another-machine)
 - [Nix and Home Manager](#nix-and-home-manager)
 - [Documentation](#documentation)
@@ -19,8 +18,8 @@ registry and from a small curated bench in this repository.
 
 <a href="https://github.com/open-audio-stack"><img src="https://raw.githubusercontent.com/open-audio-stack/open-audio-stack-registry/refs/heads/main/src/assets/powered-by-open-audio-stack.svg" alt="Powered by Open Audio Stack"></a>
 
-A whole setup can be written to a file with `luthier env export` and rebuilt,
-version for version, on another machine with `luthier env import`. Plugins land
+A whole setup can be written to a file with `luthier export` and rebuilt,
+version for version, on another machine with `luthier import`. Plugins land
 in the directories hosts already scan (`~/.clap`, `~/.vst3`, `~/.lv2`) rather
 than in a folder of Luthier's own, and nothing is ever run to install them.
 
@@ -185,15 +184,8 @@ luthier bench list              # where packages come from, in precedence order
 
 luthier completions <shell>     # bash, elvish, fish, powershell or zsh
 
-luthier env create <name>       # a separate set of installed software
-luthier env list
-luthier env activate <name>     # prints the exports; see below
-luthier env deactivate          # prints the exports that undo it
-luthier env show                # which environment is in use
-luthier env path [name]         # where an environment lives
-luthier env remove <name>
-luthier env export              # write this installation to a portable file
-luthier env import <file>       # rebuild it somewhere else
+luthier export                  # write this installation to a portable file
+luthier import <file>           # rebuild it somewhere else
 ```
 
 Add `--json` to any read-only command for machine-readable output, `-v` for
@@ -243,48 +235,21 @@ warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or 
 `--root <dir>` confines all of these to one directory, which is how the test
 suite avoids ever touching a real plugin directory.
 
-## Environments
-
-An environment is a named set of installed software: its own plugin
-directories, its own state, its own libraries. Registry snapshots and the
-downloaded-artifact cache stay shared, so a second environment installing the
-same plugin re-extracts from cache rather than downloading again.
-
-```console
-$ luthier env create mixing
-$ eval "$(luthier env activate mixing)"
-$ luthier install surge             # lands in the environment
-$ luthier env deactivate
-```
-
-Activation exports `LUTHIER_ENV`, which the manager reads, and the three
-plugin search-path variables, which hosts read. `--env <name>` does the same
-for a single command without touching the shell.
-
 ## Moving a setup to another machine
 
 ```console
-$ luthier env export -o studio.toml       # on the old machine
-$ luthier env import studio.toml          # on the new one
+$ luthier export -o studio.toml       # on the old machine
+$ luthier import studio.toml          # on the new one
 ```
 
 The file pins the exact version of every package, including the ones that
 arrived as dependencies, so the import reproduces the set rather than
 installing whatever is newest. `--loose` records names without versions when
 that is what you want instead. It records no paths: where things land is the
-receiving machine's business.
+receiving machine's business. `luthier import --prune` also removes whatever
+the file does not list, so the installation ends up exactly as described.
 
-See [Environments](docs/ENVIRONMENTS.md) for the format.
-
-There is no "current environment" file. A stored pointer would let one terminal
-change what another is about to install into, so selection lives in the
-environment, as it does for a virtualenv.
-
-One asymmetry is worth knowing, because it comes from the formats rather than
-from this tool. `LV2_PATH` *replaces* a host's default search path, so an
-environment can fully determine which LV2 bundles a host sees. `CLAP_PATH` and
-`VST3_PATH` only *extend* the standard locations, so `~/.clap` and `~/.vst3`
-stay visible alongside the environment's own.
+See [Export and import](docs/EXPORT.md) for the format.
 
 ## Nix and Home Manager
 
@@ -306,7 +271,6 @@ programs.luthier = {
     "lsp-plugins"
     { id = "dragonfly-reverb"; version = "3.2.10"; }
   ];
-  environments.drums.packages = [ "drskit" ];
   prune = true;   # remove whatever is not listed
 };
 ```
@@ -316,7 +280,7 @@ content, and Luthier finds engines installed from nixpkgs in your profiles. See
 [Nix and Home Manager](docs/NIX.md) for every option.
 
 Without Home Manager, `nix run github:savashn/luthier -- search reverb` runs it
-once, and `luthier env import --prune <file>` makes an installation match a
+once, and `luthier import --prune <file>` makes an installation match a
 file on any system.
 
 ## Documentation
@@ -324,7 +288,7 @@ file on any system.
 - [Roadmap](ROADMAP.md) — what is next, and what is deliberately out of scope
 - [Changelog](CHANGELOG.md) — what changed, release by release
 - [Architecture](docs/ARCHITECTURE.md) — how the pieces fit together
-- [Environments](docs/ENVIRONMENTS.md) — export, import and reproducing a setup
+- [Export and import](docs/EXPORT.md) — reproducing a setup on another machine
 - [Nix and Home Manager](docs/NIX.md) — `programs.luthier`, and the flake
 - [Security model](SECURITY.md) — what is trusted, and what is not
 - [Manifest format](docs/MANIFEST.md) — the package schema

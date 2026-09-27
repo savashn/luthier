@@ -503,7 +503,7 @@ pub enum ResolveError {
   /// An imported environment file named a version the registry cannot
   /// supply. Falling back to another version would defeat the point of a
   /// pinned export, so this is fatal (§51).
-  #[error("{id} {version} is not in the registry, so the environment cannot be reproduced")]
+  #[error("{id} {version} is not in the registry, so the exported set cannot be reproduced")]
   RequiredVersionMissing { id: PackageId, version: Version },
 
   #[error("{id} is pinned to {pinned} but {requirer} needs {req}")]

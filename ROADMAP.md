@@ -9,9 +9,10 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 410 tests, fully offline. `refresh`, `search`, `info`, `install`,
-`list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
-and `env export`/`env import` all work end to end against real packages.
+Four crates, 403 tests, fully offline. `refresh`, `search`, `info`, `install`,
+`list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, and
+`export`/`import` all work end to end against real packages. Named
+environments existed until 0.2 and were removed; see *Deliberate ceilings*.
 
 CLAP, VST3, LV2 and sample libraries install, from `.tar.gz`, `.tar.xz`,
 `.zip` and `.7z`, on Linux x86_64. Manifests are TOML; every package carries
@@ -364,18 +365,18 @@ the README's claims match what the registry actually carries.
 This is the use the whole design points at, so it is recorded as work rather
 than as an aspiration.
 
-`env export` and `env import` are already the declarative half: a file that
+`export` and `import` are already the declarative half: a file that
 pins every version, and a command that installs what it names. What is missing
 is *convergence*. Import is additive — it installs what the file lists and
 leaves everything else alone — so the file describes a lower bound on the
-environment rather than the environment itself. A declaration has to be able
+installation rather than the installation itself. A declaration has to be able
 to say what is not there, or applying it twice from different starting points
 gives two different machines.
 
-**Done when:** ~~`env import --prune` removes packages the file does not name,
-and importing the same file into the resulting environment reports no work~~.
-Done: a dependency survives as long as something named needs it, and with
-`--prune` a file naming nothing empties the environment.
+**Done when:** ~~`import --prune` removes packages the file does not name,
+and importing the same file again reports no work~~. Done: a dependency
+survives as long as something named needs it, and with `--prune` a file
+naming nothing removes everything.
 
 Then the Nix-facing work, in order of what unblocks what:
 
@@ -384,9 +385,9 @@ Then the Nix-facing work, in order of what unblocks what:
    Upstreaming it to nixpkgs is still open, and would let a user without the
    flake input have it.
 2. **A Home Manager module — done.** `programs.luthier` (`nix/hm-module.nix`,
-   documented in `docs/NIX.md`) writes an environment file per declared
-   environment and applies it during activation with `env import`, `--prune`
-   when asked, after `refresh` and `location set`. It runs luthier rather than
+   documented in `docs/NIX.md`) writes the declared packages to a file in
+   the export format and applies it during activation with `import`,
+   `--prune` when asked, after `refresh` and `location set`. It runs luthier rather than
    building plugins as derivations, so there is one implementation of
    verification and placement; a failure warns rather than failing the
    switch. Tested against real Home Manager: install, a second switch doing
@@ -425,7 +426,7 @@ nothing done before this point makes it harder. Linux first is a scope
 decision, not an architectural one.
 
 **Done when:** `luthier install` works on macOS with the same manifests, and
-`env import` reproduces a set across the two — the point at which the vision
+`import` reproduces a set across the two — the point at which the vision
 document's "even to a different operating system" becomes true.
 
 ---
@@ -462,6 +463,17 @@ removed: every source is one more publisher whose manifests can decide what
 lands in a user's plugin directories, and one more host to trust, for
 a need that contributing to OAS already meets.
 
+**No environments.** 0.2 had named environments — `luthier env`, `--env`,
+`LUTHIER_ENV` — and 0.3 removed them. Hosts see an environment's plugins
+through `CLAP_PATH`, `VST3_PATH` and `LV2_PATH`, and the first two add to the
+standard locations instead of replacing them, so CLAP and VST3 were never
+isolated; the variables reach only a host started from that shell, not one
+opened from a menu; and each environment kept its own copy of every sample
+library. Plugins, presets and samples are not things a musician needs isolated
+from each other. What environments were for — a set that stays put, and the
+same set on another machine — is `export`, `import --prune`, pins and the Home
+Manager module.
+
 **No system-wide installation.** Everything is user-local; root is never
 required and system directories are never written to. They are read to detect
 `external` packages and are deliberately excluded from
@@ -473,15 +485,10 @@ required and system directories are never written to. They are read to detect
 
 Things without an answer yet, recorded so they are not mistaken for oversights.
 
-**How does an environment file handle a package that has left the registry?**
+**How does an exported file handle a package that has left the registry?**
 Import currently fails, which is right for reproducibility and unhelpful when a
 project simply moved. A `--skip-missing` flag is the obvious answer; whether it
 should also record what it skipped is not settled.
-
-**Should libraries be shared between environments?** They are per-environment
-today, which duplicates multi-gigabyte content. Hardlinking from a shared
-content-addressed store needs no format change and is the obvious optimisation,
-but it interacts with `verify` in ways that need thinking through.
 
 **What is the update story for a `pack`?** A pack resolves to dependencies, so
 updating one means updating its members — but a pack's own version bump and its

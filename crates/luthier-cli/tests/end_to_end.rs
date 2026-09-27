@@ -39,10 +39,6 @@ impl Fixture {
     self.root().join(".vst3")
   }
 
-  fn env_dir(&self, name: &str) -> PathBuf {
-    self.root().join("share/luthier/envs").join(name)
-  }
-
   /// A `.tar.gz` holding a directory of sample content.
   fn make_library_artifact(&self, name: &str) -> Artifact {
     let mut builder = tar::Builder::new(Vec::new());
@@ -1048,100 +1044,34 @@ fn a_library_with_no_rules_installs_under_its_package_id() {
 }
 
 #[test]
-fn environments_hold_separate_sets_of_packages() {
+fn there_are_no_environments_any_more() {
+  // 0.2 had `env create`, `--env` and LUTHIER_ENV. A plugin set is not
+  // isolated by a search path hosts only half honour, and a setup is
+  // reproduced by `export` and `import`, so they went.
   let fixture = Fixture::new();
-  let artifact = fixture.make_artifact("Dexed");
-  fixture.add_plugin("dexed", "1.0.1", &artifact, &[]);
-
-  fixture
-    .luthier()
-    .args(["env", "create", "mixing"])
-    .assert()
-    .success();
-
-  // Installing into the environment must not touch the default roots.
-  fixture
-    .luthier()
-    .args(["--env", "mixing", "install", "dexed"])
-    .assert()
-    .success();
-
-  assert!(fixture.env_dir("mixing").join(".clap/Dexed.clap").is_file());
-  assert!(!fixture.clap_dir().join("Dexed.clap").exists());
-
-  // And the default environment still reports nothing installed.
-  let listed = fixture.luthier().arg("list").assert().success();
-  assert!(stdout_of(listed.get_output()).contains("No packages installed"));
-
-  let in_env = fixture
-    .luthier()
-    .args(["--env", "mixing", "list"])
-    .assert()
-    .success();
-  assert!(stdout_of(in_env.get_output()).contains("Dexed"));
-}
-
-#[test]
-fn installing_into_an_environment_that_does_not_exist_is_refused() {
-  // A typo must not silently create a second environment and install there.
-  let fixture = Fixture::new();
-  let artifact = fixture.make_artifact("Dexed");
-  fixture.add_plugin("dexed", "1.0.1", &artifact, &[]);
-
+  for command in [
+    vec!["env", "create", "mixing"],
+    vec!["env", "export"],
+    vec!["--env", "mixing", "list"],
+  ] {
+    let output = fixture.luthier().args(&command).output().unwrap();
+    assert!(!output.status.success(), "{command:?}");
+  }
+  // An environment selected in the shell is not honoured either.
   let output = fixture
     .luthier()
-    .args(["--env", "mixnig", "install", "dexed"])
-    .assert()
-    .failure();
-  let text = String::from_utf8_lossy(&output.get_output().stderr).to_string();
-  assert!(text.contains("no environment named mixnig"), "{text}");
+    .env("LUTHIER_ENV", "mixing")
+    .arg("list")
+    .output()
+    .unwrap();
+  assert!(output.status.success());
+  assert!(stdout_of(&output).contains("No packages installed"));
 }
 
-#[test]
-fn an_environment_name_cannot_point_outside_the_layout() {
-  let fixture = Fixture::new();
-  for hostile in ["../escape", "..", "/etc"] {
-    fixture
-      .luthier()
-      .args(["env", "create", hostile])
-      .assert()
-      .failure();
-  }
-  assert!(!fixture.root().parent().unwrap().join("escape").exists());
-}
-
-#[test]
-fn activation_exports_the_environments_search_paths() {
-  let fixture = Fixture::new();
-  fixture
-    .luthier()
-    .args(["env", "create", "mixing"])
-    .assert()
-    .success();
-
-  let output = fixture
-    .luthier()
-    .args(["env", "activate", "mixing"])
-    .assert()
-    .success();
-  let script = stdout_of(output.get_output());
-
-  // Every line has to be evaluable: a stray status line would be executed.
-  for line in script.lines().filter(|l| !l.trim().is_empty()) {
-    assert!(line.starts_with("export "), "not evaluable: {line:?}");
-  }
-  assert!(script.contains("export LUTHIER_ENV=\"mixing\""), "{script}");
-  assert!(script.contains("envs/mixing/.lv2"), "{script}");
-  assert!(script.contains("envs/mixing/.clap"), "{script}");
-  // LV2_PATH replaces the default path, so the system directories must be
-  // named explicitly or they stop being visible.
-  assert!(script.contains("/usr/lib/lv2"), "{script}");
-}
-
-/// §51: an exported environment reproduces an installation somewhere else,
+/// §51: an export reproduces an installation somewhere else,
 /// which is the whole reason the file records versions rather than names.
 #[test]
-fn an_exported_environment_reproduces_the_same_set_elsewhere() {
+fn an_export_reproduces_the_same_set_elsewhere() {
   let source = Fixture::new();
   let one = source.make_artifact("One");
   let two = source.make_artifact("Two");
@@ -1151,7 +1081,7 @@ fn an_exported_environment_reproduces_the_same_set_elsewhere() {
   source.add_plugin("one", "1.0.0", &one, &["two"]);
   source.luthier().args(["install", "one"]).assert().success();
 
-  let exported = stdout_of(&source.luthier().args(["env", "export"]).output().unwrap());
+  let exported = stdout_of(&source.luthier().args(["export"]).output().unwrap());
   assert!(exported.contains("pinned = true"), "{exported}");
   assert!(exported.contains(r#"id = "two""#), "{exported}");
   assert!(exported.contains(r#"reason = "dependency""#), "{exported}");
@@ -1170,7 +1100,7 @@ fn an_exported_environment_reproduces_the_same_set_elsewhere() {
 
   target
     .luthier()
-    .args(["env", "import"])
+    .args(["import"])
     .arg(&file)
     .assert()
     .success();
@@ -1205,7 +1135,7 @@ fn a_loose_export_omits_versions() {
   let exported = stdout_of(
     &fixture
       .luthier()
-      .args(["env", "export", "--loose"])
+      .args(["export", "--loose"])
       .output()
       .unwrap(),
   );
@@ -1241,7 +1171,7 @@ fn an_import_refuses_a_version_the_registry_no_longer_has() {
 
   let output = fixture
     .luthier()
-    .args(["env", "import"])
+    .args(["import"])
     .arg(&file)
     .output()
     .unwrap();
@@ -1281,8 +1211,8 @@ fn loose_env_file(fixture: &Fixture, ids: &[&str]) -> PathBuf {
 #[test]
 fn an_import_with_prune_converges_on_the_file() {
   // Without --prune an import only adds, so the file is a lower bound on
-  // the environment. A declaration — the Home Manager module is one — needs
-  // it to be the environment: what it does not name, and nothing it names
+  // the installation. A declaration — the Home Manager module is one — needs
+  // it to be the installation: what it does not name, and nothing it names
   // needs, goes.
   let fixture = Fixture::new();
   for (id, deps) in [
@@ -1305,7 +1235,7 @@ fn an_import_with_prune_converges_on_the_file() {
   let file = loose_env_file(&fixture, &["one", "three"]);
   fixture
     .luthier()
-    .args(["env", "import"])
+    .args(["import"])
     .arg(&file)
     .assert()
     .success();
@@ -1315,7 +1245,7 @@ fn an_import_with_prune_converges_on_the_file() {
   // needed it.
   fixture
     .luthier()
-    .args(["env", "import", "--prune"])
+    .args(["import", "--prune"])
     .arg(&file)
     .assert()
     .success();
@@ -1326,7 +1256,7 @@ fn an_import_with_prune_converges_on_the_file() {
   // Applying it again is no work at all.
   let again = fixture
     .luthier()
-    .args(["env", "import", "--prune"])
+    .args(["import", "--prune"])
     .arg(&file)
     .output()
     .unwrap();
@@ -1343,18 +1273,18 @@ fn an_import_with_prune_converges_on_the_file() {
   let file = loose_env_file(&fixture, &["host"]);
   fixture
     .luthier()
-    .args(["env", "import", "--prune"])
+    .args(["import", "--prune"])
     .arg(&file)
     .assert()
     .success();
   assert_eq!(installed(&fixture), ["base", "host"]);
 
-  // A file naming nothing empties the environment with --prune, and is
+  // A file naming nothing removes everything with --prune, and is
   // refused as pointless without it.
   let empty = loose_env_file(&fixture, &[]);
   fixture
     .luthier()
-    .args(["env", "import", "--prune"])
+    .args(["import", "--prune"])
     .arg(&empty)
     .assert()
     .success();
