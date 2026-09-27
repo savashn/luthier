@@ -600,11 +600,18 @@ mod tests {
 
   #[test]
   fn lib64_is_a_system_root_too() {
-    // Fedora's `dnf install sfizz` puts it in /usr/lib64/lv2, and detection
-    // that did not look there called it absent.
+    // Fedora installs an LV2 plugin from `dnf` in /usr/lib64/lv2, and
+    // detection that did not look there called it absent.
     let roots = Layout::system_roots_from(env(&[]));
-    for (format, dir) in [(Format::Clap, "clap"), (Format::Vst3, "vst3"), (Format::Lv2, "lv2")] {
-      for expected in [format!("/usr/lib64/{dir}"), format!("/usr/local/lib64/{dir}")] {
+    for (format, dir) in [
+      (Format::Clap, "clap"),
+      (Format::Vst3, "vst3"),
+      (Format::Lv2, "lv2"),
+    ] {
+      for expected in [
+        format!("/usr/lib64/{dir}"),
+        format!("/usr/local/lib64/{dir}"),
+      ] {
         assert!(
           roots[&format].contains(&PathBuf::from(&expected)),
           "{format} is missing {expected}: {:?}",
