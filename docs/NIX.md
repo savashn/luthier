@@ -213,6 +213,11 @@ home, so the module sets `CLAP_PATH`, `VST3_PATH` and `LV2_PATH` for your
 session (`setSearchPath`). Log out and back in, or start a new login shell,
 for hosts to see them.
 
+A DAW installed from Flathub sees neither a directory outside your home nor
+all of these variables; see
+[DAWs installed from Flathub](../README.md#daws-installed-from-flathub) for the
+`flatpak override` that grants both.
+
 `null`, the default, leaves a location as it is — including one you set by
 hand with `luthier location set`.
 

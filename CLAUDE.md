@@ -190,6 +190,15 @@ the crate map keeps that out of `luthier-manifest`.
   sandbox has no CA store, and building it up front panicked every test that
   only read `file://`. `nix/package.nix` adds `cacert` for the suite's local
   HTTP server.
+- **Flathub DAWs were tested in Docker, not on the host.** A privileged
+  `fedora` container with `flatpak`, a non-root user (`runuser`), Ardour from
+  Flathub, and plugins installed with luthier. Inside the sandbox:
+  `ardour9-lua` lists plugins only after
+  `AudioEngine:set_backend("None (Dummy)", "", "")` and `AudioEngine:start(false)`
+  (without them `list_plugins()` segfaults, and reading `PluginInfo.type`
+  aborts — use `unique_id`); `/app/lib/ardour9/ardour-vst3-scanner -f <bundle>`
+  loads a VST3 given `LD_LIBRARY_PATH=/app/lib/ardour9`. The findings are in
+  the README's Flathub section.
 - **Nothing is signed, by decision.** The bench is trusted on HTTPS and
   GitHub, as the binary is; `SECURITY.md` *Trusting GitHub* states the risk.
   0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both
