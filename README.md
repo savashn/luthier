@@ -104,14 +104,11 @@ it with:
 
 ```console
 $ curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
-$ curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz.sha256
-$ sha256sum -c luthier-x86_64-linux.tar.gz.sha256
 $ tar xzf luthier-x86_64-linux.tar.gz
 $ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
 ```
 
-`sha256sum -c` should print `OK`. Nothing needs root, and nothing else needs
-installing.
+Nothing needs root, and nothing else needs installing.
 
 If `luthier --version` then says the command is not found, `~/.local/bin` is
 not on your `PATH`. Add it once, to `~/.bashrc` or `~/.zshrc` depending on
@@ -121,10 +118,10 @@ your shell, and open a new terminal:
 $ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
-Check the checksum rather than skipping it. A manager whose whole job is
-verifying what it downloads should be worth the same courtesy.
-
-With the [GitHub CLI](https://cli.github.com), you can also check that the
+To check the download, compare `sha256sum luthier-x86_64-linux.tar.gz` with
+the SHA-256 GitHub shows beside the file on the
+[release page](https://github.com/savashn/luthier/releases/latest). With the
+[GitHub CLI](https://cli.github.com), one command checks both that and that the
 tarball was built by this repository's release workflow, from which commit:
 
 ```console

@@ -3,7 +3,9 @@
 # The people this manager is for are musicians, and `cargo build --release`
 # with a Rust 1.89 toolchain is not an install method for them (ROADMAP 0.3).
 # What this publishes is one statically linked binary that runs on any x86_64
-# Linux, whatever its glibc, plus the checksum to check it against.
+# Linux, whatever its glibc. No checksum file goes beside it: GitHub
+# publishes every asset's SHA-256 on the release itself, and the build
+# provenance attestation covers the rest.
 name: release
 
 on:
@@ -113,8 +115,7 @@ jobs:
           done
           cp LICENSE README.md CHANGELOG.md SECURITY.md "$dir/"
           tar czf "$ASSET" "$dir"
-          sha256sum "$ASSET" > "$ASSET.sha256"
-          cat "$ASSET.sha256"
+          sha256sum "$ASSET"
 
       # `bench` as the single top-level entry, which is the shape
       # `unwrap_single_root` was written for: the snapshot's paths then stay
@@ -122,8 +123,7 @@ jobs:
       - name: Package the bench
         run: |
           tar czf "$BENCH_ASSET" bench
-          sha256sum "$BENCH_ASSET" > "$BENCH_ASSET.sha256"
-          cat "$BENCH_ASSET.sha256"
+          sha256sum "$BENCH_ASSET"
 
       # Build provenance, the standard way for a release on this forge to
       # say where its files came from. Signed through Sigstore with the
@@ -171,14 +171,11 @@ jobs:
             fi
             # A draft left by an earlier, half-finished run is completed.
             gh release edit "$tag" --notes-file notes.md
-            gh release upload "$tag" \
-              "$ASSET" "$ASSET.sha256" \
-              "$BENCH_ASSET" "$BENCH_ASSET.sha256" --clobber
+            gh release upload "$tag" "$ASSET" "$BENCH_ASSET" --clobber
             gh release edit "$tag" --draft=false
           else
             gh release create "$tag" \
               --title "luthier $tag" \
               --notes-file notes.md \
-              "$ASSET" "$ASSET.sha256" \
-              "$BENCH_ASSET" "$BENCH_ASSET.sha256"
+              "$ASSET" "$BENCH_ASSET"
           fi

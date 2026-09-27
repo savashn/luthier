@@ -13,6 +13,14 @@ schema is versioned separately (`schema = 1`) and an older client is expected
 to read a newer registry without installing from a category it cannot reason
 about.
 
+## [Unreleased]
+
+### Removed
+
+- **The `.sha256` files beside release assets.** GitHub shows every asset's
+  SHA-256 on the release page, and `gh attestation verify` checks it along
+  with where the file was built.
+
 ## [0.2.0] — 2026-09-27
 
 ### Added
@@ -147,5 +155,6 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
+[Unreleased]: https://github.com/savashn/luthier/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/savashn/luthier/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/savashn/luthier/releases/tag/v0.1.0

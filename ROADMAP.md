@@ -106,7 +106,8 @@ tool is for are musicians.
 The machinery for this exists: `.github/workflows/release.yml` builds a
 statically linked musl binary on a `v*` tag, asserts it really is static
 rather than trusting the target triple, packages it with the man page and
-completions the binary generates itself, and publishes it with its SHA-256
+completions the binary generates itself, and publishes it — with a build
+provenance attestation, and the SHA-256 GitHub shows for every asset —
 under a versionless asset name so the README can name a `releases/latest`
 URL that stays correct. Release notes come from `CHANGELOG.md`, and the job
 refuses a tag that disagrees with the workspace version. The README's install
