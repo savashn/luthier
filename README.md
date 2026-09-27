@@ -42,11 +42,12 @@ never required and system directories are never written to. Distribution and
 container-provided plugins are detected in the conventional system search paths
 (and whatever `CLAP_PATH`, `VST3_PATH` and `LV2_PATH` name), never modified.
 
-Registry metadata is checked as well as package archives. A bench that starts
-answering from a different host is refused, and one that publishes an Ed25519
-signature has it verified before the snapshot is ever opened — with the key
-pinned on first use, so a bench that quietly stops signing is noticed too.
-See [SECURITY.md](SECURITY.md).
+Packages come from exactly two places: the Open Audio Stack registry, and the
+bench in this repository, which corrects it where it needs correcting. There is
+no way to add a third. Both are fetched over HTTPS and trusted on the strength
+of the hosts that serve them — for the bench, this repository's GitHub
+releases, the same place the binary comes from. See [SECURITY.md](SECURITY.md)
+for what that does and does not protect against.
 
 ## What it will not do, and why some plugins are missing
 
@@ -101,6 +102,13 @@ $ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
 Check the checksum rather than skipping it. A manager whose whole job is
 verifying what it downloads should be worth the same courtesy.
 
+With the [GitHub CLI](https://cli.github.com), you can also check that the
+tarball was built by this repository's release workflow, from which commit:
+
+```console
+$ gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+```
+
 The tarball also carries the man page and shell completions, which the binary
 generates itself:
 
@@ -135,11 +143,7 @@ luthier unpin <package>         # let it be updated again
 luthier cache list              # what the download cache holds
 luthier cache clean             # delete archives nothing installed needs
 
-luthier bench list              # registries, in the order they are consulted
-luthier bench add <name> <url|path>
-luthier bench remove <name>
-luthier bench trust <name> <key>   # require a signing key for a bench
-luthier bench untrust <name> [key]
+luthier bench list              # where packages come from, in precedence order
 
 luthier completions <shell>     # bash, elvish, fish, powershell or zsh
 
@@ -163,13 +167,9 @@ Anything that deletes or installs asks first. In a script, `--yes` answers;
 have files removed. Without a terminal to ask on, such a command refuses rather
 than assuming.
 
-Benches are consulted in the order `bench list` prints, and the first to carry
-a package ID keeps it — which is how a curated manifest corrects a derived one.
-`bench add` appends rather than prepends, so a new bench cannot start
-overriding an existing one without being asked to. A bench that has begun
-answering from a different host than the one it was first fetched from is
-refused rather than believed: the checksums it carries are what every artifact
-is verified against.
+The bench is consulted before the Open Audio Stack registry, and the first to
+carry a package ID keeps it — which is how a curated manifest corrects a
+derived one.
 
 `--root <dir>` confines what is *written*; the system search paths govern what
 is *seen*. They are separate: a rooted install still counts a
@@ -187,12 +187,6 @@ warning: nothing on this system can play crocellkit's DrumGizmo content. Any one
   drumgizmo   Install from your distribution, for example `apt install drumgizmo` …
   drumcraker  luthier install drumcraker
 error: not installing crocellkit: nothing on this system can play its DrumGizmo content
-```
-
-Until the first release is published, point at the bench in this checkout:
-
-```console
-$ luthier --registry-path bench search synth
 ```
 
 ## Where things go
