@@ -1,5 +1,16 @@
 # Luthier
 
+- [Status](#status)
+- [What it will not do, and why some plugins are missing](#what-it-will-not-do-and-why-some-plugins-are-missing)
+- [Install](#install)
+  - [First steps](#first-steps)
+- [Use](#use)
+- [Where things go](#where-things-go)
+- [Environments](#environments)
+- [Moving a setup to another machine](#moving-a-setup-to-another-machine)
+- [Documentation](#documentation)
+- [Licence](#licence)
+
 A command-line package manager for Linux audio software: CLAP, VST3 and LV2
 plugins, and the sample libraries that play in them. Packages come from the
 [Open Audio Stack](https://github.com/open-audio-stack/open-audio-stack-registry)
@@ -99,6 +110,17 @@ $ tar xzf luthier-x86_64-linux.tar.gz
 $ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
 ```
 
+`sha256sum -c` should print `OK`. Nothing needs root, and nothing else needs
+installing.
+
+If `luthier --version` then says the command is not found, `~/.local/bin` is
+not on your `PATH`. Add it once, to `~/.bashrc` or `~/.zshrc` depending on
+your shell, and open a new terminal:
+
+```console
+$ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+```
+
 Check the checksum rather than skipping it. A manager whose whole job is
 verifying what it downloads should be worth the same courtesy.
 
@@ -123,6 +145,24 @@ From source, with a Rust 1.89 or newer toolchain:
 $ cargo build --release
 $ install -Dm755 target/release/luthier ~/.local/bin/luthier
 ```
+
+### First steps
+
+Fetch the package lists first; nothing can be found or installed until this
+has run once:
+
+```console
+$ luthier refresh
+$ luthier search reverb
+$ luthier install dragonfly-reverb
+$ luthier list
+```
+
+Plugins land in `~/.clap`, `~/.vst3` and `~/.lv2`, which hosts already scan:
+restart your DAW, or ask it to rescan, and they appear. Anything that installs
+or deletes shows what it will do and asks first. Run `luthier refresh` again
+now and then to see new packages and versions, and `luthier update` to see
+what can be upgraded.
 
 ## Use
 
