@@ -271,7 +271,12 @@ impl Layout {
       let mut conventional = vec![
         PathBuf::from("/usr/lib").join(dir),
         PathBuf::from("/usr/local/lib").join(dir),
+        // Debian and Ubuntu.
         PathBuf::from("/usr/lib").join(multiarch).join(dir),
+        // Fedora, openSUSE and the rest of the RPM world, which put 64-bit
+        // plugins here and leave /usr/lib to 32-bit ones.
+        PathBuf::from("/usr/lib64").join(dir),
+        PathBuf::from("/usr/local/lib64").join(dir),
         // NixOS has no /usr/lib: the system profile, and each user's
         // profile — the classic one, the XDG one newer Nix uses, and the
         // per-user one Home Manager's `useUserPackages` fills — are where
@@ -590,6 +595,22 @@ mod tests {
         !layout.is_managed_location(&root.join("Anything.lv2")),
         "a file under {root:?} counted as managed"
       );
+    }
+  }
+
+  #[test]
+  fn lib64_is_a_system_root_too() {
+    // Fedora's `dnf install sfizz` puts it in /usr/lib64/lv2, and detection
+    // that did not look there called it absent.
+    let roots = Layout::system_roots_from(env(&[]));
+    for (format, dir) in [(Format::Clap, "clap"), (Format::Vst3, "vst3"), (Format::Lv2, "lv2")] {
+      for expected in [format!("/usr/lib64/{dir}"), format!("/usr/local/lib64/{dir}")] {
+        assert!(
+          roots[&format].contains(&PathBuf::from(&expected)),
+          "{format} is missing {expected}: {:?}",
+          roots[&format]
+        );
+      }
     }
   }
 

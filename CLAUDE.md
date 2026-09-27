@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 403 tests, fully offline
+cargo test --workspace                     # 404 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -308,7 +308,8 @@ hardened extractor.
 
 LV2 and sample libraries install; 7z extracts; a bare CLAP or SoundFont installs; tar hard links are materialised
 as copies; `external` detection searches the system plugin directories as well
-as the managed roots, including the Nix profiles.
+as the managed roots: `/usr/lib`, the Debian multiarch directory,
+`/usr/lib64` (Fedora, openSUSE) and the Nix profiles.
 
 A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
 `builtin_engines()` maps content to engine package IDs, and an `engines.toml`

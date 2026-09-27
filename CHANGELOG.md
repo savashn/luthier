@@ -41,6 +41,11 @@ about.
 
 ### Fixed
 
+- **Plugins a Fedora or openSUSE package installed are found.** Those
+  distributions put 64-bit plugins in `/usr/lib64/lv2`, `/usr/lib64/vst3` and
+  `/usr/lib64/clap`, which detection did not search, so an engine installed
+  with `dnf` counted as absent. `/usr/lib64` and `/usr/local/lib64` are
+  searched now.
 - **No CA certificates no longer means a crash.** The HTTP client was built
   up front and panicked on a machine without a CA store, taking `file://`
   URLs and `--offline` down with it. It is built on the first request, and a
