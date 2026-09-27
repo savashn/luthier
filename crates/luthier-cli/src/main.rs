@@ -314,8 +314,8 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       _ => unreachable!("dispatched earlier"),
     },
 
-    Command::Refresh { allow_unsigned } => {
-      let outcomes = session.refresh(*allow_unsigned).await?;
+    Command::Refresh => {
+      let outcomes = session.refresh().await?;
       reporter.refresh(&outcomes);
     }
 

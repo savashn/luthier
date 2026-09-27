@@ -9,8 +9,7 @@ document states what is trusted, what is not, and what the code does about it.
 |---|---|---|
 | Registry manifests | Reviewed, not trusted | Manifests are reviewed in pull requests, but a manifest still cannot name a destination path or run a command |
 | Registry sources | Fixed in the binary | Luthier reads the Open Audio Stack registry and its own bench, and nothing else; users cannot add a source |
-| The bench snapshot | Only if signed with the built-in key | Verified with minisign against a key compiled into the manager, before it is extracted |
-| The Open Audio Stack index | HTTPS alone | Its publisher signs nothing, so the bench — which is signed — is what corrects it |
+| The bench and the Open Audio Stack index | HTTPS and the forge | Neither is signed. Whoever can publish a release of this repository, or change the OAS site, decides what the checksums say |
 | Downloaded artifacts | Never | An artifact is bytes from the internet; the checksum only proves it is *the* expected bytes, not that they are safe |
 | Local state file | Structurally, not blindly | Removal re-checks that every path it is about to delete lies inside a managed directory |
 | The user's existing plugins | Never modified | Anything Luthier did not install is left alone |
@@ -146,64 +145,38 @@ There is no command to add a source, and `config.json` cannot name one: a
 both with a local directory for one command; it is hidden, and exists for
 developing the bench.
 
-`registry/provenance.rs` records, for each source, the URL, the SHA-256 and
-size of what arrived, when, and the key that signed it. The record is for
-audit and enforces nothing. (0.1 also pinned each source's origin and key on
-first use, because users could add sources; with the URLs and the key fixed in
-the binary a pin protects nothing and would lock everyone out the day a
-release moved either.)
+`registry/provenance.rs` records, for each source, the URL and the SHA-256 and
+size of what arrived, when. The record is for audit and enforces nothing.
+(0.1 also pinned each source's origin on first use, because users could add
+sources; with the URLs fixed in the binary a pin protects nothing and would
+lock everyone out the day a release moved one.)
 
-## Bench signatures
+## Trusting GitHub
 
-Each release publishes a detached signature beside the bench, at the
-snapshot's own URL with `.minisig` on the end. The format is
-[minisign](https://jedisct1.github.io/minisign/)'s, byte for byte: Ed25519
-over the snapshot's BLAKE2b-512 (minisign's prehashed `ED` form), plus a
-signed trusted comment. The manager verifies it **between the download and the
-extractor**, so a snapshot nothing vouched for is never opened, and a refusal
-always leaves the previous snapshot in place.
+Nothing the manager reads is signed. The bench is trusted on HTTPS and on
+GitHub, exactly as the binary that reads it was downloaded, and the Open Audio
+Stack index on HTTPS and on the site that serves it. This is a deliberate
+choice, and it has a consequence worth stating plainly: **anyone who can
+publish a release of this repository can publish a bench whose manifests point
+at any file with a matching checksum, and every user installs it on their next
+`refresh` and `install`.** That means a compromised GitHub account, a leaked
+token with write access, or a compromised release workflow. Homebrew and Scoop
+make the same trade; apt and pacman do not.
 
-The key is built into the manager (`DEFAULT_BENCH_KEY` in `config.rs`) and is
-the only one accepted:
+0.1 signed the bench with a key kept off CI and compiled into the manager,
+which closed that gap. It was removed to keep releases a single tag with no
+key to guard; 0.1 clients still require that signature and refuse the bench
+from any later release until they are upgraded.
 
-```text
-RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq
-```
-
-A minisign signature names its key only by ID, so nothing fetched from the
-forge can say which key to believe: an attacker who controls the account can
-replace the bench and its signature, but not the key in a binary users already
-have. Anyone can check a bench without trusting the manager at all:
-
-```console
-$ minisign -Vm bench.tar.gz -P RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq
-```
-
-The cost of a built-in key is that a release without a signature is a bench
-nobody can refresh. The release workflow therefore publishes a draft —
-invisible to `releases/latest` — and the signature is made on the
-maintainer's machine, with a key CI never sees, before the draft is published.
-
-Three refusals follow, and only one of them can be overridden:
-
-| | |
-|---|---|
-| No signature published | `refresh --allow-unsigned` accepts it for **one run**; the next refresh asks again. |
-| A signature that does not verify | Refused. No flag relaxes this: it is a claim that did not hold up, not an absent one. |
-| A signature from any other key | Refused. A rotation reaches users as a release carrying the new key. |
-
-An unreadable signature file is refused rather than treated as no signature,
-or publishing garbage would be a way to turn verification off.
-
-Releases also publish `bench.tar.gz.sig`, the format 0.1 reads, so 0.1 clients
-keep refreshing; nothing newer reads it. The signing side is
-`luthier-registry keygen` and `luthier-registry sign`, which write minisign's
-files (stock `minisign` works too); the procedure, including rotation, is in
-[docs/REGISTRY.md](docs/REGISTRY.md#signing-a-snapshot).
+What still holds whatever the bench says: a manifest cannot name a
+destination or run a command, every artifact is checked against the checksum
+its manifest gives, and extraction goes through one hardened policy. A
+malicious bench can make a user install a malicious *plugin*; it cannot make
+the installer write outside the plugin and library directories.
 
 ## Release provenance
 
-The binary and the bench are also covered by a GitHub build provenance
+The binary and the bench are covered by a GitHub build provenance
 attestation, made by the release workflow through Sigstore with the
 workflow's own identity. It says the file was built by this repository's
 `release.yml`, from which commit:
@@ -212,9 +185,9 @@ workflow's own identity. It says the file was built by this repository's
 $ gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
 ```
 
-The two answer different questions. The attestation says CI built it, with no
-key for anyone to lose; the bench's minisign signature says the maintainer
-published it, with a key CI never holds.
+The manager does not check it; it is for a user who wants to. It rests on
+the same trust as everything else here — an attacker who can run this
+repository's workflow can produce an attested file too.
 
 ## Installation
 
@@ -254,12 +227,9 @@ refused before the download when it would delete such changes, until
 
 ## Not yet implemented
 
-- **Per-manifest signatures.** A snapshot is verified as a whole (see
-  *Registry signatures*); an individual manifest inside one is not signed
-  separately, though the format reserves room for it (§14). In practice the
-  snapshot signature covers every manifest it carries, so what is missing is
-  the ability for one package's author to sign their own entry independently
-  of the bench that publishes it.
+- **Signatures.** Neither the bench nor an individual manifest is signed
+  (see *Trusting GitHub*), though the manifest format reserves room for it
+  (§14).
 - **System-wide installation.** Everything is user-local; root is never
   required and system directories are never written.
 

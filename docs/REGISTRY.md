@@ -56,10 +56,10 @@ for plugin artifacts. The release workflow builds that asset from `bench/`.
 
 It is an asset rather than a branch tarball of the repository for two reasons.
 Discovery walks whatever it is handed, so a repository tarball would offer the
-workspace's own `Cargo.toml` files up as manifests. And a signature is fetched
-from the snapshot's URL with `.minisig` appended, which nothing can publish
-under `/archive/refs/heads/` — a branch tarball is a snapshot that can never
-be signed.
+workspace's own `Cargo.toml` files up as manifests. And users should read what
+a release published, not whatever `main` holds at the moment they refresh.
+The bench is not signed; see *Trusting GitHub* in
+[SECURITY.md](../SECURITY.md).
 
 This bench and the Open Audio Stack registry are the only sources the manager
 reads; users cannot add one. A package with a downloadable release belongs in
@@ -233,73 +233,16 @@ inferred from a filename, and a project that publishes only source becomes an
 cannot be recognised from a URL at all. Either is a small addition to
 `upstream.rs` on the day a manifest needs one.
 
-## Signing a snapshot
+## Releasing the bench
 
-Every release of the bench is signed, and the manager refuses one that is not.
-The signature is [minisign](https://jedisct1.github.io/minisign/)'s format —
-Ed25519 over the snapshot's BLAKE2b-512 — and the manager checks it between
-the download and the extractor against the public key compiled into it
-(`DEFAULT_BENCH_KEY` in `crates/luthier-core/src/config.rs`), so a snapshot
-from a compromised forge account is refused rather than extracted.
+The bench ships with the manager: pushing a `v*` tag runs `release.yml`, which
+packages `bench/` as `bench.tar.gz`, attests its build provenance, and
+publishes the release. `releases/latest` serves it from then on, and every
+`luthier refresh` picks it up. There is no step on the maintainer's machine.
 
-```console
-$ luthier-registry keygen --out luthier-bench.key
-$ luthier-registry sign bench.tar.gz --key luthier-bench.key
-```
-
-`keygen` writes the same files `minisign -G -W` does: an unencrypted secret
-key only its owner can read, and `luthier-bench.key.pub`. `sign` reads that
-file, a stock minisign one, or 0.1's hex seed — which is how the current key
-is stored — and writes two signatures beside the snapshot:
-
-- `bench.tar.gz.minisig`, which the manager verifies and anyone can check
-  with `minisign -Vm bench.tar.gz -P <public key>`;
-- `bench.tar.gz.sig`, the format 0.1 reads. Publish it until no 0.1 client
-  is left; then drop it from the upload and delete
-  `registry::signature::legacy`.
-
-Both are published at the snapshot's own URL with the suffix on the end. That
-convention is where the manager looks, and it is not configurable.
-
-### Releasing the default bench
-
-The release workflow never sees the secret key. It builds the assets, attests
-their build provenance, and creates the release as a **draft**, which
-`releases/latest` does not serve. The rest happens on the maintainer's
-machine:
-
-```console
-$ gh release download v0.2.0 -p bench.tar.gz
-$ luthier-registry sign bench.tar.gz --key <secret key>
-$ gh release upload v0.2.0 bench.tar.gz.minisig bench.tar.gz.sig
-$ gh release edit v0.2.0 --draft=false
-```
-
-A published release is never re-run: replacing its `bench.tar.gz` would leave
-the signature users verify pointing at bytes that are gone, which is a refusal
-no flag relaxes. The workflow refuses to, and a fix goes out as a new tag.
-
-Keep the secret key off the machine CI runs on, and backed up somewhere other
-than the one it lives on. Losing it is a rotation that has to ship as a
-release of the manager, since the key is compiled in.
-
-### Rotating a key
-
-Overlap, never a gap. A manager accepts only the keys compiled into it, so a
-new key reaches users by release, and retiring the old one first would leave
-every client that has not upgraded unable to refresh.
-
-1. `luthier-registry keygen --out new.key`.
-2. Release a manager whose default bench carries **both** keys (the `keys` of
-   the first entry in `default_registries()`), still signing with the old one.
-3. Once that release is widely installed, sign with the new key. Clients
-   still on an older release refuse the bench and name the key ID they did
-   not recognise, which is their cue to upgrade.
-4. A later release drops the old key.
-
-A key that has leaked is not a rotation, it is an incident: skip the overlap,
-release a manager carrying only the new key, and say so plainly, because
-every older client will keep trusting the leaked one until it upgrades.
+A published release is never re-run: replacing its `bench.tar.gz` would change
+a file users may already have checked. The workflow refuses to, and a fix goes
+out as a new tag.
 
 ## Sample libraries
 

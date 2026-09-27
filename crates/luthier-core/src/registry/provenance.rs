@@ -1,17 +1,14 @@
 //! Where each registry snapshot came from, and what it was.
 //!
-//! An audit trail: for each source, the URL it was fetched from, the
-//! SHA-256 and size of what arrived, when, and the key that signed it where
-//! one did. Nothing here is enforced. Which URLs are read and which key the
-//! bench must be signed with are built into the manager; see
-//! [`signature`](super::signature) for what is verified.
+//! An audit trail: for each source, the URL it was fetched from, and the
+//! SHA-256 and size of what arrived, when. Nothing here is enforced; which
+//! URLs are read is built into the manager.
 //!
 //! 0.1 also pinned each source's origin and signing key here on first use,
 //! because users could add sources of their own. They no longer can, so a
-//! pin would only protect a URL and a key the binary already fixes — and
-//! would lock every user out the day a release moved either.
-
-use super::signature::PublicKey;
+//! pin would only protect a URL the binary already fixes — and would lock
+//! every user out the day a release moved one. A `signed_by` field 0.1 wrote
+//! is ignored on reading.
 
 use crate::fsutil;
 use jiff::Timestamp;
@@ -30,13 +27,6 @@ pub struct Provenance {
   pub sha256: Sha256Hash,
   pub bytes: u64,
   pub fetched_at: Timestamp,
-  /// The key whose signature covered this snapshot, where one did. For the
-  /// audit trail only.
-  ///
-  /// Defaulted rather than required, so a record written before signatures
-  /// existed still parses as what it is: a bench nobody has signed yet.
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub signed_by: Option<PublicKey>,
 }
 
 /// Where the record for `name` lives, beside the snapshot itself.
@@ -71,21 +61,13 @@ pub fn load(registries_dir: &Path, name: &str) -> Option<Provenance> {
 /// Best-effort: a snapshot that fetched, parsed and installed correctly is not
 /// worth failing over an unwritable audit record, and the next refresh will
 /// write one.
-pub fn record(
-  registries_dir: &Path,
-  name: &str,
-  url: &Url,
-  sha256: Sha256Hash,
-  bytes: u64,
-  signed_by: Option<PublicKey>,
-) {
+pub fn record(registries_dir: &Path, name: &str, url: &Url, sha256: Sha256Hash, bytes: u64) {
   let provenance = Provenance {
     url: url.to_string(),
     origin: origin_of(url),
     sha256,
     bytes,
     fetched_at: Timestamp::now(),
-    signed_by,
   };
   let Ok(mut encoded) = serde_json::to_vec_pretty(&provenance) else {
     return;
@@ -122,23 +104,8 @@ mod tests {
   }
 
   #[test]
-  fn a_record_written_before_signatures_existed_still_parses() {
-    // The shape on disk before `signed_by` was added: a bench nobody has
-    // signed, which is exactly what it should read as.
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-      record_path(dir.path(), "bench"),
-      br#"{"url":"https://example.com/p.tar.gz","origin":"https://example.com:443",
-          "sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-          "bytes":10,"fetched_at":"2026-01-01T00:00:00Z"}"#,
-    )
-    .unwrap();
-
-    assert_eq!(load(dir.path(), "bench").unwrap().signed_by, None);
-  }
-
-  #[test]
-  fn a_key_0_1_recorded_as_hex_still_reads() {
+  fn a_record_0_1_wrote_still_parses() {
+    // 0.1 recorded the key that signed the bench; that field is ignored now.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
       record_path(dir.path(), "luthier-extras"),
@@ -148,11 +115,7 @@ mod tests {
           "signed_by":"e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa"}"#,
     )
     .unwrap();
-    let recorded = load(dir.path(), "luthier-extras").unwrap();
-    assert_eq!(
-      recorded.signed_by.unwrap().to_string(),
-      crate::config::DEFAULT_BENCH_KEY
-    );
+    assert_eq!(load(dir.path(), "luthier-extras").unwrap().bytes, 10);
   }
 
   #[test]

@@ -10,7 +10,6 @@ mod http;
 mod local;
 pub mod oas;
 pub mod provenance;
-pub mod signature;
 
 pub use http::HttpSnapshotRegistry;
 pub use local::LocalRegistry;

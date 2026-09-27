@@ -1484,17 +1484,12 @@ fn the_sources_are_built_in_and_cannot_be_added_to() {
   let bench = listed.find("luthier-extras").expect(&listed);
   let oas = listed.find("oas").expect(&listed);
   assert!(bench < oas, "{listed}");
-  // The key is shown in full: truncating the one thing a user compares
-  // against an announcement would make it useless.
-  assert!(
-    listed.contains(luthier_core::config::DEFAULT_BENCH_KEY),
-    "{listed}"
-  );
 
   for command in [
     vec!["bench", "add", "second", "/tmp"],
     vec!["bench", "remove", "luthier-extras"],
     vec!["bench", "trust", "luthier-extras", "RWS"],
+    vec!["refresh", "--allow-unsigned"],
   ] {
     let output = fixture.luthier().args(&command).output().unwrap();
     assert!(!output.status.success(), "{command:?}");

@@ -68,7 +68,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | Module | Holds |
 |---|---|
 | `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import — and `Environments`, which manages environments from outside one |
-| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers; `provenance`, an audit record of each fetch; `signature`, minisign verification of the bench against the built-in key |
+| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers; `provenance`, an audit record of each fetch |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -229,15 +229,10 @@ it is the mechanism by which a curated manifest corrects a derived one, which
 reading a large upstream registry makes necessary, and it is the bench's whole
 reason to exist.
 
-The bench is signed. `registry/signature.rs` verifies a
-[minisign](https://jedisct1.github.io/minisign/) signature published beside
-the snapshot against the key compiled into the manager, and
-`HttpSnapshotRegistry::refresh` does it between the download and the
-extractor — so a snapshot nothing vouched for is never opened.
-`--allow-unsigned` accepts the *absence* of a signature for one run; a
-signature that fails to verify, or one from any other key, is refused whatever
-any flag says. `registry/provenance.rs` records what each fetch brought, for
-audit only. See [SECURITY.md](../SECURITY.md).
+Neither source is signed: both are trusted on HTTPS and on the host that
+serves them, which for the bench is this repository's releases.
+`registry/provenance.rs` records what each fetch brought, for audit only. See
+*Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
 ### Environments vary the layout, not the code
 

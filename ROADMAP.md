@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 435 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 409 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -31,13 +31,11 @@ is reported before the download and installed anyway; the confirmation is where
 the user decides. Where both registries carry an ID, the bench wins.
 
 Those two sources are the only ones, and users cannot add a third: the
-bench exists to correct OAS, not to host collections of its own. It is signed
-with minisign, and verified between the download and the extractor against a
-key built into the manager; the release workflow publishes a draft that is
-signed on the maintainer's machine before it becomes visible, and attests the
-build provenance of everything it publishes.
+bench exists to correct OAS, not to host collections of its own. Neither is
+signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
+workflow attests the build provenance of everything it publishes.
 
-`v0.1.0` is released: a static binary for Linux x86_64 and the signed bench,
+`v0.1.0` is released: a static binary for Linux x86_64 and the bench,
 from the public repository at `savashn/luthier`. Phase 0 is done.
 
 ---
@@ -274,10 +272,11 @@ configuration cannot rot silently in the other repository.
 
 ---
 
-## Phase 2 — Close the trust gaps — done
+## Phase 2 — Close the trust gaps — withdrawn
 
 Neither item below was a live vulnerability. Both were places where the
-security model rested on something narrower than it should.
+security model rested on something narrower than it should, and both were
+built, shipped in 0.1, and then taken out: the project trusts GitHub instead.
 
 ### 2.1 Verify the registry snapshot — done, then superseded
 
@@ -291,46 +290,26 @@ URL did not already fix, and would have locked every user out the day a
 release moved a URL — so it was removed. What remains is an audit record of
 each fetch: URL, digest, size, time, and the key that signed it.
 
-### 2.2 Signature verification — done
+### 2.2 Signature verification — withdrawn
 
-Each release publishes a detached signature beside the bench, at the
-snapshot's own URL with `.minisig` on the end. `registry/signature.rs`
-verifies it between the download and the extractor, so a snapshot nothing
-vouched for is never opened and a refusal always leaves the previous one in
-place.
+0.1 signed the bench with Ed25519, a key kept off CI and compiled into the
+manager, and verified it between the download and the extractor. That closed
+the one gap HTTPS leaves: a compromised GitHub account, token or workflow
+could otherwise publish a bench that points every user at a file of its
+choosing. For a while it was moved to minisign's format so the signature
+could be checked with standard tools.
 
-Decisions worth keeping:
+It was then removed, by decision: the bench is trusted on GitHub, as the
+binary is, and a release is a tag with no key to guard and no step on the
+maintainer's machine. Homebrew and Scoop make the same trade. What the
+manager still guarantees whatever the bench says — no destination in a
+manifest, no scripts, checksums, one extraction policy — is in `SECURITY.md`
+under *Trusting GitHub*, together with the risk this leaves. 0.1 clients
+still require the signature and refuse the bench from later releases until
+they are upgraded.
 
-- **minisign's format, byte for byte.** 0.1 shipped a format of its own —
-  Ed25519 over the SHA-256 with a context string, the key carried in the
-  file. It worked, but nothing else could read it. minisign is the de facto
-  standard for signing release files, so a user can check the bench with
-  `minisign -V` without trusting the manager, and a maintainer can sign with
-  stock minisign. The tests hold the implementation to files written by
-  minisign 0.12 and to minisign's own Rust verifier. 0.1's format is still
-  written beside it (`.sig`) so 0.1 clients keep refreshing.
-- **The key is built in, never fetched.** A minisign signature names its key
-  only by ID, so it cannot vouch for itself — and with one bench, signed by
-  this project, there is nothing for a user to configure. An attacker who
-  controls the forge account can replace the bench and its signature, not the
-  key in binaries users already have.
-- **The override covers absence and nothing else.** `refresh
-  --allow-unsigned` accepts a bench published without a signature, for one
-  run. A signature that fails to verify, or one from any other key, is refused
-  whatever any flag says; so is an unreadable signature file, or publishing
-  garbage would be a way to turn verification off.
-- **Signing stays off CI.** The release is a draft until the maintainer signs
-  the bench on their own machine. CI instead attests build provenance through
-  Sigstore (`gh attestation verify`), which answers a different question —
-  "did CI build this" rather than "did the maintainer publish this" — with no
-  key to lose.
-
-The rotation procedure is in `docs/REGISTRY.md`: a release carrying both keys
-first, the new key used only once that release is widespread.
-
-**Done when:** ~~the manager verifies a detached signature over the registry
-snapshot, refuses an unsigned or badly-signed one unless explicitly
-overridden, and the key rotation procedure is written down~~.
+If it comes back, the history of `registry/signature.rs` has a minisign
+implementation tested against minisign's own output.
 
 ---
 
@@ -355,13 +334,6 @@ nothing else. See *Deliberate ceilings*.
 
 Branch tarballs were the right call for the MVP: no git dependency, and forges
 publish them. A `gix`-based backend would make incremental refresh cheap.
-
-It would need its own answer on signatures rather than inheriting 2.2's. A
-snapshot is one file, so a detached signature can sit beside it; a repository
-is a history, and what gets signed there is a tag or a commit. The policy —
-which key, and what a refusal leaves in place — should be the same, which is
-why it lives in `registry/signature.rs` rather than inside the snapshot
-provider.
 
 **Done when:** `RegistrySource::Git` exists and `refresh` updates without
 re-downloading the whole tree.
@@ -476,7 +448,7 @@ Stack registry and its own bench, which corrects it, and nothing else. A
 package with a downloadable release belongs upstream in OAS; the bench keeps
 only what OAS cannot express. Third-party benches existed in 0.1 and were
 removed: every source is one more publisher whose manifests can decide what
-lands in a user's plugin directories, and one more signing key to trust, for
+lands in a user's plugin directories, and one more host to trust, for
 a need that contributing to OAS already meets.
 
 **No system-wide installation.** Everything is user-local; root is never

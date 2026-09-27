@@ -148,33 +148,19 @@ impl Session {
     if let Some(index) = self.index.get() {
       return Ok(index);
     }
-    // Nothing is being accepted here: `load_index` reads the snapshot that
-    // a previous refresh already verified, so there is no signature for an
-    // override to relax.
-    let providers = self.config.providers(&self.layout, self.offline, false);
+    let providers = self.config.providers(&self.layout, self.offline);
     let built = RegistryIndex::merge(providers.iter().map(|provider| provider.load_index()))?;
     Ok(self.index.get_or_init(|| built))
   }
 
   // -------------------------------------------------------------- refresh --
 
-  /// Updates every configured registry (§31 `refresh`).
-  ///
-  /// `allow_unsigned` accepts a snapshot from a bench that was signed before
-  /// and is not this time — and nothing else. A signature that fails to
-  /// verify, or one made with a key the bench is not trusted to use, is
-  /// refused whatever the caller passes: those are claims that did not hold
-  /// up rather than absent ones. The flag is a parameter rather than a
-  /// setting on the session for the same reason `install` takes `force`:
-  /// consent belongs to the operation a user asked for.
-  pub async fn refresh(&self, allow_unsigned: bool) -> Result<Vec<RefreshOutcome>> {
+  /// Updates every registry (§31 `refresh`).
+  pub async fn refresh(&self) -> Result<Vec<RefreshOutcome>> {
     self.require_locations(&[LocationKind::Cache])?;
     let mut outcomes = Vec::new();
     let mut first_error = None;
-    for provider in self
-      .config
-      .providers(&self.layout, self.offline, allow_unsigned)
-    {
+    for provider in self.config.providers(&self.layout, self.offline) {
       match provider.refresh().await {
         Ok(outcome) => outcomes.push(outcome),
         // One bench that cannot be reached does not cost a user the others.
@@ -1124,7 +1110,6 @@ impl Session {
       .map(|(i, registry)| BenchSummary {
         priority: i + 1,
         name: registry.name.clone(),
-        keys: registry.keys.iter().map(ToString::to_string).collect(),
         kind: match registry.source {
           RegistrySource::Path { .. } => "path",
           RegistrySource::Snapshot { .. } => "snapshot",
@@ -2010,9 +1995,6 @@ pub struct BenchSummary {
   pub name: String,
   pub kind: String,
   pub location: String,
-  /// Keys a snapshot from this bench must be signed with, in minisign's
-  /// form. Empty for a source that publishes no signature.
-  pub keys: Vec<String>,
 }
 
 /// One file in the download cache.

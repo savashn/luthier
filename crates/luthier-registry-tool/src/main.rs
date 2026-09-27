@@ -66,35 +66,6 @@ enum Command {
     id: Option<String>,
   },
 
-  /// Generate a minisign key pair for signing the bench's snapshots.
-  ///
-  /// The same files `minisign -G -W` writes: an unencrypted secret key only
-  /// its owner can read, and `<out>.pub` beside it. The public key is what
-  /// `DEFAULT_BENCH_KEY` in `luthier-core/src/config.rs` carries.
-  #[cfg(feature = "authoring")]
-  Keygen {
-    /// Where to write the secret key. Never overwritten.
-    #[arg(long, default_value = "luthier-bench.key")]
-    out: PathBuf,
-  },
-
-  /// Sign a snapshot, writing `<snapshot>.minisig` and `<snapshot>.sig`
-  /// beside it.
-  ///
-  /// The `.minisig` is minisign's own format, which the manager verifies and
-  /// `minisign -V` can too. The `.sig` is the format 0.1 reads, published
-  /// until no 0.1 client is left.
-  #[cfg(feature = "authoring")]
-  Sign {
-    /// The snapshot tarball to sign.
-    snapshot: PathBuf,
-
-    /// The secret key: a file `keygen` or `minisign -G -W` wrote, or 0.1's
-    /// hex seed.
-    #[arg(long)]
-    key: PathBuf,
-  },
-
   /// Report which manifests are behind their upstream project.
   ///
   /// Asks each package's forge for its newest tag and compares. Reports
@@ -162,12 +133,6 @@ fn main() -> ExitCode {
       format,
       id,
     } => cmd_inspect(&archive, format.as_deref(), id.as_deref()),
-
-    #[cfg(feature = "authoring")]
-    Command::Keygen { out } => cmd_keygen(&out),
-
-    #[cfg(feature = "authoring")]
-    Command::Sign { snapshot, key } => cmd_sign(&snapshot, &key),
 
     #[cfg(feature = "authoring")]
     Command::CheckUpdates {
@@ -624,91 +589,6 @@ fn render_entry(entry: &install::Listed) -> String {
 /// Refuses to overwrite: a key file is the one thing here that cannot be
 /// regenerated, and replacing one silently would retire a bench's identity
 /// without anybody deciding to.
-#[cfg(feature = "authoring")]
-fn cmd_keygen(out: &Path) -> Result<bool, Box<dyn std::error::Error>> {
-  use luthier_core::registry::signature::SecretKey;
-
-  let public_path = PathBuf::from(format!("{}.pub", out.display()));
-  for path in [out, public_path.as_path()] {
-    if path.exists() {
-      return Err(format!("{} already exists; move it aside first", path.display()).into());
-    }
-  }
-
-  let secret = SecretKey::generate()?;
-  std::fs::write(out, secret.to_file())?;
-  restrict(out)?;
-  std::fs::write(&public_path, secret.public().to_file())?;
-
-  println!("Secret key written to {}", out.display());
-  println!("Public key written to {}", public_path.display());
-  println!("Public key:  {}", secret.public());
-  println!(
-    "\nKeep the secret key off the machine that builds snapshots. The public key goes\n\
-     into DEFAULT_BENCH_KEY, and a release carrying it is how users learn of it."
-  );
-  Ok(true)
-}
-
-/// Signs a snapshot, writing `<snapshot>.minisig` and `<snapshot>.sig`.
-#[cfg(feature = "authoring")]
-fn cmd_sign(snapshot: &Path, key_file: &Path) -> Result<bool, Box<dyn std::error::Error>> {
-  use luthier_core::registry::signature::{SecretKey, prehash_file};
-
-  let secret = SecretKey::parse(&std::fs::read_to_string(key_file)?)?;
-  let file_name = snapshot
-    .file_name()
-    .map(|n| n.to_string_lossy().into_owned())
-    .unwrap_or_default();
-  let timestamp = std::time::SystemTime::now()
-    .duration_since(std::time::UNIX_EPOCH)?
-    .as_secs() as i64;
-
-  // Appended to the whole name, not to the stem: the manager looks for each
-  // beside the snapshot under exactly these names.
-  let minisig = PathBuf::from(format!("{}.minisig", snapshot.display()));
-  std::fs::write(
-    &minisig,
-    secret
-      .sign(&prehash_file(snapshot)?, &file_name, timestamp)
-      .render(),
-  )?;
-  let digest = luthier_core::fsutil::hash_file(snapshot)?;
-  let legacy = PathBuf::from(format!("{}.sig", snapshot.display()));
-  std::fs::write(&legacy, secret.sign_legacy(&digest).render())?;
-
-  println!(
-    "key    {} (ID {})",
-    secret.public(),
-    secret.public().id_hex()
-  );
-  println!("sha256 {digest}");
-  println!(
-    "Signatures written to {} and {}",
-    minisig.display(),
-    legacy.display()
-  );
-  println!(
-    "\nPublish both beside the snapshot. Anyone can check the first with\n\
-     \n    minisign -Vm {} -P {}\n",
-    snapshot.display(),
-    secret.public()
-  );
-  Ok(true)
-}
-
-/// Owner-read-only, for a file that is the bench's identity.
-#[cfg(all(feature = "authoring", unix))]
-fn restrict(path: &Path) -> std::io::Result<()> {
-  use std::os::unix::fs::PermissionsExt;
-  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(all(feature = "authoring", not(unix)))]
-fn restrict(_path: &Path) -> std::io::Result<()> {
-  Ok(())
-}
-
 #[cfg(feature = "authoring")]
 fn tempdir() -> std::io::Result<TempDir> {
   TempDir::new()

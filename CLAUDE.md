@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 435 tests, fully offline
+cargo test --workspace                     # 409 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -27,7 +27,7 @@ real `~/.clap` and `~/.vst3`.
 | Crate | Contains | Must not contain |
 |---|---|---|
 | `luthier-manifest` | schema types, parse, validate, SPDX, path/hash newtypes, manifest discovery | async, HTTP, *installation* policy |
-| `luthier-core` | registry, resolver, download, archive, install, state, scan, signature verification, `api::{Session, Environments}` | anything CLI-shaped |
+| `luthier-core` | registry, resolver, download, archive, install, state, scan, `api::{Session, Environments}` | anything CLI-shaped |
 | `luthier-cli` | `luthier` binary: clap args, rendering | **any business logic** |
 | `luthier-registry-tool` | `luthier-registry` binary: validator + authoring helpers | dependency on `luthier-cli` |
 
@@ -86,10 +86,9 @@ the crate map keeps that out of `luthier-manifest`.
    `tar::Archive::unpack` or `ZipArchive::extract` — they apply their own
    policy. Per-format modules decide only *what entries exist*.
 4. **Verify before extract, extract before install.** `Downloader::fetch`
-   cannot return a file that failed its checksum. The same order holds one
-   level up: `HttpSnapshotRegistry::refresh` checks a bench's signature
-   between the download and the extractor, so a snapshot nothing vouched for
-   is never opened and every refusal leaves the previous snapshot in place.
+   cannot return a file that failed its checksum. One level up,
+   `HttpSnapshotRegistry::refresh` parses a snapshot fully before it
+   replaces the one on disk, so a broken snapshot never replaces a good one.
 5. **`Layout` is injected everywhere.** Nothing deep in the call graph reads
    `$HOME` or calls `dirs::home_dir()`. This is what makes the suite hermetic.
 6. **State is authoritative for ownership; scanning is advisory.** Never delete
@@ -165,8 +164,13 @@ the crate map keeps that out of `luthier-manifest`.
   missing feature. `Config::registries` is `#[serde(skip)]`, so a list 0.1
   wrote there is ignored; it stays a field only so a test or a front end can
   hand a `Session` different sources. Do not add `bench add` back, and do not
-  add pinning of an origin or a key: with both compiled in, a pin protects
-  nothing and locks everyone out the day a release moves either.
+  add pinning of an origin: with the URL compiled in, a pin protects nothing
+  and locks everyone out the day a release moves it.
+- **Nothing is signed, by decision.** The bench is trusted on HTTPS and
+  GitHub, as the binary is; `SECURITY.md` *Trusting GitHub* states the risk.
+  0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both
+  were removed. Do not reintroduce signing without the user asking — it puts
+  a manual step with a secret key into every release.
 - **A plan carries its own refusal** (`InstallPlan::blocked` / `refusal()`).
   A front end raises that rather than calling `install` and letting the
   installer re-derive a verdict from freshly-read state; two derivations can
@@ -182,18 +186,6 @@ the crate map keeps that out of `luthier-manifest`.
   configuration lists two, so the old behaviour — `?` on the first provider —
   meant an unpublished or briefly unreachable bench cost the user the one that
   was working.
-- **The bench signature is minisign's format, byte for byte.** Tests pin it
-  to files stock minisign 0.12 wrote and to the `minisign-verify` crate; a
-  "small improvement" to the format breaks `minisign -V` for everyone checking
-  by hand. A minisign signature names only a key ID, so the key always comes
-  from the binary (`DEFAULT_BENCH_KEY`); a keyless source reads a `.minisig`
-  as unsigned.
-- **An unreadable signature is a refusal, not an absence.** Treating a
-  malformed `.minisig` as "unsigned" would make publishing garbage a way to
-  turn verification off — with or without a key to check it against.
-- **Releases still publish 0.1's `.sig`.** 0.1 clients read only that and
-  refuse the bench without it. `luthier-registry sign` writes both; retire
-  `signature::legacy` and the upload together once 0.1 is not worth keeping.
 - **Derived rules can only promise what derivation recognises.**
   `install::installable` refuses an artifact whose rules are derived and whose
   `provides` names nothing in `derive::DERIVABLE_FORMATS`, before the download
@@ -236,10 +228,6 @@ the crate map keeps that out of `luthier-manifest`.
   and `into_env` redirects the per-installation parts. Code that builds a path
   from `$HOME` or from `data_dir()` by hand is the bug.
 
-- **A signing decision** → `registry/signature.rs` holds the policy and the
-  file format; `provenance.rs` only records what happened. `--allow-unsigned`
-  covers the *absence* of a signature for one run; nothing should ever make it
-  cover a signature that failed.
 - **A registry backend** → implement `RegistryProvider` (see `registry/local.rs`)
   and a `RegistrySource` variant in `config.rs`. It is for this project's own
   sources; users still cannot add one. `registry/oas/` is the worked
@@ -322,13 +310,9 @@ hidden `--api` flag, so the suite stays offline. GitHub is the only forge, by
 decision: nothing in the bench points anywhere else, and SourceForge would mean
 inferring a version from a filename (ROADMAP 1.1).
 
-The bench is signed with minisign: `bench.tar.gz.minisig` beside the
-snapshot, verified before extraction against the compiled-in
-`DEFAULT_BENCH_KEY`. `refresh --allow-unsigned` accepts a missing signature
-for one run. A release is a draft until the bench is signed by hand, and
-`release.yml` attests build provenance for both assets through Sigstore.
-`luthier-registry keygen` / `sign` are the publishing side, and
-`docs/REGISTRY.md` carries the release and rotation procedures.
+A `v*` tag publishes a release directly: the static binary and
+`bench.tar.gz`, both with build provenance attested through Sigstore
+(`gh attestation verify`). Nothing is signed by hand.
 
 `luthier location` puts the cache, sample libraries or plugins in a directory
 of the user's choosing (`locations` in `config.json`); environments keep their
@@ -352,8 +336,8 @@ just the default bench's name, as `homebrew-core` names the default tap. It
 ships in this repository under `bench/` and is published as the `bench.tar.gz`
 release asset — an asset rather than a branch tarball because discovery walks
 whatever it is handed (the workspace's `Cargo.toml` files would become
-manifests) and because a `.minisig` cannot be published under
-`/archive/refs/heads/`.
+manifests) and because users should read what a release published, not
+whatever `main` holds.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 
 The spec lives in the original task description; section references like §30

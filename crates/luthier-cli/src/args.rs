@@ -132,16 +132,7 @@ pub enum Command {
   },
 
   /// Fetch the latest registry metadata.
-  Refresh {
-    /// Accept the bench's snapshot even though no signature was published
-    /// beside it.
-    ///
-    /// For one run, and for that case only: a signature that does not verify,
-    /// or one made with a key this build does not carry, is refused whatever
-    /// this says. The next refresh asks the same question again.
-    #[arg(long)]
-    allow_unsigned: bool,
-  },
+  Refresh,
 
   /// Check installed files still match what was recorded.
   Verify {

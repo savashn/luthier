@@ -173,24 +173,6 @@ pub enum RegistryError {
 
   #[error("registry {registry} sent something this build cannot read: {reason}")]
   Malformed { registry: String, reason: String },
-
-  #[error("bench {registry} must be signed and this snapshot is unsigned")]
-  SignatureMissing { registry: String },
-
-  #[error("the signature published for bench {registry} cannot be read: {reason}")]
-  SignatureMalformed { registry: String, reason: String },
-
-  #[error("the signature published for bench {registry} does not verify under {key}")]
-  SignatureInvalid { registry: String, key: String },
-
-  #[error(
-    "bench {registry} was signed with {key}, which is not one of the keys it is trusted to use"
-  )]
-  SignatureUntrusted {
-    registry: String,
-    key: String,
-    trusted: Vec<String>,
-  },
 }
 
 impl RegistryError {
@@ -205,26 +187,6 @@ impl RegistryError {
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }
-      RegistryError::SignatureMissing { .. } => Some(
-        "Nothing was downloaded into place. A release published without its \
-                 signature is a mistake on the maintainers' side; `luthier refresh \
-                 --allow-unsigned` accepts this one refresh anyway, and the next one asks \
-                 again."
-          .into(),
-      ),
-      RegistryError::SignatureInvalid { .. } => Some(
-        "The snapshot and the signature published beside it do not agree. Either one \
-                 of them is truncated or the bytes are not the ones that were signed; \
-                 nothing was extracted either way. Try again, and report it to the bench's \
-                 maintainers if it persists."
-          .into(),
-      ),
-      RegistryError::SignatureUntrusted { trusted, .. } => Some(format!(
-        "This build accepts {}. A bench signed with any other key is refused \
-                 before anything is extracted; if the maintainers have rotated the key, \
-                 a new release of Luthier carries the new one.",
-        trusted.join(", ")
-      )),
       _ => None,
     }
   }

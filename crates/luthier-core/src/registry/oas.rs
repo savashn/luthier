@@ -187,10 +187,7 @@ impl RegistryProvider for OasRegistry {
     fsutil::ensure_dir(&self.snapshot_dir)?;
     fsutil::write_atomic(&self.snapshot_path(), &body)?;
     fsutil::remove_any(&scratch)?;
-    // Unsigned, and not for want of asking: an Open Audio Stack site
-    // publishes a static JSON index and no signature beside it. The origin
-    // pin and the recorded digest are what this bench gets.
-    provenance::record(&registries_dir, &self.name, &url, digest, bytes, None);
+    provenance::record(&registries_dir, &self.name, &url, digest, bytes);
 
     Ok(RefreshOutcome {
       registry: self.name.clone(),

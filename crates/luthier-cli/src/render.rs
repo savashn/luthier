@@ -655,12 +655,6 @@ impl Reporter {
         "{:<4}  {:<20}  {:<9}  {}",
         bench.priority, bench.name, bench.kind, bench.location
       );
-      // Printed under the bench rather than as a column: truncating the one
-      // thing a user might compare against an announcement would make it
-      // useless.
-      for key in &bench.keys {
-        println!("{:<4}  {:<20}  {:<9}  signed by {key}", "", "", "");
-      }
     }
     println!("\nConsulted in this order; the first to carry a package ID keeps it.");
   }

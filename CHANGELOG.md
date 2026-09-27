@@ -15,22 +15,6 @@ about.
 
 ## [Unreleased]
 
-### Changed
-
-- **The bench is signed in minisign's format.** Releases publish
-  `bench.tar.gz.minisig` — Ed25519 over the snapshot's BLAKE2b-512, exactly as
-  `minisign -S` writes it — and the manager verifies that file against the key
-  built into it. Anyone can check the bench independently with
-  `minisign -Vm bench.tar.gz -P RWTIP+H7i3W+zON5bZiS8gDxRaW++7Qhpm+51rpaaK/mJGBE37pxapmq`.
-  The key is the same one 0.1 carries, written in minisign's form. Releases
-  keep publishing 0.1's `bench.tar.gz.sig` alongside, so 0.1 clients go on
-  refreshing.
-- **`luthier-registry keygen` and `sign` write minisign's files.** `keygen`
-  writes an unencrypted secret key and a `.pub`, the same bytes as
-  `minisign -G -W`; `sign` accepts that, a stock minisign key or 0.1's hex
-  seed, and writes both signatures. `sign --out` is gone, since there are now
-  two files.
-
 ### Added
 
 - **Build provenance for every release.** The release workflow attests the
@@ -44,9 +28,15 @@ about.
   `bench untrust` are gone. Luthier reads the Open Audio Stack registry and its
   own bench, which corrects it, and nothing else; `bench list` shows the two.
   A `registries` list in `config.json` is ignored, and no longer written.
-- **Origin and key pinning.** With both sources and the signing key fixed in
-  the binary, a pin protected nothing and would have locked every user out the
-  day a release moved a URL. The provenance record remains, for audit.
+- **Bench signatures.** The bench is no longer signed or verified; it is
+  trusted on HTTPS and GitHub, as the binary is. `refresh --allow-unsigned`
+  and `luthier-registry keygen` / `sign` are gone, and a release is published
+  as soon as its tag is built. **0.1 requires the signature and refuses the
+  bench from this release on** (the Open Audio Stack registry keeps working):
+  upgrade to read it. `SECURITY.md` states what this trusts.
+- **Origin pinning.** With the sources fixed in the binary, a pin protected
+  nothing and would have locked every user out the day a release moved a URL.
+  The provenance record remains, for audit.
 - **`--registry-path` is hidden.** It still works, for developing the bench
   against a checkout.
 
