@@ -20,7 +20,24 @@ use progress::BarProgress;
 use render::Reporter;
 use std::io::{IsTerminal, Write};
 
+/// Lets a closed pipe end the process, as it does every other Unix tool.
+///
+/// Rust ignores SIGPIPE, so `luthier search | head` used to panic on the
+/// first write after `head` exited — and `completions`, whose generator
+/// `expect`s every write, panicked outright. With the default disposition
+/// the kernel ends the process quietly and the shell sees 141, which is what
+/// a pipeline expects.
+fn restore_sigpipe() {
+  #[cfg(unix)]
+  // SAFETY: called first thing in `main`, before any other thread exists,
+  // and SIG_DFL installs no handler that could run Rust code.
+  unsafe {
+    libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+  }
+}
+
 fn main() -> std::process::ExitCode {
+  restore_sigpipe();
   let cli = Cli::parse();
   init_logging(&cli.global);
 

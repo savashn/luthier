@@ -32,7 +32,7 @@ so a stale copy here silently overrides a maintained entry there.
 
 [oas]: https://github.com/open-audio-stack/open-audio-stack-registry
 
-That is why this bench is six manifests against OAS's several hundred, and the
+That is why this bench is seven manifests against OAS's several hundred, and the
 count is meant to fall rather than grow. What earns a place is what OAS cannot
 express:
 

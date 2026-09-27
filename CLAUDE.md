@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 409 tests, fully offline
+cargo test --workspace                     # 410 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -291,8 +291,10 @@ redirect the per-installation parts of a `Layout`.
 A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
 `builtin_engines()` maps content to engine package IDs, and an `engines.toml`
 at a bench's root adds to it — from any registry. Installing
-content with no engine present, installed, or in the same plan is refused
-before download (`engine::unplayable`, `ResolveError::NoEngine`). This replaced
+content with no engine present, installed, or in the same plan is reported
+before download (`engine::unplayable`), and the confirmation decides; it is
+not refused, since a registry with no field for what plays what would make
+every library look unplayable. This replaced
 `requires.toml`, which pinned every SFZ library to sfizz alone. Deliberately
 not a dependency: any one engine satisfies it.
 

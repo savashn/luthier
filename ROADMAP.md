@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 409 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 410 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -22,9 +22,9 @@ Two registries are read together. The Open Audio Stack registry supplies
 anything with a downloadable release binary — 464 of its 560 packages
 translate, 299 of them installable on Linux x86_64 — and its install rules are
 derived from the verified archive rather than declared. The curated bench is
-down to 6 manifests: what OAS cannot express — two `external` engines, three
-DrumGizmo kits it does not carry, and one shadow for an install rule nothing
-can derive. What plays SFZ, SoundFont 2 and DrumGizmo content is no longer
+down to 7 manifests: what OAS cannot express — two `external` engines, three
+DrumGizmo kits it does not carry, one shadow for an install rule nothing can
+derive, and one for an archive that holds two builds of the same plugin. What plays SFZ, SoundFont 2 and DrumGizmo content is no longer
 its business: that list ships with the manager, and a bench's `engines.toml`
 adds to it. A library whose engines are all absent
 is reported before the download and installed anyway; the confirmation is where
@@ -149,9 +149,9 @@ the git log is for.
 ## Phase 1 — Make the registry maintainable
 
 A curated registry dies of neglect, not of bad design. That is why the bench
-carries only what OAS cannot: six manifests, of which three have an artifact
-pinned to a version upstream will move past. The rest — two `external` engines
-and one shadow — have nothing of their own to go stale.
+carries only what OAS cannot: seven manifests. The three kits and the two
+shadows pin an artifact to a version upstream will move past; the two
+`external` engines have nothing of their own to go stale.
 
 The `external` entries were cut from twenty to two on the same reasoning. An
 entry nothing depends on is an unverified claim — a bundle name and an

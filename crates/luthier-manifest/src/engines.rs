@@ -116,6 +116,14 @@ pub fn builtin_engines() -> Vec<EngineEntry> {
       &[Content::Sf2],
       &[(Format::Lv2, "Fluida.lv2")],
     ),
+    // The one SoundFont player either registry can install: fluida-lv2 is
+    // only ever found, never offered. It links the system's libfluidsynth,
+    // which most distributions install alongside anything audio.
+    entry(
+      "fluidsynth-clap",
+      &[Content::Sf2],
+      &[(Format::Clap, "FluidSynth.clap")],
+    ),
     // DrumGizmo plays its own kits; DrumCraker plays them too, which is
     // why content names a format and never an engine.
     entry(

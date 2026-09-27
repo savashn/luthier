@@ -2149,3 +2149,31 @@ fn a_location_must_be_an_existing_directory_of_its_own() {
   let show = fixture.luthier().arg("location").output().unwrap();
   assert!(!stdout_of(&show).contains("chosen"), "{}", stdout_of(&show));
 }
+
+#[cfg(unix)]
+#[test]
+fn a_closed_pipe_ends_the_process_quietly() {
+  // `luthier completions zsh | head` used to panic: Rust ignores SIGPIPE, so
+  // the write failed with EPIPE and the completion generator `expect`s every
+  // write. The reading end is closed before the process starts, so the very
+  // first write meets a closed pipe and the outcome does not depend on timing.
+  use std::os::unix::process::ExitStatusExt;
+
+  let (reader, writer) = std::io::pipe().unwrap();
+  drop(reader);
+  let output = std::process::Command::new(assert_cmd::cargo::cargo_bin("luthier"))
+    .args(["completions", "zsh"])
+    .stdout(writer)
+    .stderr(std::process::Stdio::piped())
+    .output()
+    .unwrap();
+
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(!stderr.contains("panicked"), "{stderr}");
+  assert_eq!(
+    output.status.signal(),
+    Some(13),
+    "{:?}: {stderr}",
+    output.status
+  );
+}

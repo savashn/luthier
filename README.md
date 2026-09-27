@@ -176,17 +176,18 @@ is *seen*. They are separate: a rooted install still counts a
 distribution-provided engine as satisfying a dependency, unless
 `--no-system-plugins` says to ignore it.
 
-A sample library is refused before it is downloaded when nothing on the system
-can play it. The library says what it holds (`content = ["sfz"]`), a built-in
-list and any bench's `engines.toml` say what plays that, and any one engine —
-detected, already installed, or named in the same command — is enough:
+A sample library says so before it is downloaded when nothing on the system
+can play it, and names what would. The library says what it holds
+(`content = ["sfz"]`), a built-in list and any bench's `engines.toml` say what
+plays that, and any one engine — detected, already installed, or named in the
+same command — is enough. The warning comes with the plan, so you decide
+whether to go ahead:
 
 ```console
 $ luthier install crocellkit
-warning: nothing on this system can play crocellkit's DrumGizmo content. Any one of these would:
+warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or another player of its kits. Nothing on this system looks like one; any of these would do:
   drumgizmo   Install from your distribution, for example `apt install drumgizmo` …
   drumcraker  luthier install drumcraker
-error: not installing crocellkit: nothing on this system can play its DrumGizmo content
 ```
 
 ## Where things go

@@ -1,0 +1,52 @@
+# SHADOW — OAS carries baalex/matsuri at this version, and this manifest wins
+# the collision.
+#
+# Reason: the Linux archive holds two builds of the same plugin,
+# matsuri-v2-fedora.clap and matsuri-v2-ubuntu.clap, and deriving rules from
+# it installs both — so a host scanning ~/.clap finds Matsuri twice. Upstream
+# says to install one:
+#
+#   these files were compiled in Fedora 44 and Ubuntu 24.04 LTS respectively,
+#   choose one according to your distro. Are you using something different?
+#   Chances are that either of them will do the job.
+#
+# Both link only libc and need nothing newer than GLIBC_2.14, so either would
+# do anywhere this manager runs. The Ubuntu LTS build is the one taken. The
+# licence is corrected too: OAS records "other", and the repository's LICENSE
+# is the CDDL 1.0.
+#
+# Retire it when the archive carries one Linux build, or when OAS can say
+# which entry of an archive to install.
+schema = 1
+
+id = "matsuri"
+name = "Matsuri"
+kind = "plugin"
+category = "instrument"
+tags = ["drum-machine", "tr-606"]
+
+description = "TR-606 drum machine emulation."
+
+homepage = "https://github.com/baAlex/Matsuri"
+repository = "https://github.com/baAlex/Matsuri"
+
+authors = ["Alexander Brandt"]
+
+[license]
+kind = "open-source"
+spdx = "CDDL-1.0"
+
+[[releases]]
+version = "2.0.0"
+release_notes = "https://github.com/baAlex/Matsuri/releases/tag/v2.0"
+
+[[releases.artifacts]]
+target = { os = "linux", arch = "x86_64" }
+source = { type = "http", url = "https://github.com/baAlex/Matsuri/releases/download/v2.0/matsuri-v2.0-linux.zip" }
+archive = "zip"
+size = 94035
+checksum = { sha256 = "7948e54e2c7d353c08f8f9222d797d7035b15ac2ed9d89bd3fed71530a43b21f" }
+provides = ["clap"]
+install = [
+  { format = "clap", source = "matsuri-v2-ubuntu.clap", kind = "file" },
+]
