@@ -13,7 +13,7 @@ schema is versioned separately (`schema = 1`) and an older client is expected
 to read a newer registry without installing from a category it cannot reason
 about.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-09-27
 
 The first release: everything below is new.
 

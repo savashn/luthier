@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 428 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 433 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, environments,
 and `env export`/`env import` all work end to end against real packages.
 
@@ -38,9 +38,11 @@ fetch, and the release workflow publishes a draft that is signed on the
 maintainer's machine before it becomes visible. Nothing is signed yet, because
 nothing is published yet.
 
-What it is *not*: published. The manager repository is now a git repository;
-the registry is not, neither has a remote, so neither CI workflow has ever
-run and nobody but its author can install it. That is what Phase 0 is about.
+What it is *not*: published. The repository, bench included, is pushed to
+`savashn/luthier` but private, no workflow has ever run, and no release
+exists, so nobody but its author can install it. That is what Phase 0 is
+about, and what is left of it is the order `v0.1.0` goes out in: public, one
+green pull request, the tag, the signature, then publishing the draft.
 
 ---
 
@@ -51,8 +53,9 @@ they are the difference between a local working directory and a project.
 
 ### 0.1 Publish the repository — half done
 
-`luthier/` is a git repository and lives at `savashn/luthier`, privately. No
-workflow has ever executed, so the TOML migration and the category system were
+`luthier/` lives at `savashn/luthier`, still private. No workflow has ever
+executed, so everything CI checks — the `--no-default-features` build of the
+validator and schema drift among it — and the release's musl build have been
 verified only on one machine.
 
 There used to be a second repository to publish. The bench now lives here
