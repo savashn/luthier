@@ -12,3 +12,6 @@
 # Scratch output from the registry tools.
 report.txt
 report.json
+
+# nix-direnv caches the dev shell here.
+/.direnv

@@ -28,10 +28,27 @@
         default = self.homeManagerModules.luthier;
       };
 
+      # `nix develop`, or `use flake` through direnv. The package's own inputs
+      # (rustc, cargo, and the cmake and perl aws-lc-sys needs) come from
+      # `inputsFrom`, so the shell cannot drift from what the build uses.
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.luthier ];
+          packages = with pkgs; [
+            clippy
+            rustfmt
+            rust-analyzer
+            nixfmt
+          ];
+        };
+      });
+
       checks = forAllSystems (pkgs: {
         luthier = self.packages.${pkgs.stdenv.hostPlatform.system}.luthier;
       });
 
-      formatter = forAllSystems (pkgs: pkgs.nixfmt);
+      # nixfmt-tree, not bare nixfmt: `nix fmt` passes no paths, and nixfmt
+      # given none reads stdin and fails. This walks the tree itself.
+      formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
     };
 }
