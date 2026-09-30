@@ -35,6 +35,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
 
+      # The Nix side of `cargo fmt --check`. `--ci` fails on any file the
+      # formatter would change instead of rewriting it.
+      - name: Format
+        run: nix fmt -- --ci
+
       # `nix flake check` builds the package, which runs the test suite as its
       # check phase, and evaluates every other output.
       - name: Flake check
