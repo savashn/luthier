@@ -10,9 +10,20 @@ cargo test --workspace                     # 404 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
+cargo deny check                           # advisories, licences, sources (deny.toml)
 nix build .#luthier -L                     # the flake; runs the suite in the sandbox
 nix fmt                                    # after editing flake.nix or nix/
 ```
+
+The development machine is NixOS with no Rust toolchain installed. The
+flake's `devShells.default` has it, with clippy, rustfmt, rust-analyzer,
+cargo-deny, cmake and perl; `.envrc` loads it through direnv on `cd`,
+otherwise prefix a command with `direnv exec .` or run it inside
+`nix develop`.
+
+CI also checks the MSRV with Rust 1.89 (`cargo check --all-targets`). A
+dependency update that raises it fails there; `cargo update` already picks
+the newest version that allows 1.89.
 
 The Nix daemon is often stopped on this machine; `nix` then fails with
 "cannot connect to socket" and the user has to start it

@@ -2,6 +2,15 @@
 
 ## Getting started
 
+You need Rust 1.89 or newer, and cmake and perl for `aws-lc-sys`, which the
+TLS stack builds from C. With Nix, the flake has all of it:
+
+```console
+$ nix develop            # or, with direnv: direnv allow
+```
+
+Then:
+
 ```console
 $ cargo build
 $ cargo test --workspace
@@ -22,9 +31,22 @@ $ cargo run -q -p luthier-registry-tool -- schema | diff -u schemas/package-v1.j
 
 The third is the one that surprises people. `luthier-registry-tool` has an
 `authoring` feature, on by default, carrying everything that needs the network
-or an archive decoder; the registry repository builds the validator without it
-on every pull request, so an import added under the default features would
-break that build and surface only in the other repository.
+or an archive decoder. Without it the validator builds from
+`luthier-manifest` alone, which is what keeps that crate free of async and
+HTTP; nothing but this build notices when an import added under the default
+features breaks that.
+
+Three more run in CI without needing anything from you, and are worth knowing
+about when they fail:
+
+- **MSRV.** `cargo check` with Rust 1.89, the version `Cargo.toml` promises.
+  A std API newer than that fails here and nowhere else.
+- **`cargo deny check`**, per `deny.toml`: advisories, licences and sources of
+  every dependency. It also runs weekly, so it can fail on a lock file nobody
+  touched when an advisory is published against it.
+- **`nix fmt -- --ci`** and `nix flake check`, when a Nix file or the
+  workspace changes. `nix flake check` builds the package, which runs the
+  suite again in the sandbox.
 
 ## Layout
 
@@ -34,7 +56,9 @@ crates/
   luthier-core/           registry, resolver, downloader, installer, state
   luthier-cli/            the `luthier` binary — arguments and rendering only
   luthier-registry-tool/  the `luthier-registry` validator and authoring helpers
+bench/               the default bench: manifests, MIT-licensed data
 schemas/             generated JSON Schema, committed
+nix/                 the flake's package and Home Manager module
 docs/
 ```
 
@@ -76,4 +100,4 @@ Match the surrounding code. Beyond that:
 
 ## Adding a package
 
-Packages live in a separate repository. See [docs/REGISTRY.md](docs/REGISTRY.md).
+Packages live under `bench/` in this repository. See [docs/REGISTRY.md](docs/REGISTRY.md).

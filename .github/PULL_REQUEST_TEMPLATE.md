@@ -12,9 +12,13 @@ CI gates on all of these, and they are faster to run than to wait for:
 - [ ] `cargo build -p luthier-registry-tool --no-default-features`
 - [ ] `cargo run -q -p luthier-registry-tool -- schema | diff -u schemas/package-v1.json -`
 
-The fourth is the one that surprises people: the registry repository builds
-the validator without the authoring features on every pull request, so an
-import added under the default features breaks a build in another repository.
+The fourth is the one that surprises people: without the authoring features
+the validator builds from `luthier-manifest` alone, and nothing but this build
+notices when an import added under the default features breaks that.
+
+CI also checks the MSRV (Rust 1.89), runs `cargo deny check`, and, when a Nix
+file or the workspace changes, `nix fmt -- --ci` and `nix flake check`. None
+of those need anything from you unless they fail.
 
 ## If this touches one of these, say how
 

@@ -36,8 +36,9 @@ bench exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
-`v0.1.0` is released: a static binary for Linux x86_64 and the bench,
-from the public repository at `savashn/luthier`. Phase 0 is done.
+`v0.3.0` is the latest release: a static binary for Linux x86_64 and the
+bench, from the public repository at `savashn/luthier`, published straight
+from a `v*` tag. Phase 0 is done.
 
 ---
 
@@ -50,8 +51,8 @@ they are the difference between a local working directory and a project.
 
 `luthier/` is public at `savashn/luthier`. `ci.yml` has run on every push to
 `main` since 2026-09-18, the `--no-default-features` build of the validator
-and the schema-drift check included. The release's musl build has not run
-yet; that is 0.3.
+and the schema-drift check included. The release's musl build is 0.3; it
+first ran for `v0.1.0`.
 
 There used to be a second repository to publish. The bench now lives here
 under `bench/`, which removed the part of this item that was genuinely awkward:
@@ -117,7 +118,9 @@ section leads with that download.
 `v0.1.0` was tagged on 2026-09-27. The musl build passed on its first run,
 the bench was signed on the maintainer's machine and the draft published. On
 a clean root, the downloaded binary refreshed both benches with no flags,
-verifying the signature, and installed and verified `lsp-plugins`.
+verifying the signature, and installed and verified `lsp-plugins`. Signing
+was later removed (see 2.2); from 0.2 on, a tag publishes with no step on
+the maintainer's machine.
 
 **Done when:** ~~the README's install section leads with the binary rather
 than with cargo, a tagged `v0.1.0` publishes a static `luthier` binary for
@@ -189,8 +192,8 @@ Three decisions worth keeping:
 This once read "GitLab and SourceForge would each be a small addition to
 `upstream.rs`". Both were written, and both came back out.
 
-The data is the first half of the reason: of the bench's nine manifests, the
-six with an artifact point at GitHub three times and at drumgizmo.org three
+The data is the first half of the reason: of the bench's seven manifests,
+the five with an artifact point at GitHub twice and at drumgizmo.org three
 times. Nothing uses either forge, and this command never sees the Open Audio
 Stack registry at all — it walks a directory of manifests.
 
@@ -269,8 +272,9 @@ Two changes made this possible, both worth knowing:
   `--check-urls` lived inside it; the URL sweep is now a separate,
   feature-gated step. The validation pass is byte-identical in both builds.
 
-The manager's CI builds `--no-default-features` on every push, so the
-configuration cannot rot silently in the other repository.
+The manager's CI builds `--no-default-features` on every push. Since the
+bench moved into this repository nothing else builds it that way, so that
+job is what keeps the configuration from rotting silently.
 
 ---
 
@@ -290,7 +294,8 @@ That only made sense while users could add benches. Once the sources became
 fixed in the binary (see 3.2), an origin pin protected nothing a compiled-in
 URL did not already fix, and would have locked every user out the day a
 release moved a URL — so it was removed. What remains is an audit record of
-each fetch: URL, digest, size, time, and the key that signed it.
+each fetch: URL, digest, size and time. The key that signed it was recorded
+too while 0.1 signed the bench; that field is now ignored.
 
 ### 2.2 Signature verification — withdrawn
 
@@ -319,8 +324,10 @@ implementation tested against minisign's own output.
 
 ### 3.1 Distribution packaging
 
-An AUR package, a `.deb`, and ideally a Flatpak or a static binary in a release
-asset. `cargo install` is not a distribution channel for this audience.
+An AUR package, a `.deb`, and ideally a Flatpak. The static binary in a
+release asset exists (0.3), and so does the flake; neither reaches someone
+who installs software through their distribution. `cargo install` is not a
+distribution channel for this audience.
 
 **Done when:** at least the AUR package exists and is referenced from the
 README.

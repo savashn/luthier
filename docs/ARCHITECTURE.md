@@ -18,7 +18,7 @@ rather than decorative:
   validator runs in CI on every pull request and should not need one.
 - **`luthier-core`** holds every decision about packages. `luthier-cli` contains none, so
   a GUI can reuse it unchanged.
-- **`luthier-registry-tool`** is separate so the registry repository can depend on it
+- **`luthier-registry-tool`** is separate so a bench's CI can build the validator
   without pulling in the CLI.
 
 Splitting `luthier-core` further — a crate each for resolver, downloader, installer —
@@ -31,9 +31,9 @@ everything that needs the network or an archive decoder — `hash-url`,
 `inspect`, `check-updates` and `validate --check-urls`. Built with
 `--no-default-features` it pulls 70 crates instead of 164, with no tokio, no
 reqwest, no archive decoders and no `luthier-core`, and still validates a tree
-and prints the schema. Registry CI runs that build on every pull request, and
-the manager's own CI builds it on every push so the configuration cannot rot in
-the other repository.
+and prints the schema. The manager's CI builds it that way on every push, so
+the configuration cannot rot unnoticed now that the bench lives in this
+repository and nothing else builds it.
 
 That is also why manifest discovery (`manifest_files`) lives in
 `luthier-manifest`: validating a tree should not need a runtime to list files.
@@ -125,8 +125,9 @@ implementations planned than exist today, which is why they are traits rather
 than enums.
 
 **`RegistryProvider`** — where manifests come from. `LocalRegistry` reads a
-directory; `HttpSnapshotRegistry` fetches a tarball of the registry repository
-over HTTPS and extracts it through the same hardened extractor as any plugin;
+directory; `HttpSnapshotRegistry` fetches the bench as a release asset
+(`bench.tar.gz`) over HTTPS and extracts it through the same hardened
+extractor as any plugin;
 `OasRegistry` reads an Open Audio Stack site, which publishes static JSON rather
 than TOML manifests. Each is a `RegistrySource` variant in `config.rs`. Which
 sources a user reads is fixed — `default_registries()` — so a new provider is
