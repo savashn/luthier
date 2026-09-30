@@ -1,0 +1,27 @@
+# Weekly, grouped into one pull request per ecosystem, so an update is a
+# thing to review rather than a stream of them. Every pull request still has
+# to pass ci.yml, the MSRV job included, and deny.yml.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      # Deliberate pins; see the comments in Cargo.toml and CLAUDE.md.
+      # sevenz-rust2 0.21 raises its MSRV to 1.93.
+      - dependency-name: sevenz-rust2
+        versions: [">=0.21"]
+      - dependency-name: zip
+        versions: [">=9"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

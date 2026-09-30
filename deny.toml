@@ -1,0 +1,57 @@
+# `cargo deny check`: what the dependency tree may contain.
+#
+# Run in `ci.yml` on every push, and weekly on its own so an advisory
+# published against an unchanged lock file still surfaces.
+
+[graph]
+# The only target anything is built for. Without this, licences and
+# advisories of Windows- and macOS-only crates would gate a Linux tool.
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+all-features = true
+
+[advisories]
+# Every advisory fails, unmaintained and unsound ones included. An exception
+# goes in `ignore` with the advisory ID and the reason it does not apply.
+unmaintained = "all"
+ignore = []
+
+[licenses]
+# Everything here is compatible with LGPL-2.1-or-later *as distributed*.
+# Apache-2.0 is the one that is not compatible with the version-2 licences;
+# the "or later" is what lets a recipient take the whole under LGPL-3.0, where
+# it is. ROADMAP.md §0.2 has the reasoning — do not drop the "or later".
+allow = [
+    "LGPL-2.1-or-later",
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    # libbz2-rs-sys, under zip: the original bzip2 licence, BSD-style.
+    "bzip2-1.0.6",
+    # option-ext, under dirs: file-level copyleft, and without the
+    # "Incompatible With Secondary Licenses" notice, so it combines with the
+    # LGPL. Its own files stay MPL.
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# The workspace's own crates are not published, but their licence is still
+# checked like any other.
+ignore = false
+
+[bans]
+# Duplicate versions are reported, not refused: they come from upstream
+# crates moving at different speeds, and forcing one version is not ours to do.
+multiple-versions = "warn"
+# Not checked: the only version-less dependencies are the workspace's own
+# path crates, and cargo-deny treats those as wildcards because the crates
+# do not say `publish = false`. Cargo.lock pins everything else.
+wildcards = "allow"
+
+[sources]
+# crates.io only. A git dependency would bypass the lock file's checksums.
+unknown-registry = "deny"
+unknown-git = "deny"

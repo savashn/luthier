@@ -38,6 +38,7 @@
             clippy
             rustfmt
             rust-analyzer
+            cargo-deny
             nixfmt
           ];
         };

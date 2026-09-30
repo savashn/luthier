@@ -13,6 +13,17 @@ schema is versioned separately (`schema = 1`) and an older client is expected
 to read a newer registry without installing from a category it cannot reason
 about.
 
+## [Unreleased]
+
+### Security
+
+- **rustls 0.23.45** (RUSTSEC-2026-0285). 0.23.43 accepted TLS 1.3
+  handshake messages sent at the wrong encryption level. The handshake
+  transcript is still authenticated, so nothing could be altered or
+  completed through it; every fetch goes through rustls, so it is updated
+  anyway. `cargo deny check` now runs in CI, and weekly, to catch the next
+  one.
+
 ## [0.3.0] — 2026-09-27
 
 ### Added

@@ -1,0 +1,37 @@
+# Advisories, licences and sources of every dependency, per `deny.toml`.
+#
+# On a schedule as well as on changes: an advisory is published against a
+# version already in Cargo.lock, so a lock file nobody touched is exactly the
+# case a push-only check would never look at again.
+name: deny
+
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/*/Cargo.toml'
+      - 'deny.toml'
+      - '.github/workflows/deny.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/*/Cargo.toml'
+      - 'deny.toml'
+      - '.github/workflows/deny.yml'
+  schedule:
+    # Monday morning, beside check-updates.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
