@@ -192,7 +192,7 @@ impl FormatInstaller for Lv2Installer {
       ));
     }
 
-    for binary in collect_shared_objects(staged, LV2_MAX_DEPTH).map_err(&fail)? {
+    for binary in collect_shared_objects(staged, LV2_MAX_DEPTH).map_err(fail)? {
       check_elf_shared_object(&binary).map_err(|reason| {
         fail(format!(
           "{}: {reason}",
