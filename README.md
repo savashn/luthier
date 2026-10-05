@@ -137,7 +137,7 @@ $ install -Dm644 luthier-*/luthier.1 ~/.local/share/man/man1/luthier.1
 $ luthier completions zsh > ~/.zfunc/_luthier
 ```
 
-From source, with a Rust 1.89 or newer toolchain:
+From source, with a Rust 1.93 or newer toolchain:
 
 ```console
 $ cargo build --release

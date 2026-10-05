@@ -10,7 +10,7 @@ members = [
 [workspace.package]
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.93"
 license = "LGPL-2.1-or-later"
 repository = "https://github.com/savashn/luthier"
 homepage = "https://github.com/savashn/luthier"
@@ -20,39 +20,39 @@ luthier-manifest = { path = "crates/luthier-manifest" }
 luthier-core = { path = "crates/luthier-core" }
 
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1"
-toml = "1.1"
-schemars = "1.2"
+serde_json = "1.0.151"
+toml = "1.1.6"
+schemars = "1.2.2"
 semver = { version = "1.0.28", features = ["serde"] }
-spdx = "0.13.5"
-thiserror = "2.0.20"
-clap = { version = "4.6.6", features = ["derive"] }
-clap_complete = "4.6"
-clap_mangen = "0.3"
-tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream", "charset", "http2", "system-proxy"] }
-futures-util = "0.3"
+spdx = "0.13.6"
+thiserror = "2.0.21"
+clap = { version = "4.6.7", features = ["derive"] }
+clap_complete = "4.6.11"
+clap_mangen = "0.3.3"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "fs", "io-util", "time"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream", "charset", "http2", "system-proxy"] }
+futures-util = "0.3.34"
 sha2 = "0.11.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate", "bzip2"] }
 tar = "0.4.46"
 flate2 = "1.1.10"
 liblzma = { version = "0.4.8", features = ["static"] }
-# Pinned to 0.20: 0.21+ raises its MSRV to 1.93, and the workspace commits to
-# 1.89. Adding a format must not quietly move the toolchain floor.
-sevenz-rust2 = { version = "0.20", default-features = false }
+# Sets the workspace MSRV: 0.21+ needs Rust 1.93. A release that raises it
+# again fails the MSRV job in CI, so the floor only moves on purpose.
+sevenz-rust2 = { version = "0.23.0", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 indicatif = "0.18.6"
-jiff = { version = "0.2.35", features = ["serde"] }
-rustix = { version = "1.1", features = ["fs"] }
-dirs = "7.0"
+jiff = { version = "0.2.37", features = ["serde"] }
+rustix = { version = "1.1.5", features = ["fs"] }
+dirs = "7.0.0"
 # Only to restore SIGPIPE in the binary; already in the tree under tokio.
-libc = "0.2"
+libc = "0.2.190"
 tempfile = "3.27"
-async-trait = "0.1"
-url = { version = "2", features = ["serde"] }
-percent-encoding = "2"
+async-trait = "0.1.92"
+url = { version = "2.5.8", features = ["serde"] }
+percent-encoding = "2.3.2"
 
-assert_cmd = "2.2"
-predicates = "3.1"
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
 wiremock = "0.6.5"

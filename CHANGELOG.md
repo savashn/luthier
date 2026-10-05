@@ -23,6 +23,18 @@ about.
   completed through it; every fetch goes through rustls, so it is updated
   anyway. `cargo deny check` now runs in CI, and weekly, to catch the next
   one.
+- **sevenz-rust2 0.23.** 0.21.3 and 0.21.4 harden its 7z header parsing
+  against malformed archives: a panic, an infinite loop, an unbounded
+  allocation and an overflow in the coder stream count. A 7z is parsed after
+  its checksum matches the manifest, so reaching this needed a merged
+  manifest pointing at a crafted archive. 0.21.1's path-traversal fix is in
+  the crate's own extraction helper, which Luthier never calls: every entry
+  still goes through `archive/safe.rs`.
+
+### Changed
+
+- **Building from source needs Rust 1.93**, up from 1.89. sevenz-rust2 0.21
+  and later require it. The release binary is unaffected.
 
 ## [0.3.0] — 2026-09-27
 

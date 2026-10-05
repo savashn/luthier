@@ -45,7 +45,7 @@ jobs:
           cargo run -q -p luthier-registry-tool -- schema > /tmp/generated.json
           diff -u schemas/package-v1.json /tmp/generated.json
 
-  # `rust-version = "1.89"` is a promise the README makes to anyone building
+  # `rust-version = "1.93"` is a promise the README makes to anyone building
   # from source, and the job above runs on stable, so nothing else keeps it.
   # `check` rather than `test`: what can break is the language and std APIs a
   # newer compiler accepts, and checking the test targets covers them too.
@@ -54,7 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: dtolnay/rust-toolchain@1.93
       - uses: Swatinem/rust-cache@v2
       - name: Check
         run: cargo check --workspace --all-targets --locked

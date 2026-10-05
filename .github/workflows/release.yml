@@ -1,7 +1,7 @@
 # A tagged release builds the binary the README tells people to download.
 #
 # The people this manager is for are musicians, and `cargo build --release`
-# with a Rust 1.89 toolchain is not an install method for them (ROADMAP 0.3).
+# with a Rust 1.93 toolchain is not an install method for them (ROADMAP 0.3).
 # What this publishes is one statically linked binary that runs on any x86_64
 # Linux, whatever its glibc. No checksum file goes beside it: GitHub
 # publishes every asset's SHA-256 on the release itself, and the build

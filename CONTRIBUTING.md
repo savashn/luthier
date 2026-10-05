@@ -2,7 +2,7 @@
 
 ## Getting started
 
-You need Rust 1.89 or newer, and cmake and perl for `aws-lc-sys`, which the
+You need Rust 1.93 or newer, and cmake and perl for `aws-lc-sys`, which the
 TLS stack builds from C. With Nix, the flake has all of it:
 
 ```console
@@ -39,7 +39,7 @@ features breaks that.
 Three more run in CI without needing anything from you, and are worth knowing
 about when they fail:
 
-- **MSRV.** `cargo check` with Rust 1.89, the version `Cargo.toml` promises.
+- **MSRV.** `cargo check` with Rust 1.93, the version `Cargo.toml` promises.
   A std API newer than that fails here and nowhere else.
 - **`cargo deny check`**, per `deny.toml`: advisories, licences and sources of
   every dependency. It also runs weekly, so it can fail on a lock file nobody

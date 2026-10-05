@@ -10,11 +10,11 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+        # It sets the MSRV, and its last floor raise would have failed the
+        # whole group, security fixes included. Alone, it holds back only itself.
+        exclude-patterns: ["sevenz-rust2"]
     ignore:
-      # Deliberate pins; see the comments in Cargo.toml and CLAUDE.md.
-      # sevenz-rust2 0.21 raises its MSRV to 1.93.
-      - dependency-name: sevenz-rust2
-        versions: [">=0.21"]
+      # Deliberate pin; see the comments in Cargo.toml and CLAUDE.md.
       - dependency-name: zip
         versions: [">=9"]
 
@@ -25,3 +25,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    ignore:
+      # Its refs name Rust toolchains, not releases of the action: `@1.93` in
+      # ci.yml is the MSRV, and bumping it would retire the check it exists for.
+      - dependency-name: dtolnay/rust-toolchain

@@ -16,7 +16,7 @@ The fourth is the one that surprises people: without the authoring features
 the validator builds from `luthier-manifest` alone, and nothing but this build
 notices when an import added under the default features breaks that.
 
-CI also checks the MSRV (Rust 1.89), runs `cargo deny check`, and, when a Nix
+CI also checks the MSRV (Rust 1.93), runs `cargo deny check`, and, when a Nix
 file or the workspace changes, `nix fmt -- --ci` and `nix flake check`. None
 of those need anything from you unless they fail.
 

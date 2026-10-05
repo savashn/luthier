@@ -21,9 +21,9 @@ cargo-deny, cmake and perl; `.envrc` loads it through direnv on `cd`,
 otherwise prefix a command with `direnv exec .` or run it inside
 `nix develop`.
 
-CI also checks the MSRV with Rust 1.89 (`cargo check --all-targets`). A
+CI also checks the MSRV with Rust 1.93 (`cargo check --all-targets`). A
 dependency update that raises it fails there; `cargo update` already picks
-the newest version that allows 1.89.
+the newest version that allows 1.93.
 
 The Nix daemon is often stopped on this machine; `nix` then fails with
 "cannot connect to socket" and the user has to start it
@@ -127,16 +127,18 @@ the crate map keeps that out of `luthier-manifest`.
 - **`spdx` rejects deprecated ids at parse time**, so `GPL-3.0` surfaces as
   `InvalidExpression`, not our `Deprecated` variant.
 - **Pin `zip` to 8.x** — `cargo search` reports a 9.0.0 prerelease.
-- **Pin `sevenz-rust2` to 0.20** — 0.21+ raises its MSRV to 1.93. The library
-  dependency takes no default features; the dev-dependency adds `compress`
-  because only the test fixtures write archives.
+- **`sevenz-rust2` takes no default features.** The dev-dependency adds
+  `compress` because only the test fixtures write archives. It is in its own
+  Dependabot group so that a release raising the MSRV again holds back only
+  itself.
 - **DPF-Plugins ships `ProM.clap` as a directory**, not a shared object, so no
   rule is derived for it and `ClapInstaller` would refuse one: relaxing that
   would install something no host is guaranteed to load. Derivation does not
   look *inside* it either — the binary in there sits beside the
   `resources/presets/*.milk` it loads, and installing the two apart is worse
   than installing neither. This is what retired the `dpf-plugins` shadow.
-- **MSRV is 1.89** because `File::try_lock` is used instead of an `fs4` dep.
+- **MSRV is 1.93**, set by `sevenz-rust2` 0.21+. It was 1.89 before, because
+  `File::try_lock` is used instead of an `fs4` dep.
 - **A download ceiling is per artifact, not global.** `Downloader::ceiling`
   reads the manifest's `size`; the fixed 4 GiB default applies only when a
   manifest declares none. A global ceiling made CrocellKit (5.26 GiB)
