@@ -176,13 +176,14 @@ the installer write outside the plugin and library directories.
 
 ## Release provenance
 
-The binary and the bench are covered by a GitHub build provenance
+Every file a release publishes — each architecture's tarball, .deb and .rpm,
+the install script and the bench — is covered by a GitHub build provenance
 attestation, made by the release workflow through Sigstore with the
 workflow's own identity. It says the file was built by this repository's
 `release.yml`, from which commit:
 
 ```console
-$ gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+$ gh attestation verify luthier-$(uname -m)-linux.tar.gz -R savashn/luthier
 ```
 
 The manager does not check it; it is for a user who wants to. It rests on

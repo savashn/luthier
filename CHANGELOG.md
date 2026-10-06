@@ -17,6 +17,14 @@ about.
 
 ### Added
 
+- **Linux on 64-bit ARM (aarch64).** Every release now carries a static
+  aarch64 build too, as a tarball, a .deb and an .rpm, built and tested on an
+  ARM runner; `install.sh` picks the build for the machine it runs on, and
+  the flake builds for `aarch64-linux`. On ARM, Luthier installs what is
+  published for ARM: some 65 Open Audio Stack packages publish a Linux
+  archive for aarch64, against some 330 for x86_64; the bench's own packages
+  are x86_64 only. The end-to-end tests' fixtures publish for the
+  architecture they run on rather than for x86_64.
 - **A .deb, an .rpm and an install script** beside the tarball on every
   release, each carrying the same static binary, man page and completions.
   The packages put them where a distribution keeps them, so `man luthier`

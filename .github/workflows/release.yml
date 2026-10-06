@@ -2,12 +2,13 @@
 #
 # The people this manager is for are musicians, and `cargo build --release`
 # with a Rust 1.93 toolchain is not an install method for them (ROADMAP 0.3).
-# What this publishes is one statically linked binary that runs on any x86_64
-# Linux, whatever its glibc, three ways: a tarball, a .deb and an .rpm with the
-# same files where a distribution keeps them, and an install script that puts
-# the tarball in ~/.local. No checksum file goes beside them: GitHub
-# publishes every asset's SHA-256 on the release itself, and the build
-# provenance attestation covers the rest.
+# What this publishes is one statically linked binary per architecture,
+# x86_64 and aarch64, that runs on any Linux of that architecture, whatever its
+# glibc, three ways: a tarball, a .deb and an .rpm with the same files where a
+# distribution keeps them, and one install script that puts the right tarball
+# in ~/.local. No checksum file goes beside them: GitHub publishes every
+# asset's SHA-256 on the release itself, and the build provenance attestation
+# covers the rest.
 name: release
 
 on:
@@ -20,12 +21,10 @@ on:
         description: An existing tag to build and publish.
         required: true
 
+# The build jobs run the test suite and every crate's build script, so they
+# get a read-only token; only `publish`, which runs neither, can write.
 permissions:
-  contents: write
-  # For the build provenance attestation: a short-lived OIDC token proves to
-  # Sigstore which workflow, commit and repository produced the files.
-  id-token: write
-  attestations: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,17 +32,11 @@ env:
   # machine built it, and "install this on Ubuntu 22.04 first" is not an
   # answer. Every C dependency in the tree — aws-lc-sys under rustls, liblzma,
   # bzip2 — ships musl support; they need a musl-targeting compiler, which is
-  # what musl-tools provides.
-  TARGET: x86_64-unknown-linux-musl
+  # what musl-tools provides on each architecture's runner.
   CC_x86_64_unknown_linux_musl: musl-gcc
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-  # The asset name carries no version, so the README can name a URL under
-  # `releases/latest/download/` that stays correct across releases. The
-  # version is inside, in the directory the tarball unpacks to.
-  ASSET: luthier-x86_64-linux.tar.gz
-  DEB_ASSET: luthier-x86_64-linux.deb
-  RPM_ASSET: luthier-x86_64-linux.rpm
-  SCRIPT_ASSET: install.sh
+  CC_aarch64_unknown_linux_musl: musl-gcc
+  CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
   # The default bench travels with the release rather than as a branch
   # tarball of this repository: discovery walks whatever it is handed, so a
   # repository tarball would offer the workspace's own `Cargo.toml` files up
@@ -52,9 +45,20 @@ env:
   BENCH_ASSET: bench.tar.gz
 
 jobs:
-  release:
-    name: Build and publish
-    runs-on: ubuntu-latest
+  # Each architecture on a runner of its own kind, so its suite runs and its
+  # binary generates the man page and completions natively, without emulation.
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
     steps:
       - uses: actions/checkout@v7
         with:
@@ -62,9 +66,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-musl
+          targets: ${{ env.TARGET }}
 
       - uses: Swatinem/rust-cache@v2
+
+      # For nfpm, which packaging/package.sh installs at its pinned version.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          # No go.sum here for it to key a cache on.
+          cache: false
 
       - name: Install the musl toolchain
         run: |
@@ -73,20 +84,21 @@ jobs:
 
       # A tag that disagrees with the version the binary reports would put
       # `luthier --version` and the release page at odds forever afterwards,
-      # and nothing downstream would catch it.
+      # and nothing downstream would catch it. `cargo pkgid` rather than
+      # metadata and jq, which the ARM runner image need not have.
       - name: The tag and the workspace version agree
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "luthier-cli") | .version')
+          version=$(cargo pkgid -p luthier-cli | sed 's/.*[#@]//')
           if [ "$tag" != "v$version" ]; then
             echo "tag $tag does not match workspace version $version" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_ENV"
 
-      # A tag builds nothing the suite has not just passed on. Run on the
-      # host target: what is being checked is the code, not the libc.
+      # A tag builds nothing the suite has not just passed on, on this
+      # architecture. Run on the host target: what is being checked is the
+      # code, not the libc.
       - name: Test
         run: cargo test --workspace --locked
 
@@ -106,10 +118,50 @@ jobs:
             exit 1
           fi
 
-      # The tarball, the .deb, the .rpm and install.sh, by the script CI also
-      # runs on every change.
+      # The tarball, the .deb and the .rpm for this architecture, by the
+      # script CI also runs on every change. Their names carry no version, so
+      # the README can name URLs under `releases/latest/download/` that stay
+      # correct across releases; the version is inside, in the directory the
+      # tarball unpacks to.
       - name: Package
         run: packaging/package.sh "target/$TARGET/release/luthier" "$version" "$TARGET"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luthier-${{ matrix.arch }}
+          path: luthier-${{ matrix.arch }}-linux.*
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # For the build provenance attestation: a short-lived OIDC token proves
+      # to Sigstore which workflow, commit and repository produced the files.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: luthier-*
+          merge-multiple: true
+
+      # The build jobs have checked the tag against the workspace version.
+      - name: Version
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "version=${tag#v}" >> "$GITHUB_ENV"
+
+      # One script for both architectures: it picks the tarball for the
+      # machine it runs on and checks it against the SHA-256 written in here.
+      - name: Write the install script
+        run: packaging/install-script.sh "$version" x86_64 aarch64
 
       # `bench` as the single top-level entry, which is the shape
       # `unwrap_single_root` was written for: the snapshot's paths then stay
@@ -129,10 +181,8 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
-            ${{ env.ASSET }}
-            ${{ env.DEB_ASSET }}
-            ${{ env.RPM_ASSET }}
-            ${{ env.SCRIPT_ASSET }}
+            luthier-*-linux.*
+            install.sh
             ${{ env.BENCH_ASSET }}
 
       # Release notes come from the changelog rather than from the tag
@@ -158,6 +208,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
+          files="luthier-x86_64-linux.tar.gz luthier-x86_64-linux.deb luthier-x86_64-linux.rpm
+            luthier-aarch64-linux.tar.gz luthier-aarch64-linux.deb luthier-aarch64-linux.rpm
+            install.sh $BENCH_ASSET"
+          for f in $files; do
+            [ -s "$f" ] || { echo "::error::$f is missing"; exit 1; }
+          done
           if gh release view "$tag" > /dev/null 2>&1; then
             # A published release is what `releases/latest` serves. Changing
             # its files after the fact would change what users who already
@@ -168,12 +224,10 @@ jobs:
             fi
             # A draft left by an earlier, half-finished run is completed.
             gh release edit "$tag" --notes-file notes.md
-            gh release upload "$tag" "$ASSET" "$DEB_ASSET" "$RPM_ASSET" \
-              "$SCRIPT_ASSET" "$BENCH_ASSET" --clobber
+            # shellcheck disable=SC2086 # $files is a list of plain names
+            gh release upload "$tag" $files --clobber
             gh release edit "$tag" --draft=false
           else
-            gh release create "$tag" \
-              --title "$tag" \
-              --notes-file notes.md \
-              "$ASSET" "$DEB_ASSET" "$RPM_ASSET" "$SCRIPT_ASSET" "$BENCH_ASSET"
+            # shellcheck disable=SC2086
+            gh release create "$tag" --title "$tag" --notes-file notes.md $files
           fi

@@ -9,6 +9,11 @@ use assert_cmd::Command;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// The architecture the binary under test resolves for (`Target::host()`) and
+/// whose VST3 directory it expects. The fixtures publish for it, so the suite
+/// passes on x86_64 and on aarch64 alike.
+const ARCH: &str = std::env::consts::ARCH;
+
 /// A throwaway installation with its own registry.
 struct Fixture {
   dir: tempfile::TempDir,
@@ -114,7 +119,7 @@ impl Fixture {
              license = {{ kind = \"open-source\", spdx = \"CC0-1.0\" }}\n\
              \n[[releases]]\nversion = \"{version}\"\n\
              \n[[releases.artifacts]]\n\
-             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             target = {{ os = \"linux\", arch = \"{ARCH}\" }}\n\
              source = {{ type = \"file\", url = \"{}\" }}\n\
              archive = \"tar.gz\"\n\
              size = {}\n\
@@ -136,7 +141,7 @@ impl Fixture {
              license = {{ kind = \"open-source\", spdx = \"CC0-1.0\" }}\n\
              \n[[releases]]\nversion = \"{version}\"\n\
              \n[[releases.artifacts]]\n\
-             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             target = {{ os = \"linux\", arch = \"{ARCH}\" }}\n\
              source = {{ type = \"file\", url = \"{}\" }}\n\
              archive = \"tar.gz\"\n\
              size = {}\n\
@@ -169,7 +174,7 @@ impl Fixture {
     append(&mut builder, &format!("{name}.clap"), &clap, 0o755);
     append(
       &mut builder,
-      &format!("{name}.vst3/Contents/x86_64-linux/{name}.so"),
+      &format!("{name}.vst3/Contents/{ARCH}-linux/{name}.so"),
       &elf_shared_object(),
       0o755,
     );
@@ -216,7 +221,7 @@ impl Fixture {
     }
     manifest.push_str(&format!(
       "\n[[releases.artifacts]]\n\
-             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             target = {{ os = \"linux\", arch = \"{ARCH}\" }}\n\
              source = {{ type = \"file\", url = \"{}\" }}\n\
              archive = \"tar.gz\"\n\
              size = {}\n\
@@ -259,7 +264,7 @@ impl Fixture {
              license = {{ kind = \"open-source\", spdx = \"GPL-3.0-or-later\" }}\n\
              \n[[releases]]\nversion = \"{version}\"\n\
              \n[[releases.artifacts]]\n\
-             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             target = {{ os = \"linux\", arch = \"{ARCH}\" }}\n\
              source = {{ type = \"file\", url = \"{}\" }}\n\
              archive = \"tar.gz\"\n\
              size = {}\n\
@@ -326,11 +331,7 @@ fn elf_shared_object() -> Vec<u8> {
   bytes[5] = 1;
   bytes[6] = 1;
   bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
-  let machine: u16 = if std::env::consts::ARCH == "aarch64" {
-    0xb7
-  } else {
-    0x3e
-  };
+  let machine: u16 = if ARCH == "aarch64" { 0xb7 } else { 0x3e };
   bytes[18..20].copy_from_slice(&machine.to_le_bytes());
   bytes
 }
@@ -387,7 +388,7 @@ fn the_full_lifecycle_works() {
   assert!(
     fixture
       .vst3_dir()
-      .join("Testsynth.vst3/Contents/x86_64-linux/Testsynth.so")
+      .join(format!("Testsynth.vst3/Contents/{ARCH}-linux/Testsynth.so"))
       .is_file()
   );
 
@@ -1862,7 +1863,7 @@ impl Fixture {
              license = {{ kind = \"open-source\", spdx = \"MIT\" }}\n\
              \n[[releases]]\nversion = \"1.0.0\"\n\
              \n[[releases.artifacts]]\n\
-             target = {{ os = \"linux\", arch = \"x86_64\" }}\n\
+             target = {{ os = \"linux\", arch = \"{ARCH}\" }}\n\
              source = {{ type = \"file\", url = \"{}\" }}\n\
              archive = \"none\"\n\
              size = {}\n\

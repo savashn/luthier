@@ -42,7 +42,7 @@ In the flake that holds your Home Manager configuration:
 
   outputs = { nixpkgs, home-manager, luthier, ... }: {
     homeConfigurations."you" = home-manager.lib.homeManagerConfiguration {
-      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      pkgs = nixpkgs.legacyPackages.x86_64-linux; # or aarch64-linux
       modules = [
         luthier.homeManagerModules.default
         ./home.nix

@@ -6,9 +6,13 @@
   outputs =
     { self, nixpkgs }:
     let
-      # Every artifact the registries carry is for Linux x86_64, so a build
-      # for anything else would install nothing.
-      systems = [ "x86_64-linux" ];
+      # The architectures the registries carry artifacts for: most packages
+      # are x86_64-only, but some 65 Open Audio Stack packages publish an
+      # aarch64 build too (2026-10).
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {

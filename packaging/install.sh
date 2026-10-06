@@ -3,10 +3,10 @@
 #
 #     curl -fsSL https://github.com/savashn/luthier/releases/latest/download/install.sh | sh
 #
-# This file is a template. The release workflow writes the version and the
-# tarball's SHA-256 into it when it attaches it to a release, so each copy
-# installs the release it came from and refuses any tarball but the one that
-# release built.
+# This file is a template. packaging/install-script.sh writes the version and
+# each architecture's tarball SHA-256 into it for a release, so each copy
+# installs the release it came from, picks the tarball for this machine
+# (x86_64 or aarch64), and refuses any tarball but the one that release built.
 #
 # LUTHIER_PREFIX moves everything (default ~/.local; the binary goes to
 # $LUTHIER_PREFIX/bin). Not PREFIX, which build environments export for their own use.
@@ -17,8 +17,8 @@
 set -eu
 
 version='@VERSION@'
-sha256='@SHA256@'
-asset='luthier-x86_64-linux.tar.gz'
+sha256_x86_64='@SHA256_X86_64@'
+sha256_aarch64='@SHA256_AARCH64@'
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -57,9 +57,21 @@ uninstall_luthier() {
 install_luthier() {
   [ "$(uname -s)" = Linux ] || die "Luthier runs on Linux only"
   case "$(uname -m)" in
-  x86_64 | amd64) ;;
-  *) die "Luthier is built for x86_64 only; this machine is $(uname -m)" ;;
+  x86_64 | amd64) arch=x86_64 sha256=$sha256_x86_64 ;;
+  aarch64 | arm64) arch=aarch64 sha256=$sha256_aarch64 ;;
+  *) die "Luthier is built for x86_64 and aarch64; this machine is $(uname -m)" ;;
   esac
+  case "$sha256" in
+  @*) die "release v$version has no $arch build" ;;
+  esac
+  # A 64-bit kernel can run a 32-bit system (32-bit Raspberry Pi OS on a Pi 4
+  # or 5): uname says aarch64, but the DAW is 32-bit and could not load the
+  # aarch64 plugins this build would install. Where getconf is missing, the
+  # check is skipped.
+  if [ "$(getconf LONG_BIT 2> /dev/null || echo 64)" = 32 ]; then
+    die "this is a 32-bit system on a 64-bit kernel; Luthier's builds are 64-bit"
+  fi
+  asset="luthier-$arch-linux.tar.gz"
 
   if command -v curl > /dev/null 2>&1; then
     fetch() { curl -fsSL "$1" -o "$2"; }

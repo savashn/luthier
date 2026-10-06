@@ -82,6 +82,9 @@ rustPlatform.buildRustPackage {
     changelog = "https://github.com/savashn/luthier/blob/main/CHANGELOG.md";
     license = lib.licenses.lgpl21Plus;
     mainProgram = "luthier";
-    platforms = [ "x86_64-linux" ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+    ];
   };
 }

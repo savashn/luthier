@@ -1,11 +1,13 @@
-# The .deb and .rpm a release attaches, built by nfpm from a copy of the
-# directory the tarball is made of (`stage`), so a package installs exactly the
-# files the tarball carries, only where a distribution keeps them. The binary
-# is static: one .deb and one .rpm serve every release of every distribution,
-# with no dependencies to declare. The release workflow sets VERSION; nfpm
-# expands variables in fields like that one, but not in `src` paths.
+# The .deb and .rpm a release attaches for each architecture, built by nfpm
+# from a copy of the directory the tarball is made of (`stage`), so a package
+# installs exactly the files the tarball carries, only where a distribution
+# keeps them. The binary is static: one .deb and one .rpm per architecture
+# serve every release of every distribution, with no dependencies to declare.
+# packaging/package.sh sets VERSION and NFPM_ARCH (amd64 or arm64; nfpm calls
+# the latter aarch64 in the .rpm); nfpm expands variables in fields like these,
+# but not in `src` paths.
 name: luthier
-arch: amd64
+arch: ${NFPM_ARCH}
 platform: linux
 version: ${VERSION}
 section: sound

@@ -15,7 +15,7 @@ Four crates, 404 tests, fully offline. `refresh`, `search`, `info`, `install`,
 environments existed until 0.2 and were removed; see *Deliberate ceilings*.
 
 CLAP, VST3, LV2 and sample libraries install, from `.tar.gz`, `.tar.xz`,
-`.zip` and `.7z`, on Linux x86_64. Manifests are TOML; every package carries
+`.zip` and `.7z`, on Linux x86_64 and aarch64. Manifests are TOML; every package carries
 one category from a closed list plus free-form tags. Extraction runs through
 one hardened policy with a 38-case malicious-archive corpus.
 
@@ -362,8 +362,11 @@ Concrete content gaps, in order of how visible they are:
   the package ID, exactly as a `library` does.
 - **No impulse-response content.** The vision document promises IRs; the
   registry has plugins that *load* IRs and no IR collections.
-- **No aarch64 artifacts.** The schema models the target; an ARM Linux user can
-  resolve nothing.
+- **Few aarch64 artifacts.** Releases after 0.3.0 ship an aarch64 build, and some 65
+  Open Audio Stack packages publish a Linux archive for aarch64, against some
+  330 for x86_64 (2026-10; counted before translation, unlike the 299 above);
+  the bench's own manifests list x86_64 only, the three DrumGizmo kits among
+  them although a kit is the same on every architecture.
 - **Only two packages are `external`, and both are engines.** That is the point
   now: the bench carries what OAS cannot, and `check-updates` is what will
   notice when an upstream starts publishing binaries.

@@ -41,10 +41,12 @@ $ luthier remove surge
 
 ## Install
 
-Luthier runs on Linux x86_64. Every way below installs the same statically
-linked binary; there is no runtime to install and no toolchain to build it
-with. The packages and the install script also put its man page and shell
-completions in place. Pick the line for your system:
+Luthier runs on Linux, on x86_64 and on 64-bit ARM (aarch64). Every way below
+installs the same statically linked binary; there is no runtime to install and
+no toolchain to build it with. The packages and the install script also put its
+man page and shell completions in place. The commands name the file with
+`$(uname -m)`, which is `x86_64` or `aarch64`, so they are the same on both.
+Pick the line for your system:
 
 | Your system | Install with |
 |---|---|
@@ -56,11 +58,21 @@ completions in place. Pick the line for your system:
 A package or script from a release does not update itself: when a new release
 comes out, install it the same way.
 
+On ARM, Luthier installs what is published for ARM, and most Linux audio
+software is published for x86_64 only: some 65 of the Open Audio Stack
+registry's packages publish a Linux archive for aarch64, against some 330 for
+x86_64, and the bench's own packages are x86_64 only. `luthier search` shows everything;
+installing a package with no build for your machine says so before anything
+is downloaded. The ARM build is for a 64-bit system: a 32-bit one on a 64-bit
+kernel, such as 32-bit Raspberry Pi OS on a Pi 4 or 5, reports `aarch64` too,
+but its DAW cannot load the plugins Luthier would install. The install script
+refuses such a system; the packages and the tarball do not know to.
+
 ### Debian and Ubuntu
 
 ```console
-curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.deb
-sudo apt install ./luthier-x86_64-linux.deb
+curl -fLO https://github.com/savashn/luthier/releases/latest/download/luthier-$(uname -m)-linux.deb
+sudo apt install ./luthier-$(uname -m)-linux.deb
 ```
 
 Opening the downloaded file in your software centre works too.
@@ -69,7 +81,7 @@ Opening the downloaded file in your software centre works too.
 ### Fedora and openSUSE
 
 ```console
-sudo dnf install https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.rpm
+sudo dnf install https://github.com/savashn/luthier/releases/latest/download/luthier-$(uname -m)-linux.rpm
 ```
 
 On openSUSE, download it and install it with zypper. The package is not
@@ -77,8 +89,8 @@ signed with a key, so zypper has to be told to accept that; what proves where
 it came from is the [attestation](#checking-a-download):
 
 ```console
-curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.rpm
-sudo zypper install --allow-unsigned-rpm ./luthier-x86_64-linux.rpm
+curl -fLO https://github.com/savashn/luthier/releases/latest/download/luthier-$(uname -m)-linux.rpm
+sudo zypper install --allow-unsigned-rpm ./luthier-$(uname -m)-linux.rpm
 ```
 
 `sudo dnf remove luthier` or `sudo zypper remove luthier` removes it.
@@ -101,8 +113,8 @@ somewhere else; `sh install.sh --uninstall` removes what it installed.
 The tarball the other ways are made from:
 
 ```console
-curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
-tar xzf luthier-x86_64-linux.tar.gz
+curl -fLO https://github.com/savashn/luthier/releases/latest/download/luthier-$(uname -m)-linux.tar.gz
+tar xzf luthier-$(uname -m)-linux.tar.gz
 install -Dm755 luthier-*/luthier ~/.local/bin/luthier
 ```
 
@@ -140,7 +152,7 @@ file was built by this repository's release workflow, from which commit; it
 works for the tarball, the .deb, the .rpm and the install script alike:
 
 ```console
-gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+gh attestation verify luthier-$(uname -m)-linux.tar.gz -R savashn/luthier
 ```
 
 ### With Nix
