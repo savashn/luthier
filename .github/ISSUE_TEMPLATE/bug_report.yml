@@ -37,7 +37,7 @@ body:
     attributes:
       label: Version
       description: The output of `luthier --version`, and how you installed it.
-      placeholder: luthier 0.1.0, release tarball
+      placeholder: luthier 0.4.0, from the .deb
     validations:
       required: true
 

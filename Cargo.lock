@@ -1219,7 +1219,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "luthier-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1244,7 +1244,7 @@ dependencies = [
 
 [[package]]
 name = "luthier-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "luthier-manifest"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "percent-encoding",
  "schemars",
@@ -1290,7 +1290,7 @@ dependencies = [
 
 [[package]]
 name = "luthier-registry-tool"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "assert_cmd",
  "clap",

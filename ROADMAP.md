@@ -36,9 +36,10 @@ bench exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
-`v0.3.0` is the latest release: a static binary for Linux x86_64 and the
-bench, from the public repository at `savashn/luthier`, published straight
-from a `v*` tag. Phase 0 is done.
+`v0.4.0` is the latest release: a static binary for Linux x86_64 and one for
+aarch64, each as a tarball, a .deb and an .rpm, an install script that picks the
+tarball for the machine, and the bench, from the public repository at `savashn/luthier`,
+published straight from a `v*` tag. Phase 0 is done.
 
 ---
 
@@ -330,7 +331,7 @@ who installs software through their distribution. `cargo install` is not a
 distribution channel for this audience.
 
 Every release now also carries a `.deb`, an `.rpm` and an install script
-(unreleased, after 0.3). Downloaded from a release, none of them updates
+(since 0.4.0). Downloaded from a release, none of them updates
 itself; the AUR package and a Flatpak still would.
 
 **Done when:** at least the AUR package exists and is referenced from the
@@ -362,7 +363,7 @@ Concrete content gaps, in order of how visible they are:
   the package ID, exactly as a `library` does.
 - **No impulse-response content.** The vision document promises IRs; the
   registry has plugins that *load* IRs and no IR collections.
-- **Few aarch64 artifacts.** Releases after 0.3.0 ship an aarch64 build, and some 65
+- **Few aarch64 artifacts.** From 0.4.0 on, releases ship an aarch64 build, and some 65
   Open Audio Stack packages publish a Linux archive for aarch64, against some
   330 for x86_64 (2026-10; counted before translation, unlike the 299 above);
   the bench's own manifests list x86_64 only, the three DrumGizmo kits among

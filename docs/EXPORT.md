@@ -23,7 +23,7 @@ An exported file looks like this:
 ```toml
 [meta]
 schema = 1
-luthier = "0.3.0"
+luthier = "0.4.0"
 exported = "2026-09-06T21:07:05.487622056Z"
 pinned = true
 

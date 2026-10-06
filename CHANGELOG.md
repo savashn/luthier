@@ -15,6 +15,8 @@ about.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-06
+
 ### Added
 
 - **Linux on 64-bit ARM (aarch64).** Every release now carries a static
@@ -244,6 +246,8 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
+[Unreleased]: https://github.com/savashn/luthier/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/savashn/luthier/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/savashn/luthier/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/savashn/luthier/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/savashn/luthier/releases/tag/v0.1.0
