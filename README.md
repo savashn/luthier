@@ -7,7 +7,11 @@ Provides CLAP, VST3 and LV2 plugins and sample libraries.
 
 - [Status](#status)
 - [Install](#install)
-  - [Manually](#manually)
+  - [Debian and Ubuntu](#debian-and-ubuntu)
+  - [Fedora and openSUSE](#fedora-and-opensuse)
+  - [Install script](#install-script)
+  - [By hand](#by-hand)
+  - [Checking a download](#checking-a-download)
   - [With Nix](#with-nix)
   - [First steps](#first-steps)
 - [Use](#use)
@@ -37,13 +41,64 @@ $ luthier remove surge
 
 ## Install
 
-Luthier runs on Linux x86_64. Install it by hand from a release, or through
-the flake if you use Nix.
+Luthier runs on Linux x86_64. Every way below installs the same statically
+linked binary; there is no runtime to install and no toolchain to build it
+with. The packages and the install script also put its man page and shell
+completions in place. Pick the line for your system:
 
-### Manually
+| Your system | Install with |
+|---|---|
+| Debian, Ubuntu, Ubuntu Studio, Linux Mint | [the .deb](#debian-and-ubuntu) |
+| Fedora, Fedora Jam, openSUSE | [the .rpm](#fedora-and-opensuse) |
+| NixOS, or Nix on any distribution | [the flake](#with-nix) |
+| Anything else, or without root | [the install script](#install-script), or [by hand](#by-hand) |
 
-One statically linked binary, no runtime to install and no toolchain to build
-it with:
+A package or script from a release does not update itself: when a new release
+comes out, install it the same way.
+
+### Debian and Ubuntu
+
+```console
+curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.deb
+sudo apt install ./luthier-x86_64-linux.deb
+```
+
+Opening the downloaded file in your software centre works too.
+`sudo apt remove luthier` removes it.
+
+### Fedora and openSUSE
+
+```console
+sudo dnf install https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.rpm
+```
+
+On openSUSE, download it and install it with zypper. The package is not
+signed with a key, so zypper has to be told to accept that; what proves where
+it came from is the [attestation](#checking-a-download):
+
+```console
+curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.rpm
+sudo zypper install --allow-unsigned-rpm ./luthier-x86_64-linux.rpm
+```
+
+`sudo dnf remove luthier` or `sudo zypper remove luthier` removes it.
+
+### Install script
+
+Installs into `~/.local`, without root:
+
+```console
+curl -fsSL https://github.com/savashn/luthier/releases/latest/download/install.sh | sh
+```
+
+The script downloads the release's tarball and refuses it unless its SHA-256
+is the one the release wrote into the script. To read it before it runs,
+download it and run it with `sh install.sh`. `LUTHIER_PREFIX=/some/dir` installs
+somewhere else; `sh install.sh --uninstall` removes what it installed.
+
+### By hand
+
+The tarball the other ways are made from:
 
 ```console
 curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
@@ -61,22 +116,12 @@ your shell, and open a new terminal:
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
-To check the download, compare `sha256sum luthier-x86_64-linux.tar.gz` with
-the SHA-256 GitHub shows beside the file on the
-[release page](https://github.com/savashn/luthier/releases/latest). With the
-[GitHub CLI](https://cli.github.com), one command checks both that and that the
-tarball was built by this repository's release workflow, from which commit:
-
-```console
-gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
-```
-
 The tarball also carries the man page and shell completions, which the binary
 generates itself:
 
 ```console
 install -Dm644 luthier-*/luthier.1 ~/.local/share/man/man1/luthier.1
-luthier completions zsh > ~/.zfunc/_luthier
+mkdir -p ~/.zfunc && luthier completions zsh > ~/.zfunc/_luthier
 ```
 
 From source, with a Rust 1.93 or newer toolchain:
@@ -84,6 +129,18 @@ From source, with a Rust 1.93 or newer toolchain:
 ```console
 cargo build --release
 install -Dm755 target/release/luthier ~/.local/bin/luthier
+```
+
+### Checking a download
+
+Compare `sha256sum` of the file with the SHA-256 GitHub shows beside it on the
+[release page](https://github.com/savashn/luthier/releases/latest). With the
+[GitHub CLI](https://cli.github.com), one command checks both that and that the
+file was built by this repository's release workflow, from which commit; it
+works for the tarball, the .deb, the .rpm and the install script alike:
+
+```console
+gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
 ```
 
 ### With Nix

@@ -3,7 +3,9 @@
 # The people this manager is for are musicians, and `cargo build --release`
 # with a Rust 1.93 toolchain is not an install method for them (ROADMAP 0.3).
 # What this publishes is one statically linked binary that runs on any x86_64
-# Linux, whatever its glibc. No checksum file goes beside it: GitHub
+# Linux, whatever its glibc, three ways: a tarball, a .deb and an .rpm with the
+# same files where a distribution keeps them, and an install script that puts
+# the tarball in ~/.local. No checksum file goes beside them: GitHub
 # publishes every asset's SHA-256 on the release itself, and the build
 # provenance attestation covers the rest.
 name: release
@@ -39,6 +41,9 @@ env:
   # `releases/latest/download/` that stays correct across releases. The
   # version is inside, in the directory the tarball unpacks to.
   ASSET: luthier-x86_64-linux.tar.gz
+  DEB_ASSET: luthier-x86_64-linux.deb
+  RPM_ASSET: luthier-x86_64-linux.rpm
+  SCRIPT_ASSET: install.sh
   # The default bench travels with the release rather than as a branch
   # tarball of this repository: discovery walks whatever it is handed, so a
   # repository tarball would offer the workspace's own `Cargo.toml` files up
@@ -101,21 +106,10 @@ jobs:
             exit 1
           fi
 
-      # The binary generates its own man page and completions, so they cannot
-      # drift from the arguments it actually accepts.
+      # The tarball, the .deb, the .rpm and install.sh, by the script CI also
+      # runs on every change.
       - name: Package
-        run: |
-          binary="target/$TARGET/release/luthier"
-          dir="luthier-$version-$TARGET"
-          mkdir -p "$dir/completions"
-          cp "$binary" "$dir/luthier"
-          "$binary" man > "$dir/luthier.1"
-          for shell in bash zsh fish; do
-            "$binary" completions "$shell" > "$dir/completions/luthier.$shell"
-          done
-          cp LICENSE README.md CHANGELOG.md SECURITY.md "$dir/"
-          tar czf "$ASSET" "$dir"
-          sha256sum "$ASSET"
+        run: packaging/package.sh "target/$TARGET/release/luthier" "$version" "$TARGET"
 
       # `bench` as the single top-level entry, which is the shape
       # `unwrap_single_root` was written for: the snapshot's paths then stay
@@ -136,6 +130,9 @@ jobs:
         with:
           subject-path: |
             ${{ env.ASSET }}
+            ${{ env.DEB_ASSET }}
+            ${{ env.RPM_ASSET }}
+            ${{ env.SCRIPT_ASSET }}
             ${{ env.BENCH_ASSET }}
 
       # Release notes come from the changelog rather than from the tag
@@ -171,11 +168,12 @@ jobs:
             fi
             # A draft left by an earlier, half-finished run is completed.
             gh release edit "$tag" --notes-file notes.md
-            gh release upload "$tag" "$ASSET" "$BENCH_ASSET" --clobber
+            gh release upload "$tag" "$ASSET" "$DEB_ASSET" "$RPM_ASSET" \
+              "$SCRIPT_ASSET" "$BENCH_ASSET" --clobber
             gh release edit "$tag" --draft=false
           else
             gh release create "$tag" \
               --title "$tag" \
               --notes-file notes.md \
-              "$ASSET" "$BENCH_ASSET"
+              "$ASSET" "$DEB_ASSET" "$RPM_ASSET" "$SCRIPT_ASSET" "$BENCH_ASSET"
           fi

@@ -329,6 +329,10 @@ release asset exists (0.3), and so does the flake; neither reaches someone
 who installs software through their distribution. `cargo install` is not a
 distribution channel for this audience.
 
+Every release now also carries a `.deb`, an `.rpm` and an install script
+(unreleased, after 0.3). Downloaded from a release, none of them updates
+itself; the AUR package and a Flatpak still would.
+
 **Done when:** at least the AUR package exists and is referenced from the
 README.
 

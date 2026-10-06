@@ -45,6 +45,61 @@ jobs:
           cargo run -q -p luthier-registry-tool -- schema > /tmp/generated.json
           diff -u schemas/package-v1.json /tmp/generated.json
 
+  # The release's packaging, on every change: a release only runs it on a tag,
+  # and a broken nfpm.yaml or install.sh found there leaves a tag without a
+  # release. The same script, from a debug build; what is checked here is the
+  # packaging, and the release job checks the static binary itself.
+  package:
+    name: Packaging
+    runs-on: ubuntu-latest
+    env:
+      ASSET: luthier-x86_64-linux.tar.gz
+      DEB_ASSET: luthier-x86_64-linux.deb
+      RPM_ASSET: luthier-x86_64-linux.rpm
+      SCRIPT_ASSET: install.sh
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Shell scripts
+        run: shellcheck -s sh packaging/install.sh packaging/package.sh
+
+      - name: Package
+        run: |
+          cargo build --locked -p luthier-cli
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "luthier-cli") | .version')
+          packaging/package.sh target/debug/luthier "$version" x86_64-unknown-linux-gnu
+
+      - name: The .deb installs and removes
+        run: |
+          sudo apt-get install -y "./$DEB_ASSET"
+          luthier --version
+          dpkg -L luthier | grep -qx /usr/share/man/man1/luthier.1.gz
+          sudo apt-get remove -y luthier
+          test ! -e /usr/bin/luthier
+
+      # No repositories: the package has no dependencies, so their metadata
+      # would only make the step slow and fail when a mirror does. Removing it
+      # must leave none of its directories behind.
+      - name: The .rpm installs and removes on Fedora
+        run: |
+          docker run --rm -v "$PWD:/o:ro" fedora:latest sh -ec "
+            dnf install -y -q --disablerepo='*' /o/$RPM_ASSET
+            luthier --version
+            dnf remove -y -q --disablerepo='*' luthier
+            test ! -e /usr/share/doc/luthier && test ! -e /usr/share/licenses/luthier"
+
+      # Served from file://, which the script allows only for a mirror or a
+      # test; the SHA-256 written into it is checked all the same.
+      - name: The install script installs and uninstalls
+        run: |
+          LUTHIER_RELEASE_URL="file://$PWD" sh "$SCRIPT_ASSET"
+          ~/.local/bin/luthier --version
+          sh "$SCRIPT_ASSET" --uninstall
+          test ! -e ~/.local/bin/luthier
+
   # `rust-version = "1.93"` is a promise the README makes to anyone building
   # from source, and the job above runs on stable, so nothing else keeps it.
   # `check` rather than `test`: what can break is the language and std APIs a

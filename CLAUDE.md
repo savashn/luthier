@@ -358,9 +358,14 @@ hidden `--api` flag, so the suite stays offline. GitHub is the only forge, by
 decision: nothing in the bench points anywhere else, and SourceForge would mean
 inferring a version from a filename (ROADMAP 1.1).
 
-A `v*` tag publishes a release directly: the static binary and
-`bench.tar.gz`, both with build provenance attested through Sigstore
-(`gh attestation verify`). Nothing is signed by hand.
+A `v*` tag publishes a release directly: the static binary as a tarball, a
+`.deb` and an `.rpm` of the same files (`packaging/nfpm.yaml`), an
+`install.sh` that installs the tarball into `~/.local`, and `bench.tar.gz`,
+all with build provenance attested through Sigstore (`gh attestation verify`).
+Nothing is signed by hand. `packaging/package.sh` makes the first four, and
+fills the `packaging/install.sh` template in with the version and the
+tarball's SHA-256; CI runs it on every change. Adding a file to the tarball
+means adding it to `nfpm.yaml` and to the list `install.sh` installs too.
 
 `luthier location` puts the cache, sample libraries or plugins in a directory
 of the user's choosing (`locations` in `config.json`).

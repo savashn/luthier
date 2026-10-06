@@ -15,3 +15,11 @@ report.json
 
 # nix-direnv caches the dev shell here.
 /.direnv
+
+# What packaging/package.sh writes in the repository root (the tarball is
+# covered above).
+/stage
+/luthier-*/
+/luthier-*.deb
+/luthier-*.rpm
+/install.sh

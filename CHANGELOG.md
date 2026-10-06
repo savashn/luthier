@@ -15,6 +15,18 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **A .deb, an .rpm and an install script** beside the tarball on every
+  release, each carrying the same static binary, man page and completions.
+  The packages put them where a distribution keeps them, so `man luthier`
+  and completion work straight away and the package manager removes it all;
+  `install.sh` installs the tarball into `~/.local` without root, and
+  refuses it unless its SHA-256 is the one the release wrote into the
+  script. Their names carry no version, so `releases/latest/download/`
+  links stay correct, and the build provenance attestation covers them too.
+  The README now sends each distribution to its own.
+
 ### Security
 
 - **rustls 0.23.45** (RUSTSEC-2026-0285). 0.23.43 accepted TLS 1.3
