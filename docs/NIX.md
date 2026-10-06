@@ -215,7 +215,7 @@ for hosts to see them.
 
 A DAW installed from Flathub sees neither a directory outside your home nor
 all of these variables; see
-[DAWs installed from Flathub](../README.md#daws-installed-from-flathub) for the
+[DAWs installed from Flathub](FLATHUB.md) for the
 `flatpak override` that grants both.
 
 `null`, the default, leaves a location as it is — including one you set by

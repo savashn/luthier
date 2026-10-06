@@ -211,7 +211,7 @@ the crate map keeps that out of `luthier-manifest`.
   (without them `list_plugins()` segfaults, and reading `PluginInfo.type`
   aborts — use `unique_id`); `/app/lib/ardour9/ardour-vst3-scanner -f <bundle>`
   loads a VST3 given `LD_LIBRARY_PATH=/app/lib/ardour9`. The findings are in
-  the README's Flathub section.
+  `docs/FLATHUB.md`.
 - **Nothing is signed, by decision.** The bench is trusted on HTTPS and
   GitHub, as the binary is; `SECURITY.md` *Trusting GitHub* states the risk.
   0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both

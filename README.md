@@ -1,28 +1,20 @@
 # Luthier
 
-- [Status](#status)
-- [What it will not do, and why some plugins are missing](#what-it-will-not-do-and-why-some-plugins-are-missing)
-- [Install](#install)
-  - [First steps](#first-steps)
-- [Use](#use)
-- [Where things go](#where-things-go)
-  - [DAWs installed from Flathub](#daws-installed-from-flathub)
-- [Moving a setup to another machine](#moving-a-setup-to-another-machine)
-- [Nix and Home Manager](#nix-and-home-manager)
-- [Documentation](#documentation)
-- [Licence](#licence)
-
-A command-line package manager for Linux audio software: CLAP, VST3 and LV2
-plugins, and the sample libraries that play in them. Packages come from the
-[Open Audio Stack](https://github.com/open-audio-stack/open-audio-stack-registry)
-registry and from a small curated bench in this repository.
+A DAW-agnostic command-line package manager for Linux audio software.
+Provides CLAP, VST3 and LV2 plugins and sample libraries.
 
 <a href="https://github.com/open-audio-stack"><img src="https://raw.githubusercontent.com/open-audio-stack/open-audio-stack-registry/refs/heads/main/src/assets/powered-by-open-audio-stack.svg" alt="Powered by Open Audio Stack"></a>
 
-A whole setup can be written to a file with `luthier export` and rebuilt,
-version for version, on another machine with `luthier import`. Plugins land
-in the directories hosts already scan (`~/.clap`, `~/.vst3`, `~/.lv2`) rather
-than in a folder of Luthier's own, and nothing is ever run to install them.
+- [Status](#status)
+- [Install](#install)
+  - [Manually](#manually)
+  - [With Nix](#with-nix)
+  - [First steps](#first-steps)
+- [Use](#use)
+- [Where things go](#where-things-go)
+- [Moving a setup to another machine](#moving-a-setup-to-another-machine)
+- [Documentation](#documentation)
+- [Licence](#licence)
 
 Linux audio plugins are scattered across GitHub releases, GitLab, vendor sites
 and distribution repositories, in a handful of archive formats and several
@@ -43,70 +35,20 @@ $ luthier list
 $ luthier remove surge
 ```
 
-## Status
-
-Linux x86_64, CLAP, VST3, LV2 and sample libraries, from `.tar.gz`, `.tar.xz`,
-`.zip` and `.7z` archives. DAW-agnostic: it knows nothing about any particular
-DAW. The manifest schema
-models macOS and Windows targets, but the layouts and registry artifacts are
-Linux-only for now. Installs into your home directory; root is
-never required and system directories are never written to. Distribution and
-container-provided plugins are detected in the conventional system search paths
-(and whatever `CLAP_PATH`, `VST3_PATH` and `LV2_PATH` name), never modified.
-
-Packages come from exactly two places: the Open Audio Stack registry, and the
-bench in this repository, which corrects it where it needs correcting. There is
-no way to add a third. Both are fetched over HTTPS and trusted on the strength
-of the hosts that serve them — for the bench, this repository's GitHub
-releases, the same place the binary comes from. See [SECURITY.md](SECURITY.md)
-for what that does and does not protect against.
-
-## What it will not do, and why some plugins are missing
-
-Installing a package here means: download it, check it against the checksum in
-its manifest, extract it, and copy files into place. That is the complete list.
-There is no field in a manifest that runs a command, no post-install hook, no
-build step — and none will be added.
-
-The reason is that a registry is a pull request away from every user's machine.
-If a manifest could run a command, then merging one would mean running a
-stranger's code on every computer that installs it. Nothing about reviewing a
-pull request carefully makes that safe enough. So the manager cannot execute
-anything, and there is nothing to review for: the worst a merged manifest can
-do is put a file in a plugin directory. See [SECURITY.md](SECURITY.md).
-
-Two consequences follow, and they explain most of what is not here.
-
-**Software that installs itself is out of reach.** A `.deb`, `.rpm` or `.exe`
-is a program that unpacks itself and runs scripts as it goes. Running one is
-exactly what this manager will not do — and running it as root, which those
-formats expect, doubly so.
-
-**Software distributed only by distributions is out of reach.** Guitarix, Calf,
-x42-plugins and many other excellent projects publish source, and their binaries
-are built by Debian, Arch, Fedora and the rest. Those binaries are real, but
-they are built against one distribution's library versions and belong in
-`/usr/lib`. Copying Debian's build into `~/.lv2` on Arch produces a file that
-installs cleanly and then fails to load, which is the one outcome this manager
-is designed never to produce. Your distribution's package manager does this job
-properly; there is nothing to gain from doing it badly here.
-
-What is left is what upstream publishes as a portable archive — a build that
-carries what it needs and runs anywhere. Surge XT, Dexed, LSP Plugins and
-several hundred more do exactly that, and those are the packages you will find.
-
-So: if a plugin is missing, `apt install` or `pacman -S` is usually the answer,
-and that is not a workaround. It is the other half of a division of labour.
-
 ## Install
+
+Luthier runs on Linux x86_64. Install it by hand from a release, or through
+the flake if you use Nix.
+
+### Manually
 
 One statically linked binary, no runtime to install and no toolchain to build
 it with:
 
 ```console
-$ curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
-$ tar xzf luthier-x86_64-linux.tar.gz
-$ install -Dm755 luthier-*/luthier ~/.local/bin/luthier
+curl -LO https://github.com/savashn/luthier/releases/latest/download/luthier-x86_64-linux.tar.gz
+tar xzf luthier-x86_64-linux.tar.gz
+install -Dm755 luthier-*/luthier ~/.local/bin/luthier
 ```
 
 Nothing needs root, and nothing else needs installing.
@@ -116,7 +58,7 @@ not on your `PATH`. Add it once, to `~/.bashrc` or `~/.zshrc` depending on
 your shell, and open a new terminal:
 
 ```console
-$ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 ```
 
 To check the download, compare `sha256sum luthier-x86_64-linux.tar.gz` with
@@ -126,23 +68,39 @@ the SHA-256 GitHub shows beside the file on the
 tarball was built by this repository's release workflow, from which commit:
 
 ```console
-$ gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
+gh attestation verify luthier-x86_64-linux.tar.gz -R savashn/luthier
 ```
 
 The tarball also carries the man page and shell completions, which the binary
 generates itself:
 
 ```console
-$ install -Dm644 luthier-*/luthier.1 ~/.local/share/man/man1/luthier.1
-$ luthier completions zsh > ~/.zfunc/_luthier
+install -Dm644 luthier-*/luthier.1 ~/.local/share/man/man1/luthier.1
+luthier completions zsh > ~/.zfunc/_luthier
 ```
 
 From source, with a Rust 1.93 or newer toolchain:
 
 ```console
-$ cargo build --release
-$ install -Dm755 target/release/luthier ~/.local/bin/luthier
+cargo build --release
+install -Dm755 target/release/luthier ~/.local/bin/luthier
 ```
+
+### With Nix
+
+The repository is a flake. To try it once, or to install it into your
+profile:
+
+```console
+nix run github:savashn/luthier -- search reverb
+nix profile install github:savashn/luthier
+```
+
+The flake also has an overlay for a NixOS configuration, and a Home Manager
+module, `programs.luthier`, that declares your plugins and sample libraries
+and installs them on every `home-manager switch`. Adding the flake, every
+option of the module and what a switch does are in
+[Nix and Home Manager](docs/NIX.md).
 
 ### First steps
 
@@ -150,10 +108,10 @@ Fetch the package lists first; nothing can be found or installed until this
 has run once:
 
 ```console
-$ luthier refresh
-$ luthier search reverb
-$ luthier install dragonfly-reverb
-$ luthier list
+luthier refresh
+luthier search reverb
+luthier install dragonfly-reverb
+luthier list
 ```
 
 Plugins land in `~/.clap`, `~/.vst3` and `~/.lv2`, which hosts already scan:
@@ -224,7 +182,7 @@ warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or 
 ## Where things go
 
 | What | Where |
-|---|---|
+| --- | --- |
 | CLAP plugins | `~/.clap/` |
 | VST3 plugins | `~/.vst3/` |
 | LV2 plugins | `~/.lv2/` |
@@ -236,43 +194,11 @@ warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or 
 `--root <dir>` confines all of these to one directory, which is how the test
 suite avoids ever touching a real plugin directory.
 
-### DAWs installed from Flathub
-
-A DAW from Flathub runs in a sandbox, and still finds what Luthier installs in
-`~/.clap`, `~/.vst3` and `~/.lv2`: Ardour, REAPER, LMMS and Qtractor can read
-your home directory, and Bitwig and Zrythm the whole system. Checked with
-Ardour 9.8 from Flathub, whose own LV2 discovery and VST3 scanner found and
-loaded every plugin Luthier had installed there, inside the sandbox.
-
-Three things behave differently from a DAW installed by your distribution:
-
-- **A plugin location outside your home directory is not visible** to a DAW
-  that can only read your home, and the search-path variables do not all get
-  through either — Ardour and Bitwig set `VST3_PATH`, and Bitwig `CLAP_PATH`,
-  themselves. If you moved plugins with `luthier location set plugins`, grant
-  the DAW the directory and the path, for example:
-
-  ```console
-  $ flatpak override --user --filesystem=/mnt/audio \
-      --env=VST3_PATH=/mnt/audio/plugins/vst3:/app/extensions/Plugins/vst3 \
-      org.ardour.Ardour
-  ```
-
-  The same goes for sample libraries on another disk: the player inside the
-  DAW has to be able to read them.
-- **A plugin that links a library from your system does not load**, because
-  the sandbox has its own libraries. Most plugins bring what they need;
-  `fluidsynth-clap` does not, and needs `libfluidsynth` from the system, so
-  it works only in a DAW your distribution installed.
-- **Plugins from nixpkgs or your distribution are invisible** to a sandboxed
-  DAW. Flathub offers many of them as `org.freedesktop.LinuxAudio.Plugins.*`
-  extensions instead.
-
 ## Moving a setup to another machine
 
 ```console
-$ luthier export -o studio.toml       # on the old machine
-$ luthier import studio.toml          # on the new one
+luthier export -o studio.toml       # on the old machine
+luthier import studio.toml          # on the new one
 ```
 
 The file pins the exact version of every package, including the ones that
@@ -284,38 +210,6 @@ the file does not list, so the installation ends up exactly as described.
 
 See [Export and import](docs/EXPORT.md) for the format.
 
-## Nix and Home Manager
-
-The repository is a flake with a package and a Home Manager module. Declare
-your plugins and sample libraries, and every `home-manager switch` installs
-them:
-
-```nix
-# flake inputs
-luthier.url = "github:savashn/luthier";
-
-# Home Manager modules
-imports = [ luthier.homeManagerModules.default ];
-
-programs.luthier = {
-  enable = true;
-  packages = [
-    "surge"
-    "lsp-plugins"
-    { id = "dragonfly-reverb"; version = "3.2.10"; }
-  ];
-  prune = true;   # remove whatever is not listed
-};
-```
-
-nixpkgs carries many plugins and the engines; what it does not carry is sample
-content, and Luthier finds engines installed from nixpkgs in your profiles. See
-[Nix and Home Manager](docs/NIX.md) for every option.
-
-Without Home Manager, `nix run github:savashn/luthier -- search reverb` runs it
-once, and `luthier import --prune <file>` makes an installation match a
-file on any system.
-
 ## Documentation
 
 - [Roadmap](ROADMAP.md) — what is next, and what is deliberately out of scope
@@ -324,6 +218,8 @@ file on any system.
 - [Export and import](docs/EXPORT.md) — reproducing a setup on another machine
 - [Nix and Home Manager](docs/NIX.md) — `programs.luthier`, and the flake
 - [Security model](SECURITY.md) — what is trusted, and what is not
+- [Scope](docs/SCOPE.md) — what it will not do, and why some plugins are missing
+- [DAWs installed from Flathub](docs/FLATHUB.md) — what a sandboxed host sees
 - [Manifest format](docs/MANIFEST.md) — the package schema
 - [Registry](docs/REGISTRY.md) — adding a package
 - [Exit codes](docs/EXIT_CODES.md)
