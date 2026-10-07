@@ -47,13 +47,16 @@ env:
 jobs:
   # Each architecture on a runner of its own kind, so its suite runs and its
   # binary generates the man page and completions natively, without emulation.
+  # Both on Ubuntu 24.04, so the two builds use the same musl-tools; move them
+  # to a newer release together. `publish` takes the architectures from what
+  # this matrix delivered, so they are listed here alone.
   build:
     name: Build (${{ matrix.arch }})
     strategy:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -70,13 +73,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # For nfpm, which packaging/package.sh installs at its pinned version.
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          # No go.sum here for it to key a cache on.
-          cache: false
-
       - name: Install the musl toolchain
         run: |
           sudo apt-get update
@@ -84,12 +80,11 @@ jobs:
 
       # A tag that disagrees with the version the binary reports would put
       # `luthier --version` and the release page at odds forever afterwards,
-      # and nothing downstream would catch it. `cargo pkgid` rather than
-      # metadata and jq, which the ARM runner image need not have.
+      # and nothing downstream would catch it.
       - name: The tag and the workspace version agree
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          version=$(cargo pkgid -p luthier-cli | sed 's/.*[#@]//')
+          version=$(packaging/version.sh)
           if [ "$tag" != "v$version" ]; then
             echo "tag $tag does not match workspace version $version" >&2
             exit 1
@@ -152,16 +147,29 @@ jobs:
           pattern: luthier-*
           merge-multiple: true
 
-      # The build jobs have checked the tag against the workspace version.
-      - name: Version
+      # The build jobs have checked the tag against the workspace version. The
+      # architectures are the ones whose tarball arrived: `publish` runs only
+      # once every build has succeeded, and each uploads one.
+      - name: Version and architectures
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
           echo "version=${tag#v}" >> "$GITHUB_ENV"
+          arches=
+          for t in luthier-*-linux.tar.gz; do
+            [ -e "$t" ] || continue
+            t=${t#luthier-}
+            arches="$arches ${t%-linux.tar.gz}"
+          done
+          [ -n "$arches" ] || { echo "::error::no tarball arrived from the builds"; exit 1; }
+          echo "ARCHES=$arches" >> "$GITHUB_ENV"
+          echo "architectures:$arches"
 
-      # One script for both architectures: it picks the tarball for the
+      # One script for every architecture: it picks the tarball for the
       # machine it runs on and checks it against the SHA-256 written in here.
       - name: Write the install script
-        run: packaging/install-script.sh "$version" x86_64 aarch64
+        run: |
+          # shellcheck disable=SC2086 # $ARCHES is a list of plain names
+          packaging/install-script.sh "$version" $ARCHES
 
       # `bench` as the single top-level entry, which is the shape
       # `unwrap_single_root` was written for: the snapshot's paths then stay
@@ -208,9 +216,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          files="luthier-x86_64-linux.tar.gz luthier-x86_64-linux.deb luthier-x86_64-linux.rpm
-            luthier-aarch64-linux.tar.gz luthier-aarch64-linux.deb luthier-aarch64-linux.rpm
-            install.sh $BENCH_ASSET"
+          files="install.sh $BENCH_ASSET"
+          for arch in $ARCHES; do
+            files="$files luthier-$arch-linux.tar.gz luthier-$arch-linux.deb luthier-$arch-linux.rpm"
+          done
           for f in $files; do
             [ -s "$f" ] || { echo "::error::$f is missing"; exit 1; }
           done

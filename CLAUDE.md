@@ -368,7 +368,26 @@ architecture builds and runs the suite on a runner of its own kind
 `packaging/install-script.sh` then fills the `packaging/install.sh` template
 in with the version and each tarball's SHA-256. CI runs both on every
 change, on both architectures. Adding a file to the tarball means adding it
-to `nfpm.yaml` and to the list `install.sh` installs too.
+to `nfpm.yaml` and to the list `install.sh` installs too. The workflows read
+the workspace version through `packaging/version.sh` (the Nix package reads
+`Cargo.toml` itself), and nfpm is pinned by version and SHA-256 in
+`package.sh` alone.
+
+Adding an architecture touches, because a workflow matrix cannot share a
+list:
+
+- the code: `Arch` and `Target::host()` in `luthier-manifest`, the ELF
+  machine and VST3 directory in `install/formats.rs`, and the multiarch
+  library directory in `layout.rs`, whose fallbacks are x86_64's;
+- `release.yml`: the `build` matrix and its musl `CC_<triple>` and
+  `CARGO_TARGET_<TRIPLE>_LINKER` variables (`publish` reads the
+  architectures from the tarballs that arrive);
+- `ci.yml`: the `test`, `package` and `install-script` matrices and the
+  `install-script.sh` call; `nix.yml`'s matrix, `systems` in `flake.nix` and
+  `platforms` in `nix/package.nix`;
+- `packaging/`: the `case` in `package.sh` (nfpm's name for it, and an nfpm
+  build pinned for it as a build host), and the `sha256_<arch>` line and
+  `uname -m` case in `install.sh`.
 
 `luthier location` puts the cache, sample libraries or plugins in a directory
 of the user's choosing (`locations` in `config.json`).

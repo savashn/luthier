@@ -31,12 +31,38 @@ aarch64) nfpm_arch=arm64 ;;
 esac
 name="luthier-$arch-linux"
 
-# One pin for both workflows, so CI checks the packaging with the nfpm the
-# release uses. The Go checksum database keeps the tag's contents fixed.
-nfpm_version=v2.47.0
-if ! command -v nfpm > /dev/null 2>&1; then
-  go install "github.com/goreleaser/nfpm/v2/cmd/nfpm@$nfpm_version"
-  PATH="$(go env GOPATH)/bin:$PATH"
+# nfpm's own release build, pinned by version and SHA-256 here alone, so CI
+# checks the packaging with the nfpm the release uses. An nfpm already on PATH
+# is used only if it is that version. The machine this runs on picks the
+# archive, not <target>.
+nfpm_version=2.47.0
+# `go install` builds report it with a leading v; the release build without.
+nfpm_version_re=$(printf '%s' "$nfpm_version" | sed 's/\./\\./g')
+if ! nfpm --version 2> /dev/null | grep -qE "^GitVersion: +v?$nfpm_version_re\$"; then
+  case "$(uname -m)" in
+  x86_64)
+    nfpm_archive="nfpm_${nfpm_version}_Linux_x86_64.tar.gz"
+    nfpm_sha256=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+    ;;
+  aarch64)
+    nfpm_archive="nfpm_${nfpm_version}_Linux_arm64.tar.gz"
+    nfpm_sha256=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+    ;;
+  *)
+    echo "no nfpm build is pinned for $(uname -m)" >&2
+    exit 1
+    ;;
+  esac
+  nfpm_dir=$(mktemp -d)
+  trap 'rm -rf "$nfpm_dir"' EXIT
+  curl -fsSL --retry 3 -o "$nfpm_dir/$nfpm_archive" \
+    "https://github.com/goreleaser/nfpm/releases/download/v$nfpm_version/$nfpm_archive"
+  printf '%s  %s\n' "$nfpm_sha256" "$nfpm_dir/$nfpm_archive" | sha256sum -c - > /dev/null 2>&1 || {
+    echo "$nfpm_archive is not the file its pinned SHA-256 names" >&2
+    exit 1
+  }
+  tar xzf "$nfpm_dir/$nfpm_archive" -C "$nfpm_dir" nfpm
+  PATH="$nfpm_dir:$PATH"
 fi
 
 # The tarball. The binary generates its own man page and completions, so they

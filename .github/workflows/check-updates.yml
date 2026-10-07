@@ -49,6 +49,7 @@ jobs:
           # One rolling issue rather than a new one every week: reopen and
           # update the existing report if it is still around.
           title="Packages behind upstream"
+          # shellcheck disable=SC2016 # the backticks are a Markdown code fence
           body=$(printf '%s\n\n```\n%s\n```\n\n%s\n' \
             "Automated weekly check. Derive each new checksum with \`luthier-registry hash-url <url>\` before editing a manifest — never copy a version bump without it." \
             "$(cat report.txt)" \

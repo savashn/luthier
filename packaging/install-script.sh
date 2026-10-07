@@ -26,14 +26,19 @@ shift
 rm -f install.sh
 substitutions="s/@VERSION@/$version/"
 for arch in "$@"; do
+  # The template holds one `sha256_<arch>='@SHA256_<ARCH>@'` line for each
+  # architecture a release can build, so the name says which to fill.
   case "$arch" in
-  x86_64) placeholder=@SHA256_X86_64@ ;;
-  aarch64) placeholder=@SHA256_AARCH64@ ;;
-  *)
-    echo "unknown architecture: $arch" >&2
+  '' | *[!a-z0-9_]*)
+    echo "not an architecture name: $arch" >&2
     exit 1
     ;;
   esac
+  placeholder="@SHA256_$(printf '%s' "$arch" | tr '[:lower:]' '[:upper:]')@"
+  grep -q "^sha256_$arch='$placeholder'$" packaging/install.sh || {
+    echo "packaging/install.sh has no sha256_$arch line, so it cannot pick a $arch build" >&2
+    exit 1
+  }
   tarball="luthier-$arch-linux.tar.gz"
   [ -f "$tarball" ] || {
     echo "$tarball is not here; run packaging/package.sh for $arch first" >&2

@@ -45,8 +45,8 @@ Luthier runs on Linux, on x86_64 and on 64-bit ARM (aarch64). Every way below
 installs the same statically linked binary; there is no runtime to install and
 no toolchain to build it with. The packages and the install script also put its
 man page and shell completions in place. The commands name the file with
-`$(uname -m)`, which is `x86_64` or `aarch64`, so they are the same on both.
-Pick the line for your system:
+`$(uname -m)`, which is `x86_64` or `aarch64`, so they are the same on both;
+fish older than 3.4 wants `(uname -m)` instead. Pick the line for your system:
 
 | Your system | Install with |
 |---|---|

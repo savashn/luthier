@@ -13,7 +13,9 @@ env:
 jobs:
   # On both architectures a release builds for: the release runs the suite on
   # each before it builds, so a test that only holds on x86_64 would otherwise
-  # first fail on a tag.
+  # first fail on a tag. Both on Ubuntu 24.04, as the release builds are, so
+  # the two differ only in architecture; move the pair to a newer release
+  # together, here, in release.yml and in nix.yml.
   test:
     name: Test (${{ matrix.arch }})
     strategy:
@@ -21,7 +23,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -73,7 +75,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -83,25 +85,18 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # For nfpm, which packaging/package.sh installs at its pinned version.
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          # No go.sum here for it to key a cache on.
-          cache: false
 
       # Once: the scripts are the same on both architectures.
       - name: Shell scripts
         if: matrix.arch == 'x86_64'
         run: shellcheck -s sh packaging/*.sh
 
-      # `cargo pkgid` rather than metadata and jq, which the ARM runner image
-      # need not have. Only this architecture's tarball is there, so only its
-      # SHA-256 goes into the script.
+      # Only this architecture's tarball is there, so only its SHA-256 goes
+      # into the script.
       - name: Package
         run: |
           cargo build --locked -p luthier-cli
-          version=$(cargo pkgid -p luthier-cli | sed 's/.*[#@]//')
+          version=$(packaging/version.sh)
           packaging/package.sh target/debug/luthier "$version" "$ARCH-unknown-linux-gnu"
           packaging/install-script.sh "$version" "$ARCH"
 
@@ -142,9 +137,7 @@ jobs:
 
   # What the release's publish job does with both architectures' tarballs: one
   # install.sh carrying both SHA-256s. It runs on each architecture, so each
-  # half of the script installs the tarball it names. The version comes from
-  # the directory the tarball unpacks to; sed reads the whole listing, so tar
-  # never writes into a closed pipe.
+  # half of the script installs the tarball it names.
   install-script:
     name: Install script for both architectures (${{ matrix.arch }})
     needs: package
@@ -153,7 +146,7 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -165,7 +158,7 @@ jobs:
           merge-multiple: true
       - name: Write it and install with it
         run: |
-          version=$(tar tzf luthier-x86_64-linux.tar.gz | sed -nE '1s/^luthier-(.+)-x86_64-.*/\1/p')
+          version=$(packaging/version.sh)
           packaging/install-script.sh "$version" x86_64 aarch64
           LUTHIER_RELEASE_URL="file://$PWD" sh install.sh
           ~/.local/bin/luthier --version
