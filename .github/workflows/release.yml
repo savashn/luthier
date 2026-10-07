@@ -121,7 +121,7 @@ jobs:
       - name: Package
         run: packaging/package.sh "target/$TARGET/release/luthier" "$version" "$TARGET"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: luthier-${{ matrix.arch }}
           path: luthier-${{ matrix.arch }}-linux.*
@@ -142,7 +142,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: luthier-*
           merge-multiple: true
