@@ -18,8 +18,9 @@ use crate::layout::{Layout, LocationKind};
 use crate::registry::{RefreshOutcome, RegistryIndex};
 use crate::resolver::{self, Disposition, Resolution, ResolveRequest};
 use crate::scan::{self, DetectedPlugin};
+use crate::selfupdate;
 use crate::state::{
-  ArtifactRecord, InstallReason, InstalledEntry, InstalledPackage, State, StateGuard,
+  ArtifactRecord, InstallReason, InstalledEntry, InstalledPackage, State, StateGuard, StateLock,
 };
 use jiff::Timestamp;
 use luthier_manifest::{Format, PackageId, Target};
@@ -27,6 +28,10 @@ use semver::Version;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// How long the line about a newer Luthier waits for GitHub.
+const NOTICE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// A configured manager.
 pub struct Session {
@@ -34,6 +39,8 @@ pub struct Session {
   config: Config,
   target: Target,
   offline: bool,
+  /// Where the latest Luthier release is described.
+  releases_api: url::Url,
   /// The merged index, built at most once per session.
   ///
   /// `install` alone used to ask for it three times — once to report
@@ -64,6 +71,7 @@ impl Session {
       config,
       target,
       offline: false,
+      releases_api: url::Url::parse(selfupdate::RELEASES_API).expect("the releases API is a URL"),
       index: std::sync::OnceLock::new(),
       detected_externals: std::sync::OnceLock::new(),
       detected_engines: std::sync::OnceLock::new(),
@@ -1425,6 +1433,133 @@ impl Session {
         .cloned()
         .collect(),
     )
+  }
+
+  // ---------------------------------------------------------- self-update --
+
+  /// Asks `url` for the latest release instead of GitHub; the suite's
+  /// `file://` one, so no test depends on the network.
+  pub fn releases_api(mut self, url: &str) -> Result<Self> {
+    self.releases_api = url::Url::parse(url)
+      .map_err(|e| Error::InvalidArgument(format!("--releases-api {url}: {e}")))?;
+    Ok(self)
+  }
+
+  /// The latest release. Read fresh each time and in one request: it is the
+  /// answer to "is there a newer Luthier", so a cached one would be no
+  /// answer.
+  pub async fn latest_release(&self) -> Result<selfupdate::Release> {
+    let body = Downloader::new(self.layout.self_update_dir())
+      .offline(self.offline)
+      .get(&self.releases_api, selfupdate::RELEASE_DESCRIPTION_LIMIT)
+      .await?;
+    selfupdate::parse_release(&body)
+  }
+
+  /// A newer release than this one, if there is one and the answer comes
+  /// quickly; for the line after `update` and `refresh`.
+  ///
+  /// Never an error, and never a wait: the command has done its work by
+  /// then, so no answer from GitHub within [`NOTICE_TIMEOUT`], or none at
+  /// all under `--offline`, leaves the line out. Nor is one given for a
+  /// Luthier in the Nix store, whose version whatever installs it there
+  /// decides, and which would otherwise be told on every rebuild; or under
+  /// `--root` for a binary outside the root, which it could not update.
+  pub async fn newer_luthier(&self) -> Option<selfupdate::NewerLuthier> {
+    if self.offline {
+      return None;
+    }
+    let binary = selfupdate::running_binary().ok()?;
+    let installation = selfupdate::Installation::of(&binary);
+    if installation == selfupdate::Installation::Nix
+      || self.outside_root(&binary, &installation).is_some()
+    {
+      return None;
+    }
+    let release = match tokio::time::timeout(NOTICE_TIMEOUT, self.latest_release()).await {
+      Ok(Ok(release)) => release,
+      Ok(Err(error)) => {
+        tracing::debug!("could not check for a newer Luthier: {error}");
+        return None;
+      }
+      Err(_) => {
+        tracing::debug!("no answer about a newer Luthier within {NOTICE_TIMEOUT:?}");
+        return None;
+      }
+    };
+    let current = selfupdate::this_version();
+    (release.version > current).then(|| selfupdate::NewerLuthier {
+      current,
+      latest: release.version,
+      updates_itself: installation.updates_itself(),
+    })
+  }
+
+  /// What updating the running binary to `release` would do, without doing
+  /// it.
+  ///
+  /// Under `--root`, which confines everything Luthier writes, only a binary
+  /// inside the root is updated: a package install writes system
+  /// directories, and anything else is outside it.
+  pub fn plan_self_update(
+    &self,
+    release: &selfupdate::Release,
+  ) -> Result<selfupdate::SelfUpdatePlan> {
+    let binary = selfupdate::running_binary()?;
+    let installation = selfupdate::Installation::of(&binary);
+    let current = selfupdate::this_version();
+    // Already the latest is an answer wherever the binary is.
+    if release.version > current
+      && let Some(root) = self.outside_root(&binary, &installation)
+    {
+      return Err(Error::SelfUpdate(
+        crate::error::SelfUpdateError::OutsideRoot { binary, root },
+      ));
+    }
+    selfupdate::plan(
+      release,
+      &current,
+      installation,
+      &selfupdate::Host::this_machine(),
+    )
+  }
+
+  /// The `--root` directory, when `binary` is outside it: only a standalone
+  /// binary inside the root may be replaced, because a package install
+  /// writes system directories.
+  fn outside_root(
+    &self,
+    binary: &Path,
+    installation: &selfupdate::Installation,
+  ) -> Option<PathBuf> {
+    let root = self.layout.root()?;
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let inside = matches!(installation, selfupdate::Installation::Standalone { .. })
+      && binary.starts_with(&root);
+    (!inside).then_some(root)
+  }
+
+  /// Carries out a [`Session::plan_self_update`] plan. The download is
+  /// checked against the SHA-256 GitHub publishes for it, kept apart from
+  /// the artifact cache, which holds only what packages name, and removed
+  /// afterwards whether the update went through or not.
+  pub async fn self_update(
+    &self,
+    plan: &selfupdate::SelfUpdatePlan,
+    progress: &mut dyn Progress,
+  ) -> Result<()> {
+    self.require_locations(&[LocationKind::Cache])?;
+    // Under the state lock, like everything else that writes: a second
+    // `update --self`, or the cache being moved by `location`, would
+    // otherwise pull the download out from under this one. The lock alone:
+    // a state file this build cannot read must not stop the update that
+    // would read it.
+    let _lock = StateLock::acquire(&self.layout)?;
+    let dir = self.layout.self_update_dir();
+    let downloader = Downloader::new(&dir).offline(self.offline);
+    let applied = selfupdate::apply(plan, &downloader, &dir, progress).await;
+    let removed = fsutil::remove_any(&dir);
+    applied.and(removed)
   }
 
   /// Resolves a user-supplied name to a package ID, with a useful error.

@@ -53,13 +53,19 @@ fn main() -> std::process::ExitCode {
     }
   };
 
-  match runtime.block_on(run(&cli, &reporter)) {
-    Ok(()) => ExitCode::Success.into(),
+  let code = match runtime.block_on(run(&cli, &reporter)) {
+    Ok(()) => ExitCode::Success,
     Err(error) => {
       report_error(&error);
-      error.exit_code().into()
+      error.exit_code()
     }
-  }
+  };
+  // Everything the command does is awaited by now. What may still be running
+  // is a name lookup the newer-Luthier check gave up on, which a resolver
+  // that cannot reach its server holds for many seconds; dropping the
+  // runtime would wait for it.
+  runtime.shutdown_background();
+  code.into()
 }
 
 /// Errors are printed in full, with the follow-up line that says what to do (§36).
@@ -131,7 +137,11 @@ fn build_session(global: &GlobalArgs) -> Result<Session> {
     Some(path) => luthier_core::config::from_path(path),
     None => Config::load(&layout)?,
   };
-  Ok(Session::new(layout, config)?.offline(global.offline))
+  let mut session = Session::new(layout, config)?.offline(global.offline);
+  if let Some(url) = &global.releases_api {
+    session = session.releases_api(url)?;
+  }
+  Ok(session)
 }
 
 fn ids(session: &Session, raw: &[String]) -> Result<Vec<PackageId>> {
@@ -163,6 +173,37 @@ fn confirm(global: &GlobalArgs, question: &str) -> Result<bool> {
     .read_line(&mut answer)
     .map_err(|e| Error::io("read confirmation from", "stdin", e))?;
   Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// Says so when a newer Luthier is out, after `update` and `refresh`. Never
+/// fails or holds up the command; see [`Session::newer_luthier`].
+async fn tell_of_a_newer_luthier(session: &Session, global: &GlobalArgs, reporter: &Reporter) {
+  // A line `--json` and `--quiet` would leave out is not worth asking for.
+  if global.json || global.quiet {
+    return;
+  }
+  if let Some(newer) = session.newer_luthier().await {
+    reporter.newer_luthier(&newer);
+  }
+}
+
+/// `update --self`: shows what updating Luthier itself would do, asks, does it.
+async fn update_luthier(session: &Session, global: &GlobalArgs, reporter: &Reporter) -> Result<()> {
+  let release = session.latest_release().await?;
+  let plan = session.plan_self_update(&release)?;
+  if plan.is_current() {
+    reporter.luthier_is_current(&plan);
+    return Ok(());
+  }
+  reporter.self_update_preview(&plan);
+  if !confirm(global, "\nProceed?")? {
+    return Err(Error::Cancelled);
+  }
+  let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
+  let mut bar = BarProgress::new(show_progress);
+  session.self_update(&plan, &mut bar).await?;
+  reporter.self_update_done(&plan);
+  Ok(())
 }
 
 async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
@@ -209,7 +250,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     Command::Search { .. }
       | Command::Info { .. }
       | Command::Install { .. }
-      | Command::Update { .. }
+      | Command::Update { luthier: false, .. }
       | Command::Remove { .. }
       | Command::Import { .. }
   ) {
@@ -294,6 +335,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     Command::Refresh => {
       let outcomes = session.refresh().await?;
       reporter.refresh(&outcomes);
+      tell_of_a_newer_luthier(&session, global, reporter).await;
     }
 
     Command::Search { query } => {
@@ -354,10 +396,14 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.remove_outcome(&outcome);
     }
 
-    Command::Update { packages } => {
+    Command::Update { packages, luthier } => {
+      if *luthier {
+        return update_luthier(&session, global, reporter).await;
+      }
       if packages.is_empty() {
-        // §26: report, never silently update everything.
+        // §26: report, never silently update everything — Luthier included.
         reporter.updates(&session.available_updates()?);
+        tell_of_a_newer_luthier(&session, global, reporter).await;
         return Ok(());
       }
 

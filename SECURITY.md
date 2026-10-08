@@ -174,6 +174,13 @@ its manifest gives, and extraction goes through one hardened policy. A
 malicious bench can make a user install a malicious *plugin*; it cannot make
 the installer write outside the plugin and library directories.
 
+`luthier update --self` trusts GitHub the same way, and more directly: the
+SHA-256 it checks a new Luthier against comes from GitHub's API, for the same
+release. It catches a download that was corrupted or swapped on the way; it
+cannot catch a release published by someone who should not have been able to,
+and that release replaces the manager itself — through `sudo` for the .deb
+and the .rpm. It does not check the provenance attestation below.
+
 ## Release provenance
 
 Every file a release publishes — each architecture's tarball, .deb and .rpm,
@@ -232,7 +239,15 @@ refused before the download when it would delete such changes, until
   (see *Trusting GitHub*), though the manifest format reserves room for it
   (§14).
 - **System-wide installation.** Everything is user-local; root is never
-  required and system directories are never written.
+  required and system directories are never written. The exception is
+  Luthier itself, where it was installed as root. `luthier update --self` of
+  a Luthier from the .deb or .rpm runs apt, dnf or zypper through `sudo`, as
+  installing the new package by hand would: root copies the verified
+  download into a directory only root can write and checks its SHA-256 again
+  there before the package manager reads it, so the user-writable cache it
+  came from cannot change it in between. One the install script put in
+  `/usr/local` is replaced only by a user who can write there, which is
+  root, run that way by hand.
 
   System plugin directories — `/usr/lib/lv2` and the rest of the conventional
   search paths, plus whatever `CLAP_PATH`, `VST3_PATH` and `LV2_PATH` name —

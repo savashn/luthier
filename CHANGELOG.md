@@ -15,6 +15,23 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **`luthier update --self`.** Luthier updates itself the way it was
+  installed: a binary from the install script or the tarball is run once
+  where it will live, then replaces the old one, with the man page and
+  completions beside it; the .deb or .rpm goes through apt, dnf or zypper,
+  with `sudo`, so the package manager keeps track of it, and root installs a
+  copy it has checked again where the user cannot change it. A Luthier from
+  Nix, or in a directory another package manager owns, is refused, with how
+  to update it there. Every download is checked against the SHA-256 GitHub
+  publishes for the release asset. It shows what it will do and asks first,
+  as `install` does.
+- **`update` and `refresh` say when a newer Luthier is out.** One request,
+  given three seconds once the command has done its work; `--json`,
+  `--quiet` and `--offline` skip it, and so does a Luthier from Nix, whose
+  version is up to whatever installs it.
+
 ## [0.4.0] — 2026-10-06
 
 ### Added

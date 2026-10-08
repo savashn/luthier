@@ -66,6 +66,9 @@ pub enum Error {
   Install(#[from] InstallError),
 
   #[error(transparent)]
+  SelfUpdate(#[from] SelfUpdateError),
+
+  #[error(transparent)]
   Resolve(#[from] ResolveError),
 
   #[error(transparent)]
@@ -104,6 +107,7 @@ impl Error {
   pub fn exit_code(&self) -> ExitCode {
     match self {
       Error::Resolve(e) => e.exit_code(),
+      Error::SelfUpdate(e) => e.exit_code(),
       Error::Registry(RegistryError::PackageNotFound { .. }) => ExitCode::PackageNotFound,
       Error::Download(DownloadError::ChecksumMismatch { .. }) => ExitCode::VerificationFailed,
       Error::VerificationFailed { .. } => ExitCode::VerificationFailed,
@@ -122,6 +126,7 @@ impl Error {
       Error::Manifest(e) => e.hint(),
       Error::Registry(e) => e.hint(),
       Error::Download(e) => e.hint(),
+      Error::SelfUpdate(e) => e.hint(),
       Error::Archive(e) => e.hint(),
       Error::Install(e) => e.hint(),
       Error::Resolve(e) => e.hint(),
@@ -187,6 +192,118 @@ impl RegistryError {
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }
+      _ => None,
+    }
+  }
+}
+
+// ------------------------------------------------------------- self-update --
+
+#[derive(Debug, thiserror::Error)]
+pub enum SelfUpdateError {
+  #[error("GitHub's description of the latest release could not be read: {0}")]
+  Malformed(String),
+
+  #[error("release {version} has no {name}")]
+  NoAsset { name: String, version: String },
+
+  #[error("GitHub publishes no SHA-256 for {name}, so the download could not be checked")]
+  NoDigest { name: String },
+
+  #[error("this Luthier is in the Nix store, which only Nix changes; {latest} is out")]
+  InstalledByNix { latest: String },
+
+  #[error(
+    "{} is in a directory a package manager owns, and neither dpkg nor rpm installed it",
+    binary.display()
+  )]
+  InstalledByPackageManager { binary: PathBuf },
+
+  #[error("{} is outside --root {}", binary.display(), root.display())]
+  OutsideRoot { binary: PathBuf, root: PathBuf },
+
+  #[error("{} is not writable by this user", dir.display())]
+  NotWritable { dir: PathBuf },
+
+  #[error("{0} does not hold what a release tarball holds")]
+  BadTarball(String),
+
+  #[error("the new binary does not run here: {0}")]
+  NotRunnable(String),
+
+  #[error("`{program}` could not be started: {reason}")]
+  CouldNotRun { program: String, reason: String },
+
+  #[error(
+    "{} changed after it was checked, before root could install it",
+    path.display()
+  )]
+  ChangedBeforeInstall { path: PathBuf },
+
+  #[error("`{command}` failed{}", code.map_or(String::new(), |c| format!(" with exit status {c}")))]
+  CommandFailed { command: String, code: Option<i32> },
+}
+
+impl SelfUpdateError {
+  fn exit_code(&self) -> ExitCode {
+    match self {
+      // Nothing could be checked, or what was checked did not hold, so
+      // nothing was trusted.
+      SelfUpdateError::NoDigest { .. } | SelfUpdateError::ChangedBeforeInstall { .. } => {
+        ExitCode::VerificationFailed
+      }
+      SelfUpdateError::OutsideRoot { .. } => ExitCode::InvalidArguments,
+      // A verified release that could not be put in place.
+      SelfUpdateError::BadTarball(_)
+      | SelfUpdateError::NotRunnable(_)
+      | SelfUpdateError::CouldNotRun { .. }
+      | SelfUpdateError::CommandFailed { .. } => ExitCode::InstallationFailed,
+      _ => ExitCode::Generic,
+    }
+  }
+
+  fn hint(&self) -> Option<String> {
+    match self {
+      SelfUpdateError::InstalledByNix { .. } => Some(
+        "Update it the way it was installed: `nix profile upgrade luthier`, or update \
+         the flake input of the configuration that installs it."
+          .into(),
+      ),
+      SelfUpdateError::InstalledByPackageManager { .. } => Some(
+        "Update it with the package manager that installed it. Replacing its file \
+         would leave that package manager's records wrong."
+          .into(),
+      ),
+      SelfUpdateError::OutsideRoot { .. } => Some(
+        "--root confines everything Luthier writes, and the running binary is not \
+         under it. Run `luthier update --self` without --root."
+          .into(),
+      ),
+      SelfUpdateError::NotWritable { .. } => Some(
+        "Run it as the user that installed Luthier there; for /usr/local, that is \
+         root: `sudo -H luthier update --self`."
+          .into(),
+      ),
+      SelfUpdateError::NoAsset { .. } | SelfUpdateError::NoDigest { .. } => Some(
+        "Download it from https://github.com/savashn/luthier/releases/latest instead, \
+         and check it with `gh attestation verify <file> -R savashn/luthier`."
+          .into(),
+      ),
+      SelfUpdateError::CouldNotRun { program, .. } if program == "sudo" => Some(
+        "Installing a package needs root, and sudo is not here. Run \
+         `luthier update --self` as root."
+          .into(),
+      ),
+      SelfUpdateError::ChangedBeforeInstall { .. } => Some(
+        "Nothing was installed. Run `luthier update --self` again; if this happens \
+         again, something on this machine is changing files in Luthier's cache."
+          .into(),
+      ),
+      SelfUpdateError::CommandFailed { .. } => Some(
+        "The output above, from sudo or the package manager, says why. Nothing \
+         was installed unless the package manager says it was."
+          .into(),
+      ),
       _ => None,
     }
   }
@@ -701,6 +818,34 @@ mod tests {
         }
         .into(),
         ExitCode::DependencyResolutionFailed,
+      ),
+      (
+        SelfUpdateError::NoDigest { name: "x".into() }.into(),
+        ExitCode::VerificationFailed,
+      ),
+      (
+        SelfUpdateError::ChangedBeforeInstall { path: "x".into() }.into(),
+        ExitCode::VerificationFailed,
+      ),
+      (
+        SelfUpdateError::NotRunnable("x".into()).into(),
+        ExitCode::InstallationFailed,
+      ),
+      (
+        SelfUpdateError::CommandFailed {
+          command: "apt-get".into(),
+          code: Some(100),
+        }
+        .into(),
+        ExitCode::InstallationFailed,
+      ),
+      (
+        SelfUpdateError::OutsideRoot {
+          binary: "/usr/local/bin/luthier".into(),
+          root: "/tmp/r".into(),
+        }
+        .into(),
+        ExitCode::InvalidArguments,
       ),
     ];
     for (error, expected) in cases {

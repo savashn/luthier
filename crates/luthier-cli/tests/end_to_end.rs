@@ -161,6 +161,10 @@ impl Fixture {
       .arg("--registry-path")
       .arg(self.registry())
       .arg("--no-system-plugins")
+      // `update` and `refresh` ask whether a newer Luthier is out; the suite
+      // never reaches GitHub, so the question goes nowhere and is dropped.
+      .arg("--releases-api")
+      .arg("file:///nonexistent/luthier-release.json")
       .arg("--yes");
     command
   }
@@ -2219,4 +2223,329 @@ fn a_closed_pipe_ends_the_process_quietly() {
     "{:?}: {stderr}",
     output.status
   );
+}
+
+// ------------------------------------------------------------ self-update --
+
+/// A Luthier release served over `file://`: GitHub's description of it, and
+/// the tarball the install script installs. Its `luthier` is a shell script
+/// that reports `version`, which is all `update --self` asks of it.
+struct PublishedRelease {
+  dir: tempfile::TempDir,
+}
+
+/// What the description says about the tarball's SHA-256.
+enum Digest {
+  Published,
+  Wrong,
+  Absent,
+}
+
+impl PublishedRelease {
+  fn new(version: &str, digest: Digest) -> Self {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let top = format!("luthier-{version}-{ARCH}-unknown-linux-musl");
+    let mut builder = tar::Builder::new(Vec::new());
+    let script = format!("#!/bin/sh\necho 'luthier {version}'\n");
+    append(
+      &mut builder,
+      &format!("{top}/luthier"),
+      script.as_bytes(),
+      0o755,
+    );
+    append(
+      &mut builder,
+      &format!("{top}/luthier.1"),
+      b"new man page",
+      0o644,
+    );
+    for shell in ["bash", "zsh", "fish"] {
+      append(
+        &mut builder,
+        &format!("{top}/completions/luthier.{shell}"),
+        b"new completions",
+        0o644,
+      );
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    encoder.write_all(&builder.into_inner().unwrap()).unwrap();
+    let bytes = encoder.finish().unwrap();
+
+    let name = format!("luthier-{ARCH}-linux.tar.gz");
+    let tarball = dir.path().join(&name);
+    std::fs::write(&tarball, &bytes).unwrap();
+    let digest = match digest {
+      Digest::Published => format!(
+        r#", "digest": "sha256:{}""#,
+        luthier_core::fsutil::hash_file(&tarball).unwrap()
+      ),
+      Digest::Wrong => format!(r#", "digest": "sha256:{}""#, "0".repeat(64)),
+      Digest::Absent => String::new(),
+    };
+    let description = format!(
+      r#"{{ "tag_name": "v{version}", "assets": [ {{ "name": "{name}",
+         "browser_download_url": "{}", "size": {}{digest} }} ] }}"#,
+      url::Url::from_file_path(&tarball).unwrap(),
+      bytes.len()
+    );
+    std::fs::write(dir.path().join("release.json"), description).unwrap();
+    Self { dir }
+  }
+
+  fn api(&self) -> String {
+    url::Url::from_file_path(self.dir.path().join("release.json"))
+      .unwrap()
+      .to_string()
+  }
+}
+
+/// This build of `luthier`, copied to `<prefix>/bin` with an old man page
+/// beside it, as the install script would leave it. The copy is what updates
+/// itself, so the binary the suite runs everywhere else is never touched.
+fn installed_copy(prefix: &Path) -> PathBuf {
+  let binary = prefix.join("bin/luthier");
+  std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+  std::fs::copy(assert_cmd::cargo::cargo_bin("luthier"), &binary).unwrap();
+  let man = prefix.join("share/man/man1/luthier.1");
+  std::fs::create_dir_all(man.parent().unwrap()).unwrap();
+  std::fs::write(&man, b"old man page").unwrap();
+  binary
+}
+
+/// Runs a binary this suite has just written. Another test forking while it
+/// was open for writing makes it busy for a moment, which exec reports as
+/// ETXTBSY, so that is waited out.
+fn run_written(command: &mut std::process::Command) -> std::process::Output {
+  for _ in 0..50 {
+    match command.output() {
+      Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+      }
+      output => return output.unwrap(),
+    }
+  }
+  panic!("{command:?} stayed busy");
+}
+
+/// `binary update --self` under `--root prefix`, which the binary is inside,
+/// as it has to be.
+fn update_self(binary: &Path, prefix: &Path, api: &str) -> std::process::Output {
+  run_written(
+    std::process::Command::new(binary)
+      .arg("--root")
+      .arg(prefix)
+      .args(["--releases-api", api, "--yes", "update", "--self"]),
+  )
+}
+
+fn version_of(binary: &Path) -> String {
+  let output = run_written(std::process::Command::new(binary).arg("--version"));
+  String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn update_self_replaces_a_standalone_binary_and_the_files_beside_it() {
+  let release = PublishedRelease::new("99.0.0", Digest::Published);
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+
+  let output = update_self(&binary, prefix.path(), &release.api());
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  assert!(
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(stdout.contains("-> 99.0.0"), "{stdout}");
+  assert!(stdout.contains("Luthier is now 99.0.0"), "{stdout}");
+
+  assert_eq!(version_of(&binary), "luthier 99.0.0");
+  let man = prefix.path().join("share/man/man1/luthier.1");
+  assert_eq!(std::fs::read(man).unwrap(), b"new man page");
+  // A completion the install script did not put there is not created.
+  assert!(
+    !prefix
+      .path()
+      .join("share/bash-completion/completions/luthier")
+      .exists()
+  );
+  // Nor is the download kept once it is in place.
+  assert!(!prefix.path().join("cache/luthier/self-update").exists());
+}
+
+#[test]
+fn update_self_on_the_latest_release_changes_nothing() {
+  let release = PublishedRelease::new(env!("CARGO_PKG_VERSION"), Digest::Published);
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+  let before = std::fs::read(&binary).unwrap();
+
+  let output = update_self(&binary, prefix.path(), &release.api());
+  assert!(output.status.success());
+  assert!(String::from_utf8_lossy(&output.stdout).contains("is the latest release"));
+  assert_eq!(std::fs::read(&binary).unwrap(), before);
+}
+
+#[test]
+fn update_self_refuses_a_download_that_is_not_the_published_one() {
+  let release = PublishedRelease::new("99.0.0", Digest::Wrong);
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+  let before = std::fs::read(&binary).unwrap();
+
+  let output = update_self(&binary, prefix.path(), &release.api());
+  assert_eq!(
+    output.status.code(),
+    Some(4),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert_eq!(std::fs::read(&binary).unwrap(), before);
+}
+
+#[test]
+fn update_self_refuses_a_download_with_no_published_digest() {
+  let release = PublishedRelease::new("99.0.0", Digest::Absent);
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+  let before = std::fs::read(&binary).unwrap();
+
+  let output = update_self(&binary, prefix.path(), &release.api());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert_eq!(output.status.code(), Some(4), "{stderr}");
+  assert!(stderr.contains("publishes no SHA-256"), "{stderr}");
+  assert_eq!(std::fs::read(&binary).unwrap(), before);
+}
+
+#[test]
+fn update_self_under_root_leaves_a_binary_outside_it_alone() {
+  let release = PublishedRelease::new("99.0.0", Digest::Published);
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+  let before = std::fs::read(&binary).unwrap();
+  let elsewhere = tempfile::tempdir().unwrap();
+
+  let output = update_self(&binary, elsewhere.path(), &release.api());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert_eq!(output.status.code(), Some(2), "{stderr}");
+  assert!(stderr.contains("outside --root"), "{stderr}");
+  assert_eq!(std::fs::read(&binary).unwrap(), before);
+}
+
+#[test]
+fn update_self_leaves_nothing_behind_when_the_new_binary_does_not_run() {
+  // A release whose binary reports another version than its tag.
+  let release = PublishedRelease::new("99.0.0", Digest::Published);
+  let description = release.dir.path().join("release.json");
+  let text = std::fs::read_to_string(&description).unwrap();
+  std::fs::write(&description, text.replace("v99.0.0", "v98.0.0")).unwrap();
+  let prefix = tempfile::tempdir().unwrap();
+  let binary = installed_copy(prefix.path());
+  let before = std::fs::read(&binary).unwrap();
+
+  let output = update_self(&binary, prefix.path(), &release.api());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert_eq!(output.status.code(), Some(5), "{stderr}");
+  assert!(stderr.contains("does not run here"), "{stderr}");
+  assert_eq!(std::fs::read(&binary).unwrap(), before);
+  let bin: Vec<_> = std::fs::read_dir(prefix.path().join("bin"))
+    .unwrap()
+    .map(|e| e.unwrap().file_name())
+    .collect();
+  assert_eq!(bin, ["luthier"], "a staged copy was left behind");
+  assert!(
+    !prefix.path().join("cache/luthier/self-update").exists(),
+    "the download was left behind"
+  );
+}
+
+/// `binary update` against the fixture, with the binary inside its root as
+/// the newer-Luthier line requires under `--root`, and the core's debug log
+/// on so a test can see whether the check was made.
+fn update_in_root(
+  fixture: &Fixture,
+  binary: &Path,
+  api: &str,
+  extra: &[&str],
+) -> std::process::Output {
+  run_written(
+    std::process::Command::new(binary)
+      .env("LUTHIER_LOG", "luthier_core=debug")
+      .arg("--root")
+      .arg(fixture.root())
+      .arg("--registry-path")
+      .arg(fixture.registry())
+      .args(["--no-system-plugins", "--releases-api", api])
+      .args(extra)
+      .arg("update"),
+  )
+}
+
+#[test]
+fn update_tells_of_a_newer_luthier_but_not_under_json() {
+  let fixture = Fixture::new();
+  let binary = installed_copy(&fixture.root());
+  let release = PublishedRelease::new("99.0.0", Digest::Published);
+
+  let text = update_in_root(&fixture, &binary, &release.api(), &[]);
+  assert!(text.status.success());
+  let stdout = String::from_utf8_lossy(&text.stdout);
+  assert!(stdout.contains("Luthier 99.0.0 is out"), "{stdout}");
+  assert!(stdout.contains("luthier update --self"), "{stdout}");
+
+  // One JSON document on stdout, as everywhere else.
+  let json = update_in_root(&fixture, &binary, &release.api(), &["--json"]);
+  let stdout = String::from_utf8_lossy(&json.stdout);
+  assert!(!stdout.contains("is out"), "{stdout}");
+  serde_json::from_str::<serde_json::Value>(&stdout).expect("one JSON document");
+}
+
+#[test]
+fn the_newer_luthier_check_is_not_made_when_its_line_would_be_dropped() {
+  let fixture = Fixture::new();
+  let binary = installed_copy(&fixture.root());
+  // A scheme nothing fetches: a check made fails, and the debug log says so.
+  let asked = |extra: &[&str]| {
+    let output = update_in_root(&fixture, &binary, "ftp://example.invalid/r.json", extra);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    stderr.contains("could not check for a newer Luthier")
+  };
+  assert!(asked(&[]), "the check is not made at all");
+  assert!(!asked(&["--json"]));
+  assert!(!asked(&["--quiet"]));
+  assert!(!asked(&["--offline"]));
+
+  // Nor for a binary outside --root, which `update --self` would refuse.
+  let outside = update_in_root(
+    &fixture,
+    &assert_cmd::cargo::cargo_bin("luthier"),
+    "ftp://example.invalid/r.json",
+    &[],
+  );
+  assert!(!String::from_utf8_lossy(&outside.stderr).contains("could not check"));
+}
+
+#[test]
+fn a_release_check_that_gets_no_answer_does_not_hold_up_update() {
+  let fixture = Fixture::new();
+  let binary = installed_copy(&fixture.root());
+  // Takes connections, into the kernel's backlog, and never answers.
+  let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+  let api = format!("http://{}/release.json", silent.local_addr().unwrap());
+
+  let started = std::time::Instant::now();
+  let output = update_in_root(&fixture, &binary, &api, &[]);
+  let elapsed = started.elapsed();
+  assert!(
+    output.status.success(),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  // The transfer's own timeout is a minute; the notice gives up long before.
+  assert!(
+    elapsed < std::time::Duration::from_secs(20),
+    "took {elapsed:?}"
+  );
+  assert!(!String::from_utf8_lossy(&output.stdout).contains("is out"));
 }

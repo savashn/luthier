@@ -7,10 +7,10 @@ failed, not just that it did.
 |---|---|---|
 | 0 | Success | |
 | 1 | Generic error | I/O failure, unreadable state, unexpected condition |
-| 2 | Invalid arguments | Malformed package ID or version; confirmation needed but stdin is not a terminal |
+| 2 | Invalid arguments | Malformed package ID or version; confirmation needed but stdin is not a terminal; `update --self` under `--root` for a binary outside it |
 | 3 | Package not found | No such package in any configured registry |
-| 4 | Verification failure | Downloaded artifact did not match its checksum; installed files no longer match what was recorded |
-| 5 | Installation failure | Unsafe archive, failed plugin validation, a conflicting unmanaged file |
+| 4 | Verification failure | Downloaded artifact did not match its checksum; installed files no longer match what was recorded; a release file GitHub publishes no SHA-256 for |
+| 5 | Installation failure | Unsafe archive, failed plugin validation, a conflicting unmanaged file; a new Luthier that does not run here, or a package manager refusing it |
 | 6 | Dependency resolution failure | Cycle, version conflict, missing external dependency, or removal blocked because another package still needs it |
 
 Codes are produced by `Error::exit_code` in `crates/luthier-core/src/error.rs`; a

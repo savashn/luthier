@@ -75,6 +75,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | `install` | Journalled, atomic placement (`InstallTransaction`), per-format installers, and `derive`, which reads rules out of a verified tree |
 | `state` | What is installed and which files belong to it — the authority on ownership |
 | `scan` | What is present on the system but not installed by Luthier |
+| `selfupdate` | `update --self`: the latest release from GitHub's API, how the running binary was installed, and replacing it or handing the package to apt, dnf or zypper |
 | `layout` | Every path, injected rather than computed from `$HOME`; the search path a relocated plugin root needs |
 | `envfile` | The portable file `export` writes and `import` reads |
 | `engine` | Whether anything on the machine can play the content about to be installed |

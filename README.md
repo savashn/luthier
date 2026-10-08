@@ -55,8 +55,13 @@ fish older than 3.4 wants `(uname -m)` instead. Pick the line for your system:
 | NixOS, or Nix on any distribution | [the flake](#with-nix) |
 | Anything else, or without root | [the install script](#install-script), or [by hand](#by-hand) |
 
-A package or script from a release does not update itself: when a new release
-comes out, install it the same way.
+`luthier update` and `luthier refresh` say when a new Luthier is out, and
+`luthier update --self` installs it the way this one came: a binary from the
+install script or the tarball is run once where it will live, then replaces
+this one, with its man page and completions; the .deb or .rpm goes through apt,
+dnf or zypper (with `sudo`), so the package manager keeps track of it. A
+Luthier from Nix, or from any other package manager, is left to it. Every
+download is checked against the SHA-256 GitHub publishes for it.
 
 On ARM, Luthier installs what is published for ARM, and most Linux audio
 software is published for x86_64 only: some 65 of the Open Audio Stack
@@ -200,6 +205,7 @@ luthier list                    # what is installed
 luthier list --unmanaged        # plugins installed outside Luthier
 luthier verify [package]        # check installed files are unchanged
 luthier update [package]        # report updates, or apply named ones
+luthier update --self           # update Luthier itself
 luthier remove <package>        # remove, keeping shared dependencies
 luthier cleanup                 # report packages nothing needs
 luthier pin <package> [version] # hold a version back from updates

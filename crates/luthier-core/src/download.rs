@@ -145,6 +145,76 @@ impl Downloader {
     self.cache_dir.join(digest.to_string())
   }
 
+  /// Reads a small document at `url` into memory: one attempt, no cache.
+  ///
+  /// For an answer only worth having fresh, such as which release is the
+  /// latest. There is no digest to check it against, so what reads it treats
+  /// it as a claim; anything it leads to downloading is checked as usual.
+  pub async fn get(&self, url: &Url, max_bytes: u64) -> Result<Vec<u8>> {
+    use futures_util::StreamExt;
+
+    let too_large = || {
+      Error::Download(DownloadError::TooLarge {
+        url: url.to_string(),
+        limit: max_bytes,
+      })
+    };
+    match url.scheme() {
+      "file" => {
+        let path = url.to_file_path().map_err(|_| {
+          Error::Download(DownloadError::BadFileUrl {
+            url: url.to_string(),
+          })
+        })?;
+        let body = std::fs::read(&path).map_err(|e| Error::io("read", &path, e))?;
+        if body.len() as u64 > max_bytes {
+          return Err(too_large());
+        }
+        Ok(body)
+      }
+      "http" | "https" => {
+        if self.offline {
+          return Err(Error::Download(DownloadError::Offline {
+            url: url.to_string(),
+          }));
+        }
+        let transport = |e: reqwest::Error| {
+          Error::Download(DownloadError::Transport {
+            url: url.to_string(),
+            reason: transport_reason(&e),
+          })
+        };
+        let response = self
+          .client(url)?
+          .get(url.clone())
+          .send()
+          .await
+          .map_err(transport)?;
+        let status = response.status();
+        if !status.is_success() {
+          return Err(Error::Download(DownloadError::HttpStatus {
+            url: url.to_string(),
+            status: status.as_u16(),
+          }));
+        }
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+          let chunk = chunk.map_err(transport)?;
+          if (body.len() + chunk.len()) as u64 > max_bytes {
+            return Err(too_large());
+          }
+          body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+      }
+      other => Err(Error::Download(DownloadError::UnsupportedScheme {
+        url: url.to_string(),
+        scheme: other.to_owned(),
+      })),
+    }
+  }
+
   /// Returns a verified local copy of the artifact at `url`.
   ///
   /// The digest is computed while the bytes stream past, so a mismatch is

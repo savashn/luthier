@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 404 tests, fully offline
+cargo test --workspace                     # 429 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -372,6 +372,20 @@ to `nfpm.yaml` and to the list `install.sh` installs too. The workflows read
 the workspace version through `packaging/version.sh` (the Nix package reads
 `Cargo.toml` itself), and nfpm is pinned by version and SHA-256 in
 `package.sh` alone.
+
+`luthier update --self` (`selfupdate.rs`) reads the latest release from
+GitHub's API and checks each download against the SHA-256 GitHub publishes for
+the asset. Every release already out reads the next one that way, so the asset
+names `luthier-<arch>-linux.{tar.gz,deb,rpm}` and the tarball's layout (one
+top directory holding `luthier`, `luthier.1` and `completions/`) are a
+contract with past releases: change them and those can no longer update, and
+so is `luthier --version` printing exactly `luthier <version>`, which the
+update checks before it replaces anything. A packaged install runs
+`INSTALL_AS_ROOT` through sudo: root copies the download into its own
+directory and checks the SHA-256 again before the package manager reads it,
+with nothing but POSIX sh and coreutils. The suite never reaches GitHub: the
+hidden `--releases-api` takes a `file://` description instead, and the e2e
+fixture always passes one.
 
 Adding an architecture touches, because a workflow matrix cannot share a
 list:

@@ -222,8 +222,14 @@ pub struct StateGuard {
   state: State,
 }
 
-impl StateGuard {
-  /// Acquires the lock and reads current state.
+/// The state lock alone, for an operation that changes nothing the state
+/// records: `luthier update --self`. It must work with a state file this build
+/// cannot read — one a newer Luthier wrote is the reason to update.
+pub struct StateLock {
+  _lock: std::fs::File,
+}
+
+impl StateLock {
   pub fn acquire(layout: &Layout) -> Result<Self> {
     fsutil::ensure_dir(&layout.state_dir())?;
     let lock_path = layout.lock_file();
@@ -240,7 +246,14 @@ impl StateGuard {
     lock
       .try_lock()
       .map_err(|_| Error::State(StateError::Locked))?;
+    Ok(Self { _lock: lock })
+  }
+}
 
+impl StateGuard {
+  /// Acquires the lock and reads current state.
+  pub fn acquire(layout: &Layout) -> Result<Self> {
+    let StateLock { _lock: lock } = StateLock::acquire(layout)?;
     Ok(Self {
       _lock: lock,
       path: layout.state_file(),

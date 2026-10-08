@@ -29,6 +29,7 @@ pub mod layout;
 pub mod registry;
 pub mod resolver;
 pub mod scan;
+pub mod selfupdate;
 pub mod state;
 
 pub use error::{Error, ExitCode, Result};

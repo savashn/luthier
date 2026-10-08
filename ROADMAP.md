@@ -331,8 +331,9 @@ who installs software through their distribution. `cargo install` is not a
 distribution channel for this audience.
 
 Every release now also carries a `.deb`, an `.rpm` and an install script
-(since 0.4.0). Downloaded from a release, none of them updates
-itself; the AUR package and a Flatpak still would.
+(since 0.4.0), and `luthier update --self` updates whichever of them, or the
+tarball, Luthier came from. The AUR package and a Flatpak would still reach
+people who install through their distribution's own tools.
 
 **Done when:** at least the AUR package exists and is referenced from the
 README.

@@ -119,6 +119,8 @@ pub struct Layout {
   /// The user's choices this layout honours, kept so a command can refuse
   /// when one of them is not there.
   locations: Locations,
+  /// The directory `--root` confines everything to, if any.
+  root: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,6 +154,7 @@ impl Layout {
       plugin_roots: Self::default_plugin_roots(&home),
       system_roots: Self::default_system_roots(),
       locations: Locations::default(),
+      root: None,
     })
   }
 
@@ -208,7 +211,13 @@ impl Layout {
       plugin_roots: Self::default_plugin_roots(root),
       system_roots: BTreeMap::new(),
       locations: Locations::default(),
+      root: Some(root.to_path_buf()),
     }
+  }
+
+  /// The directory `--root` confines everything to, if any.
+  pub fn root(&self) -> Option<&Path> {
+    self.root.as_deref()
   }
 
   /// Conventional read-only locations for each format on Linux.
@@ -408,6 +417,13 @@ impl Layout {
   /// self-verifying: the name *is* the expected hash.
   pub fn artifact_cache_dir(&self) -> PathBuf {
     self.cache.join("artifacts")
+  }
+
+  /// Where `luthier update --self` downloads and unpacks a release. Apart
+  /// from the artifact cache, which holds what installed packages name, and
+  /// removed once the update is done.
+  pub fn self_update_dir(&self) -> PathBuf {
+    self.cache.join("self-update")
   }
 
   /// Install root for `format`, if this build installs it.

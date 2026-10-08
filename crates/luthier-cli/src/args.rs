@@ -72,6 +72,13 @@ pub struct GlobalArgs {
   /// somewhere else.
   #[arg(long, global = true)]
   pub no_system_plugins: bool,
+
+  /// Where the latest Luthier release is described, in place of GitHub's API.
+  ///
+  /// Hidden: for the suite, which serves a release over `file://` so that
+  /// neither `update` nor `update --self` reaches GitHub.
+  #[arg(long, global = true, value_name = "URL", hide = true)]
+  pub releases_api: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -113,10 +120,18 @@ pub enum Command {
     unmanaged: bool,
   },
 
-  /// Show available updates, or update the named packages.
+  /// Show available updates, or update the named packages, or Luthier itself.
   Update {
-    /// Leave empty to only report what is available.
+    /// Leave empty to only report what is available, Luthier's own new
+    /// release included.
     packages: Vec<String>,
+
+    /// Update Luthier itself, the way it was installed: a binary from the
+    /// install script or the tarball is replaced where it is, the .deb or
+    /// .rpm through apt, dnf or zypper, and one from Nix or another package
+    /// manager is left to it.
+    #[arg(long = "self", conflicts_with = "packages")]
+    luthier: bool,
   },
 
   /// Fetch the latest registry metadata.

@@ -12,6 +12,7 @@ use luthier_core::api::{
 };
 use luthier_core::registry::RefreshOutcome;
 use luthier_core::scan::{DetectedPlugin, PluginStatus};
+use luthier_core::selfupdate::{NewerLuthier, SelfUpdatePlan};
 use serde::Serialize;
 use std::io::Write;
 
@@ -728,6 +729,70 @@ impl Reporter {
         None => println!("{}: {} packages", row.registry, row.packages),
       }
     }
+  }
+
+  // ----------------------------------------------------------- self-update --
+
+  /// After `update` and `refresh`. A status line, so `--json` keeps its one
+  /// document and `--quiet` its silence.
+  pub fn newer_luthier(&self, newer: &NewerLuthier) {
+    let how = if newer.updates_itself {
+      "Run `luthier update --self` to update."
+    } else {
+      "Update it with the package manager that installed it."
+    };
+    self.note(format!(
+      "\nLuthier {} is out (this is {}). {how}",
+      newer.latest, newer.current
+    ));
+  }
+
+  pub fn luthier_is_current(&self, plan: &SelfUpdatePlan) {
+    if self.json {
+      return self.emit(plan);
+    }
+    self.note(format!("Luthier {} is the latest release.", plan.current));
+  }
+
+  /// What `update --self` will do, before it asks. Under `--json` the one
+  /// document is the outcome, written by [`Reporter::self_update_done`].
+  pub fn self_update_preview(&self, plan: &SelfUpdatePlan) {
+    if self.json {
+      return;
+    }
+    let Some(asset) = &plan.asset else { return };
+    println!("Luthier {} -> {}\n", plan.current, plan.latest);
+    println!(
+      "Downloads {} ({}), checked against the SHA-256 GitHub publishes for it.",
+      asset.name,
+      human_bytes(asset.size)
+    );
+    match &plan.package {
+      None => {
+        println!("Tries the new binary, then replaces:");
+        for replacement in &plan.replaces {
+          println!("  {}", replacement.path.display());
+        }
+      }
+      Some(package) => {
+        let through = if package.sudo {
+          " through `sudo /bin/sh`"
+        } else {
+          ""
+        };
+        println!(
+          "Then, as root{through}, copies it where only root can write, checks it again, and runs:"
+        );
+        println!("  {}", package.manager_line(&asset.name));
+      }
+    }
+  }
+
+  pub fn self_update_done(&self, plan: &SelfUpdatePlan) {
+    if self.json {
+      return self.emit(plan);
+    }
+    self.note(format!("Luthier is now {}.", plan.latest));
   }
 
   pub fn pin(&self, package: &InstalledSummary) {
