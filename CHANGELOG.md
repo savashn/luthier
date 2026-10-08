@@ -48,11 +48,8 @@ about.
   too, and a binary only ever reads the ones it was released with. They
   change with Luthier itself (`luthier update --self`). `refresh` no longer
   lists them; `bench list` shows them as `built-in`, located in `luthier
-  <version>`. Releases still publish `bench.tar.gz` for 0.2–0.4, and the copy
-  0.4 fetched is left on disk for them. Packages already installed from it
-  keep `luthier-extras` as their recorded source, which is only
-  informational.
-
+  <version>`. Packages already installed from them keep `luthier-extras` as
+  their recorded source, which is only informational.
 - **The Open Audio Stack list downloads only when it has changed.** Every
   request for it, `refresh`'s included, sends the `ETag` and `Last-Modified`
   the last one came with, and an unchanged list costs a 304 and no bytes
@@ -61,6 +58,14 @@ about.
 - **Two `refresh`es, or a `refresh` and an `install`, no longer meet.** Two
   refreshes at once could write the same snapshot together; one now waits
   for the other, under a lock of their own, apart from the one installs take.
+
+### Removed
+
+- **The `bench.tar.gz` release asset.** Nothing reads it any more, so
+  releases no longer publish it: 0.2–0.4, which fetched it on `refresh`,
+  will find it missing from the next release on and warn that
+  `luthier-extras` was not refreshed, keeping the copy they have. Updating
+  past 0.4 ends that.
 
 ### Fixed
 

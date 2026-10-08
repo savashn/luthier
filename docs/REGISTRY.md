@@ -57,12 +57,9 @@ exactly the bench it was released with, never one written for a manifest
 format it does not know, and a change here reaches users with the release that
 carries it — through `luthier update --self`, or however they installed.
 
-Releases still publish `bench/` as `bench.tar.gz`, which 0.2–0.4 download from
-the latest release on `refresh` (as `luthier-extras`). It is an asset rather
-than a branch tarball of the repository because discovery walks whatever it is
-handed, so a repository tarball would offer the workspace's own `Cargo.toml`
-files up as manifests. The bench is not signed; see *Trusting GitHub* in
-[SECURITY.md](../SECURITY.md).
+0.4 and earlier fetched it on `refresh`, as `luthier-extras`, from a
+`bench.tar.gz` asset of the latest release; releases no longer carry one. The
+bench is not signed; see *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
 This bench and the Open Audio Stack registry are the only sources the manager
 reads; users cannot add one. A package with a downloadable release belongs in
@@ -239,9 +236,8 @@ cannot be recognised from a URL at all. Either is a small addition to
 ## Releasing the bench
 
 The bench ships in the manager: pushing a `v*` tag runs `release.yml`, which
-builds the binaries with `bench/` inside them, packages `bench/` as
-`bench.tar.gz` as well for older clients, attests the build provenance of
-both, and publishes the release. There is no step on the maintainer's machine.
+builds the binaries with `bench/` inside them, attests their build provenance,
+and publishes the release. There is no step on the maintainer's machine.
 
 A published release is never re-run: replacing one of its files would change
 a file users may already have checked. The workflow refuses to, and a fix goes

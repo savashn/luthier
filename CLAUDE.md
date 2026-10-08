@@ -159,9 +159,10 @@ the crate map keeps that out of `luthier-manifest`.
   `RegistrySource::BuiltIn`, named `extras`), so a binary reads exactly the
   bench it was released with and nothing is fetched for it; `refresh` skips
   it (`is_built_in`), so it can never make a refresh that reached nothing
-  look partial. Releases still publish `bench.tar.gz` for 0.2–0.4, which
-  fetch it as `luthier-extras`; that copy is left on disk for a 0.4 still
-  installed or rolled back to. A command that reads
+  look partial. 0.4 and earlier fetched it as `luthier-extras`, from a
+  `bench.tar.gz` release asset releases no longer carry. A copy one fetched
+  is left on disk for a 0.4 still installed or rolled back to, which reads it
+  and can no longer fetch it again. A command that reads
   a registry calls `Session::refresh_due` before anything reads the index:
   the OAS index is fetched if it is missing or was last asked more than
   `AUTOMATIC_REFRESH_AFTER` (a day) ago, with the `ETag`/`Last-Modified` the
@@ -382,9 +383,8 @@ inferring a version from a filename (ROADMAP 1.1).
 
 A `v*` tag publishes a release directly: for each of x86_64 and aarch64, the
 static binary as a tarball and a `.deb` and an `.rpm` of the same files
-(`packaging/nfpm.yaml`); one `install.sh` that installs the right tarball
-into `~/.local`; and `bench.tar.gz`, which only 0.2–0.4 read now (the bench
-is built in since), all with build provenance attested
+(`packaging/nfpm.yaml`); and one `install.sh` that installs the right tarball
+into `~/.local` — the bench is inside the binaries — all with build provenance attested
 through Sigstore (`gh attestation verify`). Nothing is signed by hand. Each
 architecture builds and runs the suite on a runner of its own kind
 (`ubuntu-24.04-arm` for aarch64), and `packaging/package.sh` packages it;
@@ -448,8 +448,7 @@ default bench's name, as `homebrew-core` names the default tap (0.4 and
 earlier called it `luthier-extras`). It lives in this repository under
 `bench/` and is built into the binary, so users read what a release shipped,
 not whatever `main` holds, and never a bench written for a manifest format
-their binary does not know. The `bench.tar.gz` release asset is only for the
-clients that still fetch it.
+their binary does not know.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 
 The spec lives in the original task description; section references like §30

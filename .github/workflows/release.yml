@@ -37,12 +37,6 @@ env:
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
   CC_aarch64_unknown_linux_musl: musl-gcc
   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-  # The bench is built into the binary; this asset is for 0.2–0.4, which
-  # fetch it from the latest release on `refresh`. It is `bench/` rather than
-  # a branch tarball of this repository: discovery walks whatever it is
-  # handed, so a repository tarball would offer the workspace's own
-  # `Cargo.toml` files up as manifests.
-  BENCH_ASSET: bench.tar.gz
 
 jobs:
   # Each architecture on a runner of its own kind, so its suite runs and its
@@ -171,14 +165,6 @@ jobs:
           # shellcheck disable=SC2086 # $ARCHES is a list of plain names
           packaging/install-script.sh "$version" $ARCHES
 
-      # `bench` as the single top-level entry, which is the shape
-      # `unwrap_single_root` was written for: the snapshot's paths then stay
-      # the same across refreshes whatever the asset is called.
-      - name: Package the bench
-        run: |
-          tar czf "$BENCH_ASSET" bench
-          sha256sum "$BENCH_ASSET"
-
       # Build provenance, the standard way for a release on this forge to
       # say where its files came from. Signed through Sigstore with the
       # workflow's own identity, so there is no key to keep: anyone can check
@@ -191,7 +177,6 @@ jobs:
           subject-path: |
             luthier-*-linux.*
             install.sh
-            ${{ env.BENCH_ASSET }}
 
       # Release notes come from the changelog rather than from the tag
       # message: the changelog is the version of this that gets reviewed.
@@ -209,14 +194,13 @@ jobs:
           cat notes.md
 
       # Published straight away: nothing is signed by hand, so there is
-      # nothing to wait for. The manager trusts the bench on HTTPS and on
-      # this forge, as it trusts the binary itself.
+      # nothing to wait for. The bench is in the binaries.
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
-          files="install.sh $BENCH_ASSET"
+          files="install.sh"
           for arch in $ARCHES; do
             files="$files luthier-$arch-linux.tar.gz luthier-$arch-linux.deb luthier-$arch-linux.rpm"
           done

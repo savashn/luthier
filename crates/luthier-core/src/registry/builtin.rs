@@ -6,10 +6,9 @@
 //! `build.rs`. Built in rather than fetched: they change only when Luthier is
 //! released, so a binary reads exactly the ones it was released with, never a
 //! later set written for a manifest format it does not know, and nothing has
-//! to be downloaded before the first command can find them.
-//!
-//! Releases still publish them as `bench.tar.gz`, for the 0.2–0.4 clients
-//! that fetch it.
+//! to be downloaded before the first command can find them. (0.4 and earlier
+//! fetched them, as `luthier-extras`, from a release asset releases no
+//! longer carry.)
 
 use super::{RefreshOutcome, RegistryIndex, RegistryProvider, index_of};
 use crate::error::Result;

@@ -137,8 +137,8 @@ two, and both are fixed in the binary:
 1. **Luthier's own bench** (`extras`), built from `bench/` in this repository
    into the binary itself, so it is exactly as trustworthy as the binary,
    under the same provenance attestation, and nothing is fetched for it. (0.4
-   and earlier fetched it as the `bench.tar.gz` asset of the latest release,
-   which releases still publish for them.) It is consulted first, so it wins
+   and earlier fetched it as a `bench.tar.gz` asset of the latest release,
+   which releases no longer carry.) It is consulted first, so it wins
    any package ID both sources carry — which is how it corrects the other one.
 2. **The Open Audio Stack registry**, which carries almost every package.
 
@@ -169,10 +169,10 @@ publish a release of this repository can publish a binary whose bench points
 at any file with a matching checksum, and every user who updates installs it
 on their next `install`.** That means a compromised GitHub account, a leaked
 token with write access, or a compromised release workflow. Homebrew and Scoop
-make the same trade; apt and pacman do not. Clients from 0.2 to 0.4 fetch
-the bench on its own, as the `bench.tar.gz` of the latest release: as long as
-releases publish it, such a release also reaches every one of them on their
-next `refresh`, whether they update or not.
+make the same trade; apt and pacman do not. Clients from 0.2 to 0.4 still ask
+the latest release for a `bench.tar.gz` on every `refresh`. Releases no longer
+carry one, but the same access could attach one, and it would reach every
+such client whether it updates or not.
 
 0.1 signed the bench with a key kept off CI and compiled into the manager,
 which closed that gap. It was removed to keep releases a single tag with no
@@ -195,7 +195,7 @@ and the .rpm. It does not check the provenance attestation below.
 ## Release provenance
 
 Every file a release publishes — each architecture's tarball, .deb and .rpm,
-the install script and the bench — is covered by a GitHub build provenance
+and the install script — is covered by a GitHub build provenance
 attestation, made by the release workflow through Sigstore with the
 workflow's own identity. It says the file was built by this repository's
 `release.yml`, from which commit:
