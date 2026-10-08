@@ -9,10 +9,13 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 404 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 429 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, and
 `export`/`import` all work end to end against real packages. Named
 environments existed until 0.2 and were removed; see *Deliberate ceilings*.
+`update --self` updates Luthier itself the way it was installed, and
+`update` and `refresh` say when a newer one is out (unreleased; 0.4.0 has
+neither, so its users install the next release once by hand).
 
 CLAP, VST3, LV2 and sample libraries install, from `.tar.gz`, `.tar.xz`,
 `.zip` and `.7z`, on Linux x86_64 and aarch64. Manifests are TOML; every package carries

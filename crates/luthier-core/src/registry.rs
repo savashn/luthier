@@ -389,7 +389,13 @@ pub(crate) fn build_index(name: &str, root: &Path, mode: ParseMode) -> Result<Re
 /// the rules — notably that a symlink in an untrusted snapshot is skipped.
 pub use luthier_manifest::manifest_files;
 
-/// the manifest's checksum.
+/// Downloads `url` to `destination` with nothing to check it against, and
+/// returns its size and SHA-256.
+///
+/// For a registry snapshot — the bench tarball, the Open Audio Stack index —
+/// which no manifest gives a checksum for: it is trusted on HTTPS and on the
+/// site that serves it (SECURITY.md, *Trusting GitHub*). Everything installed
+/// from it is still checked against the manifest's checksum.
 pub(crate) async fn download_unverified(
   downloader: &Downloader,
   url: &Url,
@@ -414,9 +420,11 @@ pub(crate) async fn download_unverified(
       Ok((fetched.bytes, fetched.sha256))
     }
     Err(Error::Download(crate::error::DownloadError::ChecksumMismatch { actual, .. })) => {
-      // Expected: the digest is unknown up front. The bytes landed in the
-      // cache under their real digest before being rejected, so re-fetch
-      // now that the digest is known rather than downloading twice.
+      // Expected: the digest is unknown up front. The downloader deletes
+      // bytes that fail their check, so this downloads them a second time,
+      // now against the digest the first attempt reported. A snapshot is
+      // small enough for that not to matter; and if what the server sends
+      // changed in between, the second check fails and the refresh with it.
       let fetched = downloader
         .fetch(url, &actual, None, &mut NoProgress)
         .await?;
