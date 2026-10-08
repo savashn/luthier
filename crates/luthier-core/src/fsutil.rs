@@ -15,6 +15,46 @@ pub fn ensure_dir(path: &Path) -> Result<()> {
   fs::create_dir_all(path).map_err(|e| Error::io("create directory", path, e))
 }
 
+/// An advisory lock on a file, held until it is dropped.
+///
+/// std's file locking (stable since 1.89) is enough here and avoids a
+/// dependency: `flock` on Unix, `LockFileEx` on Windows.
+pub struct Lock {
+  _file: File,
+}
+
+impl Lock {
+  fn open(path: &Path) -> Result<File> {
+    if let Some(parent) = path.parent() {
+      ensure_dir(parent)?;
+    }
+    fs::OpenOptions::new()
+      .create(true)
+      .read(true)
+      .write(true)
+      .truncate(false)
+      .open(path)
+      .map_err(|e| Error::io("open lock file", path, e))
+  }
+
+  /// Waits for the lock.
+  pub fn acquire(path: &Path) -> Result<Self> {
+    let file = Self::open(path)?;
+    file.lock().map_err(|e| Error::io("lock", path, e))?;
+    Ok(Self { _file: file })
+  }
+
+  /// The lock, or `None` while something else holds it.
+  pub fn try_acquire(path: &Path) -> Result<Option<Self>> {
+    let file = Self::open(path)?;
+    match file.try_lock() {
+      Ok(()) => Ok(Some(Self { _file: file })),
+      Err(fs::TryLockError::WouldBlock) => Ok(None),
+      Err(fs::TryLockError::Error(e)) => Err(Error::io("lock", path, e)),
+    }
+  }
+}
+
 /// Replaces `path` with `bytes` atomically.
 ///
 /// Writes a sibling temporary file, flushes it to disk, then renames over the

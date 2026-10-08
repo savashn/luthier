@@ -17,6 +17,7 @@ pub use oas::OasRegistry;
 
 use crate::download::{Downloader, NoProgress};
 use crate::error::{Error, RegistryError, Result};
+use jiff::SignedDuration;
 use luthier_manifest::{Content, Manifest, PackageId, ParseMode, Sha256Hash, Target};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -283,6 +284,15 @@ pub trait RegistryProvider: Send + Sync {
 
   /// Brings the local snapshot up to date.
   async fn refresh(&self) -> Result<RefreshOutcome>;
+
+  /// [`RegistryProvider::refresh`], without retries, if the snapshot is due:
+  /// there is none yet, or the source was last asked more than `max_age`
+  /// ago. `None` when it is not due, and always for a source that does not
+  /// keep itself fresh — only the Open Audio Stack index, whose packages
+  /// change whenever their authors publish, does.
+  async fn refresh_if_due(&self, _max_age: SignedDuration) -> Option<Result<RefreshOutcome>> {
+    None
+  }
 
   /// Parses the local snapshot. Does not touch the network.
   fn load_index(&self) -> Result<RegistryIndex>;

@@ -123,7 +123,14 @@ impl RegistryProvider for HttpSnapshotRegistry {
     // The scratch directory is in the cache, which may be on another disk.
     fsutil::move_tree(&extracted_root, &self.snapshot_dir)?;
     fsutil::remove_any(&scratch)?;
-    provenance::record(&registries_dir, &self.name, &self.url, digest, bytes);
+    provenance::record(
+      &registries_dir,
+      &self.name,
+      &self.url,
+      digest,
+      bytes,
+      Default::default(),
+    );
 
     Ok(RefreshOutcome {
       registry: self.name.clone(),

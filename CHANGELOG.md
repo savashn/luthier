@@ -31,6 +31,32 @@ about.
   given three seconds once the command has done its work; `--json`,
   `--quiet` and `--offline` skip it, and so does a Luthier from Nix, whose
   version is up to whatever installs it.
+- **The Open Audio Stack list keeps itself current.** `search`, `info`,
+  `install`, `update`, `remove` and `import` fetch it when it has never been
+  fetched, and ask for a newer one when it was last asked more than a day
+  ago, so its packages' new versions show without `refresh`. The bench is
+  not refreshed this way, so a package it corrects still waits for
+  `refresh`. A failure only warns, and the command goes on with the list it
+  has; `--offline` skips it, and so does another Luthier refreshing the lists
+  at that moment. It never holds up an install in another terminal.
+
+### Changed
+
+- **The Open Audio Stack list downloads only when it has changed.** Every
+  request for it, `refresh`'s included, sends the `ETag` and `Last-Modified`
+  the last one came with, and an unchanged list costs a 304 and no bytes
+  (`refresh` says "unchanged"). It used to be downloaded whole, and twice, on
+  every `refresh`: the first copy only to learn its SHA-256.
+- **Two `refresh`es, or a `refresh` and an `install`, no longer meet.** Two
+  refreshes at once could write the same snapshot together; one now waits
+  for the other, under a lock of their own, apart from the one installs take.
+
+### Fixed
+
+- **A download no longer panics on its last attempt.** A resumed download
+  that failed its checksum on the fourth try ended in a panic rather than
+  the checksum error; it now reports the mismatch, and the next run starts
+  the file over.
 
 ## [0.4.0] — 2026-10-06
 

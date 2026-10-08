@@ -726,8 +726,24 @@ impl Reporter {
         // On stderr and as a warning: the command did refresh something,
         // and a piped stdout should carry that rather than the failure.
         Some(reason) => self.warn(format!("{}: not refreshed: {reason}", row.registry)),
+        None if !row.updated => {
+          println!("{}: {} packages, unchanged", row.registry, row.packages)
+        }
         None => println!("{}: {} packages", row.registry, row.packages),
       }
+    }
+  }
+
+  /// A refresh a command made on its own before reading the package list.
+  /// Said only when it failed: the command goes on with whatever list it
+  /// has — and if it has none, the warning that follows says so — and its
+  /// own answer is on stdout.
+  pub fn automatic_refresh(&self, outcome: &RefreshOutcome) {
+    if let Some(reason) = &outcome.failure {
+      self.warn(format!(
+        "{}: could not check for a newer package list: {reason}",
+        outcome.registry
+      ));
     }
   }
 

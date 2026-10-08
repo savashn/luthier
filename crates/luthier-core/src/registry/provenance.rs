@@ -4,12 +4,17 @@
 //! SHA-256 and size of what arrived, when. Nothing here is enforced; which
 //! URLs are read is built into the manager.
 //!
+//! It also says when the source was last asked, which is what decides whether
+//! a command refreshes it first, and how to ask the server whether it changed
+//! since: the `ETag` and `Last-Modified` it sent with what arrived.
+//!
 //! 0.1 also pinned each source's origin and signing key here on first use,
 //! because users could add sources of their own. They no longer can, so a
 //! pin would only protect a URL the binary already fixes — and would lock
 //! every user out the day a release moved one. A `signed_by` field 0.1 wrote
 //! is ignored on reading.
 
+use crate::download::Validators;
 use crate::fsutil;
 use jiff::Timestamp;
 use luthier_manifest::Sha256Hash;
@@ -27,6 +32,22 @@ pub struct Provenance {
   pub sha256: Sha256Hash,
   pub bytes: u64,
   pub fetched_at: Timestamp,
+  /// The last time the server was asked and said nothing had changed;
+  /// absent until it has.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub checked_at: Option<Timestamp>,
+  #[serde(flatten)]
+  pub validators: Validators,
+}
+
+impl Provenance {
+  /// When the source was last known to match the snapshot: the last check,
+  /// or the fetch when there has been none since. Not the later of the two:
+  /// a fetch stamped by a clock that was ahead would win until the clock
+  /// caught up, and keep the snapshot due on every command.
+  pub fn last_checked(&self) -> Timestamp {
+    self.checked_at.unwrap_or(self.fetched_at)
+  }
 }
 
 /// Where the record for `name` lives, beside the snapshot itself.
@@ -61,15 +82,40 @@ pub fn load(registries_dir: &Path, name: &str) -> Option<Provenance> {
 /// Best-effort: a snapshot that fetched, parsed and installed correctly is not
 /// worth failing over an unwritable audit record, and the next refresh will
 /// write one.
-pub fn record(registries_dir: &Path, name: &str, url: &Url, sha256: Sha256Hash, bytes: u64) {
-  let provenance = Provenance {
-    url: url.to_string(),
-    origin: origin_of(url),
-    sha256,
-    bytes,
-    fetched_at: Timestamp::now(),
-  };
-  let Ok(mut encoded) = serde_json::to_vec_pretty(&provenance) else {
+pub fn record(
+  registries_dir: &Path,
+  name: &str,
+  url: &Url,
+  sha256: Sha256Hash,
+  bytes: u64,
+  validators: Validators,
+) {
+  write(
+    registries_dir,
+    name,
+    &Provenance {
+      url: url.to_string(),
+      origin: origin_of(url),
+      sha256,
+      bytes,
+      fetched_at: Timestamp::now(),
+      checked_at: None,
+      validators,
+    },
+  );
+}
+
+/// Records that the server was asked just now and had nothing new. Best
+/// effort, as [`record`] is.
+pub fn record_checked(registries_dir: &Path, name: &str) {
+  if let Some(mut provenance) = load(registries_dir, name) {
+    provenance.checked_at = Some(Timestamp::now());
+    write(registries_dir, name, &provenance);
+  }
+}
+
+fn write(registries_dir: &Path, name: &str, provenance: &Provenance) {
+  let Ok(mut encoded) = serde_json::to_vec_pretty(provenance) else {
     return;
   };
   encoded.push(b'\n');
@@ -116,6 +162,46 @@ mod tests {
     )
     .unwrap();
     assert_eq!(load(dir.path(), "luthier-extras").unwrap().bytes, 10);
+  }
+
+  #[test]
+  fn a_record_keeps_what_to_ask_the_server_and_when_it_was_last_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    let validators = Validators {
+      etag: Some("\"v1\"".into()),
+      last_modified: Some("Tue, 29 Sep 2026 05:02:02 GMT".into()),
+    };
+    let sha256 = Sha256Hash::from_bytes([7; 32]);
+    record(
+      dir.path(),
+      "oas",
+      &url("https://example.com/plugins/index.json"),
+      sha256,
+      10,
+      validators.clone(),
+    );
+    let fetched = load(dir.path(), "oas").unwrap();
+    assert_eq!(fetched.validators, validators);
+    assert_eq!(fetched.checked_at, None);
+    assert_eq!(fetched.last_checked(), fetched.fetched_at);
+
+    record_checked(dir.path(), "oas");
+    let checked = load(dir.path(), "oas").unwrap();
+    assert_eq!(Some(checked.last_checked()), checked.checked_at);
+    assert!(checked.last_checked() >= fetched.fetched_at);
+    // A new fetch starts the count again.
+    record(
+      dir.path(),
+      "oas",
+      &url("https://example.com/plugins/index.json"),
+      sha256,
+      10,
+      validators.clone(),
+    );
+    assert_eq!(load(dir.path(), "oas").unwrap().checked_at, None);
+    // Asking changes nothing about what was fetched.
+    assert_eq!(checked.sha256, sha256);
+    assert_eq!(checked.validators, validators);
   }
 
   #[test]

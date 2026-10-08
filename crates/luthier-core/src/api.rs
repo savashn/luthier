@@ -33,6 +33,11 @@ use std::time::Duration;
 /// How long the line about a newer Luthier waits for GitHub.
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// How old the Open Audio Stack index may get before a command that reads it
+/// asks for a newer one first. A day: packages change as their authors
+/// publish, and asking costs no bytes when nothing has.
+pub const AUTOMATIC_REFRESH_AFTER: jiff::SignedDuration = jiff::SignedDuration::from_hours(24);
+
 /// A configured manager.
 pub struct Session {
   layout: Layout,
@@ -149,8 +154,9 @@ impl Session {
   /// source rather than colliding with it.
   ///
   /// Built once and reused for the rest of the session. Snapshots only change
-  /// during `refresh`, which does not read the index, so there is nothing a
-  /// later call could see that the first did not.
+  /// during `refresh` and [`Session::refresh_due`], neither of which reads the
+  /// index, so there is nothing a later call could see that the first did
+  /// not — as long as a command refreshes before it reads.
   pub fn index(&self) -> Result<&RegistryIndex> {
     if let Some(index) = self.index.get() {
       return Ok(index);
@@ -165,6 +171,9 @@ impl Session {
   /// Updates every registry (§31 `refresh`).
   pub async fn refresh(&self) -> Result<Vec<RefreshOutcome>> {
     self.require_locations(&[LocationKind::Cache])?;
+    // Waits for a refresh another command is making on its own, rather than
+    // writing the same snapshots alongside it.
+    let _lock = fsutil::Lock::acquire(&self.layout.registries_lock_file())?;
     let mut outcomes = Vec::new();
     let mut first_error = None;
     for provider in self.config.providers(&self.layout, self.offline) {
@@ -185,6 +194,38 @@ impl Session {
       Some(error) if outcomes.iter().all(|o| o.failure.is_some()) => Err(error),
       _ => Ok(outcomes),
     }
+  }
+
+  /// Refreshes, before a command reads them, the registries that keep
+  /// themselves fresh and are due: never fetched, or last asked more than
+  /// [`AUTOMATIC_REFRESH_AFTER`] ago. Returns what was attempted.
+  ///
+  /// Never an error: a source that cannot be reached keeps the snapshot on
+  /// disk, and its outcome says why, for the command to warn with. Nothing
+  /// is attempted under `--offline`, nor while another Luthier is refreshing
+  /// the same snapshots, which leaves them as fresh as this would.
+  pub async fn refresh_due(&self) -> Vec<RefreshOutcome> {
+    if self.offline || self.index.get().is_some() {
+      return Vec::new();
+    }
+    // The registries' lock, not the state's: a command that only reads
+    // packages must not stop an install in another terminal from starting.
+    let _lock = match fsutil::Lock::try_acquire(&self.layout.registries_lock_file()) {
+      Ok(Some(lock)) => lock,
+      Ok(None) => return Vec::new(),
+      Err(error) => return vec![RefreshOutcome::failed("registries", error.to_string())],
+    };
+    let mut outcomes = Vec::new();
+    for provider in self.config.providers(&self.layout, self.offline) {
+      match provider.refresh_if_due(AUTOMATIC_REFRESH_AFTER).await {
+        Some(Ok(outcome)) => outcomes.push(outcome),
+        Some(Err(error)) => {
+          outcomes.push(RefreshOutcome::failed(provider.name(), error.to_string()))
+        }
+        None => {}
+      }
+    }
+    outcomes
   }
 
   // --------------------------------------------------------------- search --

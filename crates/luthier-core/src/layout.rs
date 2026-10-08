@@ -413,6 +413,13 @@ impl Layout {
     self.data.join("registries")
   }
 
+  /// Held while the snapshots are being refreshed, so two refreshes never
+  /// write them at once. Apart from [`Layout::lock_file`], so a command that
+  /// only reads packages never holds up one that installs them.
+  pub fn registries_lock_file(&self) -> PathBuf {
+    self.registries_dir().join(".lock")
+  }
+
   /// Content-addressed artifact cache. Keying by digest means a cache hit is
   /// self-verifying: the name *is* the expected hash.
   pub fn artifact_cache_dir(&self) -> PathBuf {

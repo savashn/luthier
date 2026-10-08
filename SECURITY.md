@@ -146,7 +146,13 @@ both with a local directory for one command; it is hidden, and exists for
 developing the bench.
 
 `registry/provenance.rs` records, for each source, the URL and the SHA-256 and
-size of what arrived, when. The record is for audit and enforces nothing.
+size of what arrived, when. The record enforces nothing. It also says when the
+source was last asked, which decides when a command refreshes the Open Audio
+Stack index on its own (once a day), and keeps the `ETag` and `Last-Modified`
+the server sent, which a refresh sends back so that an unchanged index is not
+downloaded again. They are sent only while the snapshot on disk hashes to what
+the record says arrived, from the same URL. So a change to that index reaches
+every user within a day without a `refresh`, exactly as it would with one.
 (0.1 also pinned each source's origin on first use, because users could add
 sources; with the URLs fixed in the binary a pin protects nothing and would
 lock everyone out the day a release moved one.)

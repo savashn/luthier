@@ -216,7 +216,7 @@ pub fn load(layout: &Layout) -> Result<State> {
 /// The lock is advisory and process-wide; it stops two `luthier install` runs
 /// from interleaving writes to the same plugin directories.
 pub struct StateGuard {
-  _lock: std::fs::File,
+  _lock: fsutil::Lock,
   path: PathBuf,
   backup: PathBuf,
   state: State,
@@ -226,27 +226,15 @@ pub struct StateGuard {
 /// records: `luthier update --self`. It must work with a state file this build
 /// cannot read — one a newer Luthier wrote is the reason to update.
 pub struct StateLock {
-  _lock: std::fs::File,
+  _lock: fsutil::Lock,
 }
 
 impl StateLock {
   pub fn acquire(layout: &Layout) -> Result<Self> {
-    fsutil::ensure_dir(&layout.state_dir())?;
-    let lock_path = layout.lock_file();
-    let lock = std::fs::OpenOptions::new()
-      .create(true)
-      .read(true)
-      .write(true)
-      .truncate(false)
-      .open(&lock_path)
-      .map_err(|e| Error::io("open lock file", &lock_path, e))?;
-
-    // std's advisory file locking (stable since 1.89) is enough here and
-    // avoids a dependency: `flock` on Unix, `LockFileEx` on Windows.
-    lock
-      .try_lock()
-      .map_err(|_| Error::State(StateError::Locked))?;
-    Ok(Self { _lock: lock })
+    match fsutil::Lock::try_acquire(&layout.lock_file())? {
+      Some(lock) => Ok(Self { _lock: lock }),
+      None => Err(Error::State(StateError::Locked)),
+    }
   }
 }
 

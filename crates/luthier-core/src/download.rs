@@ -29,6 +29,33 @@ pub trait Progress: Send {
 pub struct NoProgress;
 impl Progress for NoProgress {}
 
+/// What names one version of a document to the server that sent it, so it
+/// can be asked whether it still has that version (RFC 9110 §13.1).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Validators {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub etag: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub last_modified: Option<String>,
+}
+
+impl Validators {
+  pub fn is_empty(&self) -> bool {
+    self.etag.is_none() && self.last_modified.is_none()
+  }
+}
+
+/// The answer to [`Downloader::get_if_changed`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Conditional {
+  /// The server still has the version the validators name (304).
+  Unchanged,
+  Changed {
+    body: Vec<u8>,
+    validators: Validators,
+  },
+}
+
 /// Where an artifact ended up, and whether the network was involved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fetched {
@@ -73,6 +100,12 @@ const MAX_ATTEMPTS: usize = 4;
 /// The wait before the second attempt; each later one doubles it.
 const RETRY_BASE_DELAY: Duration = Duration::from_secs(1);
 
+/// [`CONNECT_TIMEOUT`] for [`Downloader::impatient`].
+const IMPATIENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// [`READ_TIMEOUT`] for [`Downloader::impatient`].
+const IMPATIENT_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Fetches artifacts into a content-addressed cache.
 pub struct Downloader {
   /// Built on the first request rather than up front. It needs the system's
@@ -83,6 +116,9 @@ pub struct Downloader {
   cache_dir: PathBuf,
   offline: bool,
   default_max_bytes: u64,
+  attempts: usize,
+  connect_timeout: Duration,
+  read_timeout: Duration,
 }
 
 impl Downloader {
@@ -92,6 +128,9 @@ impl Downloader {
       cache_dir: cache_dir.into(),
       offline: false,
       default_max_bytes: DEFAULT_MAX_BYTES,
+      attempts: MAX_ATTEMPTS,
+      connect_timeout: CONNECT_TIMEOUT,
+      read_timeout: READ_TIMEOUT,
     }
   }
 
@@ -99,8 +138,8 @@ impl Downloader {
     let built = self.client.get_or_init(|| {
       reqwest::Client::builder()
         .user_agent(concat!("luthier/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(CONNECT_TIMEOUT)
-        .read_timeout(READ_TIMEOUT)
+        .connect_timeout(self.connect_timeout)
+        .read_timeout(self.read_timeout)
         .build()
         .map_err(|e| transport_reason(&e))
     });
@@ -124,6 +163,24 @@ impl Downloader {
   /// by generating a multi-gigabyte fixture.
   pub fn max_bytes(mut self, max_bytes: u64) -> Self {
     self.default_max_bytes = max_bytes;
+    self
+  }
+
+  /// One try, and short waits for a connection and for each read, for a
+  /// fetch nobody asked for: a command refreshing a list on its way to doing
+  /// what it was asked should not stall on a network that is not there, or a
+  /// server that has stopped answering. A slow link that keeps delivering is
+  /// still waited for, as it is for any download.
+  pub fn impatient(mut self) -> Self {
+    self.attempts = 1;
+    self.connect_timeout = IMPATIENT_CONNECT_TIMEOUT;
+    self.read_timeout = IMPATIENT_READ_TIMEOUT;
+    self
+  }
+
+  #[cfg(test)]
+  fn read_timeout(mut self, timeout: Duration) -> Self {
+    self.read_timeout = timeout;
     self
   }
 
@@ -151,7 +208,46 @@ impl Downloader {
   /// latest. There is no digest to check it against, so what reads it treats
   /// it as a claim; anything it leads to downloading is checked as usual.
   pub async fn get(&self, url: &Url, max_bytes: u64) -> Result<Vec<u8>> {
+    match self.get_once(url, max_bytes, None).await? {
+      Conditional::Changed { body, .. } => Ok(body),
+      Conditional::Unchanged => unreachable!("an unconditional request is never answered 304"),
+    }
+  }
+
+  /// [`Downloader::get`] for a document there is already a copy of, named
+  /// by `known`: the server is asked to send it only if it has changed.
+  /// Retried as an artifact is, unless [`Downloader::impatient`].
+  ///
+  /// A `file://` URL has no validators and is always read.
+  pub async fn get_if_changed(
+    &self,
+    url: &Url,
+    max_bytes: u64,
+    known: Option<&Validators>,
+  ) -> Result<Conditional> {
+    let mut last = None;
+    for attempt in 0..self.attempts {
+      if attempt > 0 {
+        let backoff = RETRY_BASE_DELAY * 2u32.saturating_pow(attempt as u32 - 1);
+        tracing::debug!(url = %url, attempt, ?backoff, "retrying download");
+        tokio::time::sleep(backoff).await;
+      }
+      match self.get_once(url, max_bytes, known).await {
+        Err(e) if is_retryable(&e) => last = Some(e),
+        answer => return answer,
+      }
+    }
+    Err(last.expect("a retryable error was recorded before the attempts ran out"))
+  }
+
+  async fn get_once(
+    &self,
+    url: &Url,
+    max_bytes: u64,
+    known: Option<&Validators>,
+  ) -> Result<Conditional> {
     use futures_util::StreamExt;
+    use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 
     let too_large = || {
       Error::Download(DownloadError::TooLarge {
@@ -170,7 +266,10 @@ impl Downloader {
         if body.len() as u64 > max_bytes {
           return Err(too_large());
         }
-        Ok(body)
+        Ok(Conditional::Changed {
+          body,
+          validators: Validators::default(),
+        })
       }
       "http" | "https" => {
         if self.offline {
@@ -184,19 +283,39 @@ impl Downloader {
             reason: transport_reason(&e),
           })
         };
-        let response = self
-          .client(url)?
-          .get(url.clone())
-          .send()
-          .await
-          .map_err(transport)?;
+        let mut request = self.client(url)?.get(url.clone());
+        if let Some(known) = known {
+          // An entity tag is the stronger of the two; a server that has
+          // one ignores the date (RFC 9110 §13.1.3).
+          if let Some(etag) = &known.etag {
+            request = request.header(IF_NONE_MATCH, etag);
+          }
+          if let Some(date) = &known.last_modified {
+            request = request.header(IF_MODIFIED_SINCE, date);
+          }
+        }
+        let response = request.send().await.map_err(transport)?;
         let status = response.status();
+        if status == reqwest::StatusCode::NOT_MODIFIED && known.is_some() {
+          return Ok(Conditional::Unchanged);
+        }
         if !status.is_success() {
           return Err(Error::Download(DownloadError::HttpStatus {
             url: url.to_string(),
             status: status.as_u16(),
           }));
         }
+        let header = |name| {
+          response
+            .headers()
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+        };
+        let validators = Validators {
+          etag: header(ETAG),
+          last_modified: header(LAST_MODIFIED),
+        };
         let mut body = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -206,7 +325,7 @@ impl Downloader {
           }
           body.extend_from_slice(&chunk);
         }
-        Ok(body)
+        Ok(Conditional::Changed { body, validators })
       }
       other => Err(Error::Download(DownloadError::UnsupportedScheme {
         url: url.to_string(),
@@ -340,7 +459,7 @@ impl Downloader {
     let mut fresh_only = false;
     let mut last: Option<Error> = None;
 
-    for attempt in 0..MAX_ATTEMPTS {
+    for attempt in 0..self.attempts {
       if attempt > 0 {
         let backoff = RETRY_BASE_DELAY * 2u32.saturating_pow(attempt as u32 - 1);
         tracing::debug!(url = %url, attempt, ?backoff, "retrying download");
@@ -362,7 +481,9 @@ impl Downloader {
           // A resumed download that does not verify has one likely cause: the
           // bytes already on disk were not this artifact's. That is worth one
           // clean attempt, and exactly one — a second failure is upstream's.
-          if &actual != expected && resume_from > 0 && !fresh_only {
+          // With no attempt left, the mismatch is the answer, and `fetch`
+          // deletes the bytes, so the next command starts clean.
+          if &actual != expected && resume_from > 0 && !fresh_only && attempt + 1 < self.attempts {
             tracing::warn!(url = %url, "resumed download failed verification; starting over");
             fresh_only = true;
             last = None;
@@ -585,6 +706,37 @@ mod tests {
 
   fn file_url(path: &Path) -> Url {
     Url::from_file_path(path).unwrap()
+  }
+
+  #[tokio::test]
+  async fn an_impatient_fetch_gives_up_on_a_server_that_does_not_answer() {
+    // Takes connections, into the kernel's backlog, and never answers: a
+    // captive portal, or a server that has hung.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = Url::parse(&format!(
+      "http://{}/index.json",
+      silent.local_addr().unwrap()
+    ))
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let downloader = Downloader::new(dir.path())
+      .impatient()
+      .read_timeout(Duration::from_millis(300));
+
+    let started = std::time::Instant::now();
+    let answer = tokio::time::timeout(
+      Duration::from_secs(20),
+      downloader.get_if_changed(&url, 1024, None),
+    )
+    .await
+    .expect("the read timeout ends it");
+    assert!(answer.is_err());
+    // One try: no backoff between attempts.
+    assert!(
+      started.elapsed() < Duration::from_secs(5),
+      "{:?}",
+      started.elapsed()
+    );
   }
 
   #[tokio::test]

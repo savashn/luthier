@@ -149,10 +149,11 @@ installed; Luthier reports it and leaves it where it is.
 
 ### `refresh`
 
-On, every switch fetches the package lists first, so a package declared for
-the first time can be found. Off, the switch works from the lists already on
-disk, which is faster and works offline; run `luthier refresh` yourself now
-and then.
+On, every switch asks for every package list first, so a package declared for
+the first time can be found; a list that has not changed downloads nothing.
+Off, the switch leaves the bench as it is, and asks for the Open Audio Stack
+list only once a day has passed since it last did, as any command does. Either
+way a switch with no network goes ahead with the lists already on disk.
 
 ### `systemPlugins`
 

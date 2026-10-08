@@ -245,6 +245,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
   // `unpin`, `env export` — has no reason to pay for one or to warn about
   // benches it never opens. A deny-list had to be extended by hand for each
   // new registry-free command, and was not.
+  //
+  // The same commands bring a stale package list up to date first, so
+  // nobody has to remember `refresh` to see what is new.
   if matches!(
     cli.command,
     Command::Search { .. }
@@ -254,6 +257,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       | Command::Remove { .. }
       | Command::Import { .. }
   ) {
+    for outcome in session.refresh_due().await {
+      reporter.automatic_refresh(&outcome);
+    }
     for problem in session.registry_problems() {
       reporter.warn(format!("registry unavailable: {problem}"));
     }

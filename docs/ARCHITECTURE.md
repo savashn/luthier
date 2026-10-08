@@ -68,7 +68,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | Module | Holds |
 |---|---|
 | `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import, and `--prune`'s convergence |
-| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers; `provenance`, an audit record of each fetch |
+| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -233,8 +233,9 @@ reason to exist.
 
 Neither source is signed: both are trusted on HTTPS and on the host that
 serves them, which for the bench is this repository's releases.
-`registry/provenance.rs` records what each fetch brought, for audit only. See
-*Trusting GitHub* in [SECURITY.md](../SECURITY.md).
+`registry/provenance.rs` records what each fetch brought, when the source was
+last asked, and the `ETag`/`Last-Modified` that make the next ask conditional;
+it enforces nothing. See *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
 ### There are no environments
 

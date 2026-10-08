@@ -190,9 +190,14 @@ luthier list
 
 Plugins land in `~/.clap`, `~/.vst3` and `~/.lv2`, which hosts already scan:
 restart your DAW, or ask it to rescan, and they appear. Anything that installs
-or deletes shows what it will do and asks first. Run `luthier refresh` again
-now and then to see new packages and versions, and `luthier update` to see
-what can be upgraded.
+or deletes shows what it will do and asks first. `luthier update` shows what
+can be upgraded.
+
+The Open Audio Stack list, which almost every package comes from, keeps
+itself current: once a day, a command that reads it first asks whether there
+is a newer one, which downloads nothing when there is not. `--offline`
+skips that, and so does a network that is not there, with a warning.
+`luthier refresh` asks now, for every list.
 
 ## Use
 

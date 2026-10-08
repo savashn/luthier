@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 429 tests, fully offline
+cargo test --workspace                     # 439 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -153,6 +153,19 @@ the crate map keeps that out of `luthier-manifest`.
   nothing a later call could see that the first did not. The two detection
   scans memoise for the same reason: `install` ran each twice, and a session is
   one command.
+- **The OAS index refreshes itself; the bench does not.** A command that reads
+  a registry calls `Session::refresh_due` before anything reads the index:
+  the OAS index is fetched if it is missing or was last asked more than
+  `AUTOMATIC_REFRESH_AFTER` (a day) ago, with the `ETag`/`Last-Modified` the
+  provenance record kept, so an unchanged index costs a 304 and no bytes. Those
+  validators are sent only while the snapshot on disk hashes to the recorded
+  SHA-256, and to the recorded URL. The automatic fetch is
+  `Downloader::impatient` (one try, 5 s to connect, 10 s per read), never
+  fails the command, and is skipped under `--offline`. Refreshes take
+  `Layout::registries_lock_file`, never the state lock, so reading packages
+  never stops an install from starting: an automatic one skips while another
+  runs, `refresh` waits for it. `refresh` still fetches everything, the bench
+  included, and is conditional too.
 - **Every refusal in `remove` happens before the first delete**, and the state
   file is committed per package as `install_at` does. Deleting first and
   checking later left earlier packages gone from disk and still recorded —
@@ -411,7 +424,8 @@ cache; an entry is kept when some installed package recorded its digest.
 `luthier bench list` shows the two built-in sources in precedence order;
 there is nothing to add or remove. `--registry-path` (hidden) swaps both for a
 local directory, for developing the bench. `registry/provenance.rs` records
-each fetch for audit and enforces nothing.
+each fetch, when the source was last asked and the validators for asking
+again; it enforces nothing.
 
 Deferred, roughly in order of value: macOS and
 Windows layouts (the schema and resolver already model them; `Layout` and the
