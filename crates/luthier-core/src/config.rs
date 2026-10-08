@@ -3,7 +3,9 @@
 use crate::error::{Error, Result};
 use crate::fsutil;
 use crate::layout::{Layout, Locations};
-use crate::registry::{HttpSnapshotRegistry, LocalRegistry, OasRegistry, RegistryProvider};
+use crate::registry::{
+  BuiltinRegistry, HttpSnapshotRegistry, LocalRegistry, OasRegistry, RegistryProvider, builtin,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use url::Url;
@@ -12,6 +14,8 @@ use url::Url;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum RegistrySource {
+  /// The manifests built into the binary from `bench/`.
+  BuiltIn,
   /// A directory on this machine: a git checkout, or a test fixture.
   Path { path: PathBuf },
   /// A snapshot tarball fetched over HTTPS.
@@ -59,21 +63,6 @@ pub struct Config {
   pub locations: Locations,
 }
 
-/// The bench shipped with the client, published as a release asset.
-///
-/// A release asset rather than the forge's branch tarball, so the bench a
-/// user reads is the one a release published rather than whatever `main`
-/// holds at that moment.
-///
-/// It is built from `bench/` by the release workflow rather than being a
-/// tarball of the repository: the manager's own `Cargo.toml` files would
-/// otherwise be read as manifests, since discovery walks whatever it is given.
-///
-/// Not signed: it is trusted on HTTPS and on GitHub, exactly as the binary
-/// that reads it was downloaded.
-pub const DEFAULT_REGISTRY_URL: &str =
-  "https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz";
-
 /// The Open Audio Stack registry, published as static JSON under CC0.
 ///
 /// It carries hundreds of packages against this project's handful, and it is
@@ -88,19 +77,15 @@ pub const DEFAULT_OAS_URL: &str = "https://open-audio-stack.github.io/open-audio
 ///
 /// This is the whole list. Users do not add benches: anything downloadable
 /// belongs in the Open Audio Stack registry, and the bench holds only what
-/// cannot be expressed there.
+/// cannot be expressed there. It is built into the binary (`extras`), so it
+/// is never fetched; 0.4 and earlier fetched it as `luthier-extras`.
 ///
 /// That order is the whole mechanism behind correcting a broader source: where
 /// a derived entry would install the wrong thing, the bench's manifest is the
 /// one the resolver sees.
 fn default_registries() -> Vec<RegistryConfig> {
   vec![
-    RegistryConfig::new(
-      "luthier-extras",
-      RegistrySource::Snapshot {
-        url: Url::parse(DEFAULT_REGISTRY_URL).expect("the built-in URL is valid"),
-      },
-    ),
+    RegistryConfig::new(builtin::NAME, RegistrySource::BuiltIn),
     RegistryConfig::new(
       "oas",
       RegistrySource::Oas {
@@ -166,6 +151,7 @@ fn build_provider(
   offline: bool,
 ) -> Box<dyn RegistryProvider> {
   match &config.source {
+    RegistrySource::BuiltIn => Box::new(BuiltinRegistry::new(&config.name)),
     RegistrySource::Path { path } => Box::new(LocalRegistry::new(&config.name, path)),
     RegistrySource::Snapshot { url } => Box::new(
       HttpSnapshotRegistry::new(
@@ -213,7 +199,8 @@ mod tests {
     // than only counting: the bench must come first or it cannot correct
     // anything.
     let names: Vec<&str> = config.registries.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, vec!["luthier-extras", "oas"]);
+    assert_eq!(names, vec!["extras", "oas"]);
+    assert_eq!(config.registries[0].source, RegistrySource::BuiltIn);
   }
 
   #[test]

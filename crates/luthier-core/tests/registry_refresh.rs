@@ -328,3 +328,49 @@ async fn refreshing_the_list_does_not_hold_up_an_install() {
     luthier_core::fsutil::Lock::acquire(&client.layout.registries_lock_file()).unwrap();
   luthier_core::state::StateLock::acquire(&client.layout).unwrap();
 }
+
+// ------------------------------------------------------------------ extras --
+
+fn extras_then(
+  mut registries: Vec<luthier_core::config::RegistryConfig>,
+) -> Vec<luthier_core::config::RegistryConfig> {
+  use luthier_core::config::{RegistryConfig, RegistrySource};
+  registries.insert(0, RegistryConfig::new("extras", RegistrySource::BuiltIn));
+  registries
+}
+
+#[tokio::test]
+async fn refresh_has_nothing_to_say_about_the_built_in_extras() {
+  let (_site, url) = oas_site("{}");
+  let client = Client::new();
+
+  // What 0.4 fetched them as is left alone: a 0.4 still installed, or
+  // rolled back to, reads it.
+  let registries = client.layout.registries_dir();
+  std::fs::create_dir_all(registries.join("luthier-extras/plugins")).unwrap();
+  std::fs::write(registries.join("luthier-extras.source.json"), "{}").unwrap();
+
+  let session = reading(&client, extras_then(oas(&url)), false);
+  let outcomes = session.refresh().await.unwrap();
+  let names: Vec<&str> = outcomes.iter().map(|o| o.registry.as_str()).collect();
+  assert_eq!(names, ["oas"]);
+  assert!(registries.join("luthier-extras/plugins").is_dir());
+  assert!(registries.join("luthier-extras.source.json").is_file());
+  // Nothing is written for the built-in source.
+  assert!(!registries.join("extras").exists());
+  assert!(!registries.join("extras.source.json").exists());
+
+  // And are read all the same, ahead of the list they correct.
+  let index = session.index().unwrap();
+  assert!(index.packages.values().any(|e| e.registry == "extras"));
+}
+
+#[tokio::test]
+async fn a_refresh_that_reached_nothing_is_an_error_though_the_extras_are_built_in() {
+  // They are no success of the refresh's: counting them would turn a
+  // refresh that reached nothing into a partial one, and exit 0.
+  let client = Client::new();
+  let gone = Url::parse("file:///nonexistent/oas/").unwrap();
+  let session = reading(&client, extras_then(oas(&gone)), false);
+  assert!(session.refresh().await.is_err());
+}

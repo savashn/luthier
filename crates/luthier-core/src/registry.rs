@@ -6,11 +6,13 @@
 //! `GitRegistry` backed by `gix`, or an index served as a single JSON file,
 //! means adding an implementation, not touching anything below.
 
+pub mod builtin;
 mod http;
 mod local;
 pub mod oas;
 pub mod provenance;
 
+pub use builtin::BuiltinRegistry;
 pub use http::HttpSnapshotRegistry;
 pub use local::LocalRegistry;
 pub use oas::OasRegistry;
@@ -294,6 +296,12 @@ pub trait RegistryProvider: Send + Sync {
     None
   }
 
+  /// Whether this source came with the binary, and so has nothing for
+  /// `refresh` to fetch or report.
+  fn is_built_in(&self) -> bool {
+    false
+  }
+
   /// Parses the local snapshot. Does not touch the network.
   fn load_index(&self) -> Result<RegistryIndex>;
 }
@@ -309,12 +317,37 @@ pub(crate) fn build_index(name: &str, root: &Path, mode: ParseMode) -> Result<Re
     )));
   }
 
+  let mut manifests = Vec::new();
+  for path in manifest_files(root)? {
+    let bytes = std::fs::read(&path).map_err(|e| Error::io("read", &path, e))?;
+    manifests.push((path, bytes));
+  }
+  let engines_path = root.join(luthier_manifest::ENGINES_FILE);
+  let engines = if engines_path.is_file() {
+    Some(std::fs::read_to_string(&engines_path).map_err(|e| Error::io("read", &engines_path, e))?)
+  } else {
+    None
+  };
+  index_of(name, root, manifests, engines.as_deref(), mode)
+}
+
+/// Reads manifests already in hand into an index: each as its path, which
+/// `root` is stripped from in messages, and its bytes; with the registry's
+/// `engines.toml`, if it has one. What [`build_index`] does once it has read
+/// a tree, and what the manifests built into the binary go through.
+pub(crate) fn index_of(
+  name: &str,
+  root: &Path,
+  manifests: impl IntoIterator<Item = (PathBuf, impl AsRef<[u8]>)>,
+  engines: Option<&str>,
+  mode: ParseMode,
+) -> Result<RegistryIndex> {
   let mut packages: BTreeMap<PackageId, IndexEntry> = BTreeMap::new();
   let mut sources: BTreeMap<PackageId, PathBuf> = BTreeMap::new();
 
-  for path in manifest_files(root)? {
-    let bytes = std::fs::read(&path).map_err(|e| Error::io("read", &path, e))?;
-    let text = String::from_utf8_lossy(&bytes);
+  for (path, bytes) in manifests {
+    let bytes = bytes.as_ref();
+    let text = String::from_utf8_lossy(bytes);
     let display = path
       .strip_prefix(root)
       .unwrap_or(&path)
@@ -350,7 +383,7 @@ pub(crate) fn build_index(name: &str, root: &Path, mode: ParseMode) -> Result<Re
     let digest = {
       use sha2::{Digest, Sha256};
       let mut hasher = Sha256::new();
-      hasher.update(&bytes);
+      hasher.update(bytes);
       Sha256Hash::from_bytes(hasher.finalize().into())
     };
 
@@ -367,20 +400,18 @@ pub(crate) fn build_index(name: &str, root: &Path, mode: ParseMode) -> Result<Re
     );
   }
 
-  let engines_path = root.join(luthier_manifest::ENGINES_FILE);
-  let engines = if engines_path.is_file() {
-    let text =
-      std::fs::read_to_string(&engines_path).map_err(|e| Error::io("read", &engines_path, e))?;
-    luthier_manifest::EnginesFile::parse(&text)
-      .map_err(|e| {
-        Error::Registry(RegistryError::Malformed {
-          registry: name.to_owned(),
-          reason: format!("{}: {e}", luthier_manifest::ENGINES_FILE),
-        })
-      })?
-      .entries
-  } else {
-    Vec::new()
+  let engines = match engines {
+    Some(text) => {
+      luthier_manifest::EnginesFile::parse(text)
+        .map_err(|e| {
+          Error::Registry(RegistryError::Malformed {
+            registry: name.to_owned(),
+            reason: format!("{}: {e}", luthier_manifest::ENGINES_FILE),
+          })
+        })?
+        .entries
+    }
+    None => Vec::new(),
   };
 
   Ok(RegistryIndex {

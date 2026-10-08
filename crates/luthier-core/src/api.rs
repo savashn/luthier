@@ -174,9 +174,16 @@ impl Session {
     // Waits for a refresh another command is making on its own, rather than
     // writing the same snapshots alongside it.
     let _lock = fsutil::Lock::acquire(&self.layout.registries_lock_file())?;
+    // The `luthier-extras` copy 0.4 and earlier fetched the built-in
+    // manifests as is left where it is: nothing here reads it, and a 0.4
+    // that is still installed, or rolled back to, does.
+
     let mut outcomes = Vec::new();
     let mut first_error = None;
-    for provider in self.config.providers(&self.layout, self.offline) {
+    // A source built into the binary has nothing to fetch, and counting it
+    // would make a refresh that reached nothing look like a partial success.
+    let providers = self.config.providers(&self.layout, self.offline);
+    for provider in providers.iter().filter(|p| !p.is_built_in()) {
       match provider.refresh().await {
         Ok(outcome) => outcomes.push(outcome),
         // One bench that cannot be reached does not cost a user the others.
@@ -1159,12 +1166,15 @@ impl Session {
         priority: i + 1,
         name: registry.name.clone(),
         kind: match registry.source {
+          RegistrySource::BuiltIn => "built-in",
           RegistrySource::Path { .. } => "path",
           RegistrySource::Snapshot { .. } => "snapshot",
           RegistrySource::Oas { .. } => "oas",
         }
         .into(),
         location: match &registry.source {
+          // Where it is: in this version of Luthier.
+          RegistrySource::BuiltIn => format!("luthier {}", crate::selfupdate::this_version()),
           RegistrySource::Path { path } => path.display().to_string(),
           RegistrySource::Snapshot { url } => url.to_string(),
           RegistrySource::Oas { url } => url.to_string(),

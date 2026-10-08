@@ -178,11 +178,10 @@ option of the module and what a switch does are in
 
 ### First steps
 
-Fetch the package lists first; nothing can be found or installed until this
-has run once:
+Nothing needs fetching first: the package list fetches itself the first time
+a command needs it.
 
 ```console
-luthier refresh
 luthier search reverb
 luthier install dragonfly-reverb
 luthier list
@@ -197,7 +196,8 @@ The Open Audio Stack list, which almost every package comes from, keeps
 itself current: once a day, a command that reads it first asks whether there
 is a newer one, which downloads nothing when there is not. `--offline`
 skips that, and so does a network that is not there, with a warning.
-`luthier refresh` asks now, for every list.
+`luthier refresh` asks now. The few packages Luthier corrects or adds itself
+(`extras`) are built into it, and change when Luthier is updated.
 
 ## Use
 
@@ -236,9 +236,9 @@ Anything that deletes or installs asks first. In a script, `--yes` answers;
 have files removed. Without a terminal to ask on, such a command refuses rather
 than assuming.
 
-The bench is consulted before the Open Audio Stack registry, and the first to
-carry a package ID keeps it — which is how a curated manifest corrects a
-derived one.
+The bench (`extras`, built into Luthier) is consulted before the Open Audio
+Stack registry, and the first to carry a package ID keeps it — which is how a
+curated manifest corrects a derived one.
 
 `--root <dir>` confines what is *written*; the system search paths govern what
 is *seen*. They are separate: a rooted install still counts a

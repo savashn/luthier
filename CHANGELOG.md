@@ -34,13 +34,24 @@ about.
 - **The Open Audio Stack list keeps itself current.** `search`, `info`,
   `install`, `update`, `remove` and `import` fetch it when it has never been
   fetched, and ask for a newer one when it was last asked more than a day
-  ago, so its packages' new versions show without `refresh`. The bench is
-  not refreshed this way, so a package it corrects still waits for
-  `refresh`. A failure only warns, and the command goes on with the list it
-  has; `--offline` skips it, and so does another Luthier refreshing the lists
-  at that moment. It never holds up an install in another terminal.
+  ago, so nothing needs `refresh` to see new versions. A failure only warns,
+  and the command goes on with the list it has; `--offline` skips it, and so
+  does another Luthier refreshing the list at that moment. It never holds up
+  an install in another terminal.
 
 ### Changed
+
+- **The bench is built into Luthier, and is called `extras`.** The handful
+  of manifests Luthier corrects or adds to the Open Audio Stack registry
+  with were fetched as `luthier-extras` from the latest release; they are
+  now part of the binary, so they are there from the first command, offline
+  too, and a binary only ever reads the ones it was released with. They
+  change with Luthier itself (`luthier update --self`). `refresh` no longer
+  lists them; `bench list` shows them as `built-in`, located in `luthier
+  <version>`. Releases still publish `bench.tar.gz` for 0.2–0.4, and the copy
+  0.4 fetched is left on disk for them. Packages already installed from it
+  keep `luthier-extras` as their recorded source, which is only
+  informational.
 
 - **The Open Audio Stack list downloads only when it has changed.** Every
   request for it, `refresh`'s included, sends the `ETag` and `Last-Modified`

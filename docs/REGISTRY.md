@@ -48,17 +48,20 @@ When something here becomes expressible upstream, the move is the point:
 send it to OAS and delete it from `bench/`. `surge-xt` and `dpf-plugins` both
 left that way.
 
-## How it is fetched
+## How it reaches users
 
-`luthier refresh` downloads `bench.tar.gz` from this repository's latest
-release over HTTPS and extracts it through the same hardened extractor used
-for plugin artifacts. The release workflow builds that asset from `bench/`.
+It is built into the binary: `crates/luthier-core/build.rs` embeds every
+manifest in `bench/`, found by the same rules as in any registry tree, and
+Luthier reads them as `extras` without fetching anything. So a binary reads
+exactly the bench it was released with, never one written for a manifest
+format it does not know, and a change here reaches users with the release that
+carries it — through `luthier update --self`, or however they installed.
 
-It is an asset rather than a branch tarball of the repository for two reasons.
-Discovery walks whatever it is handed, so a repository tarball would offer the
-workspace's own `Cargo.toml` files up as manifests. And users should read what
-a release published, not whatever `main` holds at the moment they refresh.
-The bench is not signed; see *Trusting GitHub* in
+Releases still publish `bench/` as `bench.tar.gz`, which 0.2–0.4 download from
+the latest release on `refresh` (as `luthier-extras`). It is an asset rather
+than a branch tarball of the repository because discovery walks whatever it is
+handed, so a repository tarball would offer the workspace's own `Cargo.toml`
+files up as manifests. The bench is not signed; see *Trusting GitHub* in
 [SECURITY.md](../SECURITY.md).
 
 This bench and the Open Audio Stack registry are the only sources the manager
@@ -235,12 +238,12 @@ cannot be recognised from a URL at all. Either is a small addition to
 
 ## Releasing the bench
 
-The bench ships with the manager: pushing a `v*` tag runs `release.yml`, which
-packages `bench/` as `bench.tar.gz`, attests its build provenance, and
-publishes the release. `releases/latest` serves it from then on, and every
-`luthier refresh` picks it up. There is no step on the maintainer's machine.
+The bench ships in the manager: pushing a `v*` tag runs `release.yml`, which
+builds the binaries with `bench/` inside them, packages `bench/` as
+`bench.tar.gz` as well for older clients, attests the build provenance of
+both, and publishes the release. There is no step on the maintainer's machine.
 
-A published release is never re-run: replacing its `bench.tar.gz` would change
+A published release is never re-run: replacing one of its files would change
 a file users may already have checked. The workflow refuses to, and a fix goes
 out as a new tag.
 

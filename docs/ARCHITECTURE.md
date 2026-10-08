@@ -68,7 +68,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | Module | Holds |
 |---|---|
 | `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import, and `--prune`'s convergence |
-| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
+| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `builtin`, `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -125,10 +125,11 @@ Four traits mark where the system is meant to grow. Each has more
 implementations planned than exist today, which is why they are traits rather
 than enums.
 
-**`RegistryProvider`** — where manifests come from. `LocalRegistry` reads a
-directory; `HttpSnapshotRegistry` fetches the bench as a release asset
-(`bench.tar.gz`) over HTTPS and extracts it through the same hardened
-extractor as any plugin;
+**`RegistryProvider`** — where manifests come from. `BuiltinRegistry` reads
+the bench built into the binary from `bench/` by `build.rs`; `LocalRegistry`
+reads a directory; `HttpSnapshotRegistry` fetches a snapshot tarball over HTTPS
+and extracts it through the same hardened extractor as any plugin — how 0.4
+and earlier read the bench, and in no default list now;
 `OasRegistry` reads an Open Audio Stack site, which publishes static JSON rather
 than TOML manifests. Each is a `RegistrySource` variant in `config.rs`. Which
 sources a user reads is fixed — `default_registries()` — so a new provider is
@@ -219,8 +220,8 @@ archive, never where to put it.
 ### Two sources, in a fixed order
 
 Two registries are read at once, and only two: Luthier's own bench
-(`luthier-extras`, built from `bench/` in this repository) and the Open Audio
-Stack registry. Users cannot add a source; `config.json` does not carry the
+(`extras`, built into the binary from `bench/` in this repository) and the
+Open Audio Stack registry. Users cannot add a source; `config.json` does not carry the
 list, and `--registry-path` — hidden, for developing the bench — is the only
 override. `Session::index()` merges both into one `RegistryIndex`, memoised
 because building it three times in one `install` was a real regression rather

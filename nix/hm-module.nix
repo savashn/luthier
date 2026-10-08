@@ -141,10 +141,9 @@ in
       default = true;
       description = ''
         Run `luthier refresh` before applying, so a newly declared package can
-        be found. It asks for every package list on every switch, which
-        downloads only the ones that changed. Off, the bench is left as it is,
-        and the Open Audio Stack list is asked for only once a day has passed,
-        as it is by any command.
+        be found. It asks for the package list on every switch, which
+        downloads it only when it changed. Off, the list is asked for only once
+        a day has passed, as it is by any command.
       '';
     };
 

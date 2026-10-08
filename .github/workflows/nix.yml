@@ -14,6 +14,8 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/**'
+      # Built into the binary.
+      - 'bench/**'
       - '.github/workflows/nix.yml'
   push:
     branches: [main]
@@ -24,6 +26,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'crates/**'
+      - 'bench/**'
       - '.github/workflows/nix.yml'
   workflow_dispatch:
 

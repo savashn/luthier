@@ -99,7 +99,7 @@ from the list does **not** uninstall it until you turn on `prune`; see below.
 | `package` | built from the flake | The luthier package to use. |
 | `packages` | `[ ]` | Packages to install in your home directory. |
 | `prune` | `false` | Remove installed packages the declaration does not list. |
-| `refresh` | `true` | Fetch the package lists before applying. |
+| `refresh` | `true` | Ask for the package list before applying. |
 | `systemPlugins` | `true` | Count plugins from nixpkgs or your distribution as engines. |
 | `locations.cache` | `null` | Where downloaded archives go. |
 | `locations.libraries` | `null` | Where sample libraries go. |
@@ -149,11 +149,12 @@ installed; Luthier reports it and leaves it where it is.
 
 ### `refresh`
 
-On, every switch asks for every package list first, so a package declared for
-the first time can be found; a list that has not changed downloads nothing.
-Off, the switch leaves the bench as it is, and asks for the Open Audio Stack
-list only once a day has passed since it last did, as any command does. Either
-way a switch with no network goes ahead with the lists already on disk.
+On, every switch asks for the Open Audio Stack package list first, so a package
+published there since the last switch can be found; a list that has not
+changed downloads nothing. Off, the switch asks for it only once a day has
+passed since it last did, as any command does. Either way a switch with no
+network goes ahead with the list already on disk. Luthier's own `extras` are
+built into the binary, and change with the flake input.
 
 ### `systemPlugins`
 

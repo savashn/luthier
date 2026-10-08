@@ -134,10 +134,12 @@ An artifact is verified against a checksum in a manifest, so the document
 carrying that checksum is the weakest link in the chain. Luthier reads exactly
 two, and both are fixed in the binary:
 
-1. **Luthier's own bench** (`luthier-extras`), built from `bench/` in this
-   repository and published as the `bench.tar.gz` asset of each release. It
-   is consulted first, so it wins any package ID both sources carry — which is
-   how it corrects the other one.
+1. **Luthier's own bench** (`extras`), built from `bench/` in this repository
+   into the binary itself, so it is exactly as trustworthy as the binary,
+   under the same provenance attestation, and nothing is fetched for it. (0.4
+   and earlier fetched it as the `bench.tar.gz` asset of the latest release,
+   which releases still publish for them.) It is consulted first, so it wins
+   any package ID both sources carry — which is how it corrects the other one.
 2. **The Open Audio Stack registry**, which carries almost every package.
 
 There is no command to add a source, and `config.json` cannot name one: a
@@ -159,15 +161,18 @@ lock everyone out the day a release moved one.)
 
 ## Trusting GitHub
 
-Nothing the manager reads is signed. The bench is trusted on HTTPS and on
-GitHub, exactly as the binary that reads it was downloaded, and the Open Audio
+Nothing the manager reads is signed. The bench is part of the binary, so it is
+trusted on HTTPS and on GitHub exactly as the binary is, and the Open Audio
 Stack index on HTTPS and on the site that serves it. This is a deliberate
 choice, and it has a consequence worth stating plainly: **anyone who can
-publish a release of this repository can publish a bench whose manifests point
-at any file with a matching checksum, and every user installs it on their next
-`refresh` and `install`.** That means a compromised GitHub account, a leaked
+publish a release of this repository can publish a binary whose bench points
+at any file with a matching checksum, and every user who updates installs it
+on their next `install`.** That means a compromised GitHub account, a leaked
 token with write access, or a compromised release workflow. Homebrew and Scoop
-make the same trade; apt and pacman do not.
+make the same trade; apt and pacman do not. Clients from 0.2 to 0.4 fetch
+the bench on its own, as the `bench.tar.gz` of the latest release: as long as
+releases publish it, such a release also reaches every one of them on their
+next `refresh`, whether they update or not.
 
 0.1 signed the bench with a key kept off CI and compiled into the manager,
 which closed that gap. It was removed to keep releases a single tag with no

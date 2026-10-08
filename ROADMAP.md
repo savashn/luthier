@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 439 tests, fully offline. `refresh`, `search`, `info`, `install`,
+Four crates, 443 tests, fully offline. `refresh`, `search`, `info`, `install`,
 `list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, and
 `export`/`import` all work end to end against real packages. Named
 environments existed until 0.2 and were removed; see *Deliberate ceilings*.
@@ -25,8 +25,9 @@ one hardened policy with a 38-case malicious-archive corpus.
 Two registries are read together. The Open Audio Stack registry supplies
 anything with a downloadable release binary — 464 of its 560 packages
 translate, 299 of them installable on Linux x86_64 — and its install rules are
-derived from the verified archive rather than declared. The curated bench is
-down to 7 manifests: what OAS cannot express — two `external` engines, three
+derived from the verified archive rather than declared; it refreshes itself
+once a day, conditionally. The curated bench, `extras`, is built into the
+binary and down to 7 manifests: what OAS cannot express — two `external` engines, three
 DrumGizmo kits it does not carry, one shadow for an install rule nothing can
 derive, and one for an archive that holds two builds of the same plugin. What plays SFZ, SoundFont 2 and DrumGizmo content is no longer
 its business: that list ships with the manager, and a bench's `engines.toml`
@@ -103,7 +104,8 @@ default.
 
 ### 0.3 Publish a release, and make the default registry resolve — done
 
-`config.rs` points at `https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz`.
+`config.rs` pointed at `https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz`
+(until the bench was built into the binary, after 0.4).
 Until a release existed that URL did not resolve, `luthier refresh` failed out
 of the box and every user had to pass `--registry-path`; and the only install
 path was `cargo build --release` with a Rust 1.89 toolchain. The people this
@@ -523,7 +525,8 @@ the two sources that remain: the bench is consulted first and wins, because
 correcting OAS is what it is for. The rest went away with the decision not to
 have third-party benches at all (see *Deliberate ceilings*).
 
-The vocabulary stays. A *bench* is a collection of manifests; `luthier-extras`
-is the one Luthier ships, built from `bench/` in this repository; "registry"
+The vocabulary stays. A *bench* is a collection of manifests; `extras` is the
+one Luthier ships, built into it from `bench/` in this repository (0.4 and
+earlier fetched it, as `luthier-extras`); "registry"
 in code is the mechanism (`RegistryProvider`, `RegistryIndex`), which the Open
 Audio Stack registry is read through as well.

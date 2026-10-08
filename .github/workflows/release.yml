@@ -37,11 +37,11 @@ env:
   CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
   CC_aarch64_unknown_linux_musl: musl-gcc
   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-  # The default bench travels with the release rather than as a branch
-  # tarball of this repository: discovery walks whatever it is handed, so a
-  # repository tarball would offer the workspace's own `Cargo.toml` files up
-  # as manifests, and users would read whatever `main` held at that moment
-  # rather than what a release published.
+  # The bench is built into the binary; this asset is for 0.2–0.4, which
+  # fetch it from the latest release on `refresh`. It is `bench/` rather than
+  # a branch tarball of this repository: discovery walks whatever it is
+  # handed, so a repository tarball would offer the workspace's own
+  # `Cargo.toml` files up as manifests.
   BENCH_ASSET: bench.tar.gz
 
 jobs:

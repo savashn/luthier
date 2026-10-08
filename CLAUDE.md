@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 439 tests, fully offline
+cargo test --workspace                     # 443 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -101,8 +101,9 @@ the crate map keeps that out of `luthier-manifest`.
    policy. Per-format modules decide only *what entries exist*.
 4. **Verify before extract, extract before install.** `Downloader::fetch`
    cannot return a file that failed its checksum. One level up,
-   `HttpSnapshotRegistry::refresh` parses a snapshot fully before it
-   replaces the one on disk, so a broken snapshot never replaces a good one.
+   `OasRegistry::fetch` (and `HttpSnapshotRegistry::refresh`, which no
+   default source uses now) parses a snapshot fully before it replaces the
+   one on disk, so a broken snapshot never replaces a good one.
 5. **`Layout` is injected everywhere.** Nothing deep in the call graph reads
    `$HOME` or calls `dirs::home_dir()`. This is what makes the suite hermetic.
 6. **State is authoritative for ownership; scanning is advisory.** Never delete
@@ -153,7 +154,14 @@ the crate map keeps that out of `luthier-manifest`.
   nothing a later call could see that the first did not. The two detection
   scans memoise for the same reason: `install` ran each twice, and a session is
   one command.
-- **The OAS index refreshes itself; the bench does not.** A command that reads
+- **The bench is built in; the OAS index refreshes itself.** `build.rs` embeds
+  every manifest `manifest_files` finds in `bench/` (`registry/builtin.rs`,
+  `RegistrySource::BuiltIn`, named `extras`), so a binary reads exactly the
+  bench it was released with and nothing is fetched for it; `refresh` skips
+  it (`is_built_in`), so it can never make a refresh that reached nothing
+  look partial. Releases still publish `bench.tar.gz` for 0.2–0.4, which
+  fetch it as `luthier-extras`; that copy is left on disk for a 0.4 still
+  installed or rolled back to. A command that reads
   a registry calls `Session::refresh_due` before anything reads the index:
   the OAS index is fetched if it is missing or was last asked more than
   `AUTOMATIC_REFRESH_AFTER` (a day) ago, with the `ETag`/`Last-Modified` the
@@ -164,8 +172,7 @@ the crate map keeps that out of `luthier-manifest`.
   fails the command, and is skipped under `--offline`. Refreshes take
   `Layout::registries_lock_file`, never the state lock, so reading packages
   never stops an install from starting: an automatic one skips while another
-  runs, `refresh` waits for it. `refresh` still fetches everything, the bench
-  included, and is conditional too.
+  runs, `refresh` waits for it. `refresh` is conditional too.
 - **Every refusal in `remove` happens before the first delete**, and the state
   file is committed per package as `install_at` does. Deleting first and
   checking later left earlier packages gone from disk and still recorded —
@@ -225,8 +232,9 @@ the crate map keeps that out of `luthier-manifest`.
   aborts — use `unique_id`); `/app/lib/ardour9/ardour-vst3-scanner -f <bundle>`
   loads a VST3 given `LD_LIBRARY_PATH=/app/lib/ardour9`. The findings are in
   `docs/FLATHUB.md`.
-- **Nothing is signed, by decision.** The bench is trusted on HTTPS and
-  GitHub, as the binary is; `SECURITY.md` *Trusting GitHub* states the risk.
+- **Nothing is signed, by decision.** The bench is part of the binary, and
+  trusted on HTTPS and GitHub as it is; `SECURITY.md` *Trusting GitHub* states
+  the risk.
   0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both
   were removed. Do not reintroduce signing without the user asking — it puts
   a manual step with a secret key into every release.
@@ -242,9 +250,10 @@ the crate map keeps that out of `luthier-manifest`.
 - **One bench failing does not fail `refresh`.** Each provider reports for
   itself (`RefreshOutcome::failure`), the snapshot already on disk survives a
   failed fetch, and only *every* bench failing is an error. The default
-  configuration lists two, so the old behaviour — `?` on the first provider —
-  meant an unpublished or briefly unreachable bench cost the user the one that
-  was working.
+  configuration fetched two until the bench was built in, so the old
+  behaviour — `?` on the first provider — meant an unpublished or briefly
+  unreachable bench cost the user the one that was working. A built-in source
+  is not counted either way.
 - **Derived rules can only promise what derivation recognises.**
   `install::installable` refuses an artifact whose rules are derived and whose
   `provides` names nothing in `derive::DERIVABLE_FORMATS`, before the download
@@ -374,7 +383,8 @@ inferring a version from a filename (ROADMAP 1.1).
 A `v*` tag publishes a release directly: for each of x86_64 and aarch64, the
 static binary as a tarball and a `.deb` and an `.rpm` of the same files
 (`packaging/nfpm.yaml`); one `install.sh` that installs the right tarball
-into `~/.local`; and `bench.tar.gz`, all with build provenance attested
+into `~/.local`; and `bench.tar.gz`, which only 0.2–0.4 read now (the bench
+is built in since), all with build provenance attested
 through Sigstore (`gh attestation verify`). Nothing is signed by hand. Each
 architecture builds and runs the suite on a runner of its own kind
 (`ubuntu-24.04-arm` for aarch64), and `packaging/package.sh` packages it;
@@ -433,13 +443,13 @@ installers are Linux-only); reading OAS's `presets/` and
 `projects/` indexes, which is blocked on deciding where a preset installs
 given that a manifest may not name a destination; aarch64 manifests in the
 bench, which so far lists x86_64 builds only; a `GitRegistry` backend. A *bench* is the kind —
-any collection of manifests, the official one included; `luthier-extras` is
-just the default bench's name, as `homebrew-core` names the default tap. It
-ships in this repository under `bench/` and is published as the `bench.tar.gz`
-release asset — an asset rather than a branch tarball because discovery walks
-whatever it is handed (the workspace's `Cargo.toml` files would become
-manifests) and because users should read what a release published, not
-whatever `main` holds.
+any collection of manifests, the official one included; `extras` is just the
+default bench's name, as `homebrew-core` names the default tap (0.4 and
+earlier called it `luthier-extras`). It lives in this repository under
+`bench/` and is built into the binary, so users read what a release shipped,
+not whatever `main` holds, and never a bench written for a manifest format
+their binary does not know. The `bench.tar.gz` release asset is only for the
+clients that still fetch it.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 
 The spec lives in the original task description; section references like §30

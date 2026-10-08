@@ -1528,19 +1528,55 @@ fn the_sources_are_built_in_and_cannot_be_added_to() {
   let fixture = Fixture::new();
 
   let listed = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
-  let bench = listed.find("luthier-extras").expect(&listed);
+  let bench = listed.find("extras").expect(&listed);
   let oas = listed.find("oas").expect(&listed);
   assert!(bench < oas, "{listed}");
+  assert!(listed.contains("built-in"), "{listed}");
 
   for command in [
     vec!["bench", "add", "second", "/tmp"],
-    vec!["bench", "remove", "luthier-extras"],
-    vec!["bench", "trust", "luthier-extras", "RWS"],
+    vec!["bench", "remove", "extras"],
+    vec!["bench", "trust", "extras", "RWS"],
     vec!["refresh", "--allow-unsigned"],
   ] {
     let output = fixture.luthier().args(&command).output().unwrap();
     assert!(!output.status.success(), "{command:?}");
   }
+}
+
+#[test]
+fn the_extras_are_there_before_anything_is_fetched() {
+  // Built into the binary: found offline, on a machine that has fetched
+  // nothing, and nothing is written for them.
+  let root = tempfile::tempdir().unwrap();
+  let output = Command::cargo_bin("luthier")
+    .unwrap()
+    .arg("--root")
+    .arg(root.path())
+    .args([
+      "--offline",
+      "--no-system-plugins",
+      "--json",
+      "info",
+      "sfizz",
+    ])
+    .output()
+    .unwrap();
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  assert!(
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  let info: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+  assert_eq!(info["registry"], "extras", "{stdout}");
+  // Nothing fetched, nothing recorded: no source has been written at all.
+  assert!(
+    !root.path().join("share/luthier/registries").exists(),
+    "{:?}",
+    std::fs::read_dir(root.path().join("share/luthier/registries"))
+      .map(|d| d.map(|e| e.unwrap().file_name()).collect::<Vec<_>>())
+  );
 }
 
 #[test]
