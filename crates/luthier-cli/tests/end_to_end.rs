@@ -1523,20 +1523,24 @@ fn removing_the_last_engine_warns_about_the_content_it_leaves_silent() {
 
 #[test]
 fn the_sources_are_built_in_and_cannot_be_added_to() {
-  // Luthier reads the Open Audio Stack registry and its own bench, in that
-  // precedence, and nothing else.
+  // Luthier reads extras, its own list, then the Open Audio Stack registry,
+  // in that precedence, and nothing else.
   let fixture = Fixture::new();
 
-  let listed = stdout_of(&fixture.luthier().args(["bench", "list"]).output().unwrap());
-  let bench = listed.find("extras").expect(&listed);
+  let listed = stdout_of(&fixture.luthier().args(["sources"]).output().unwrap());
+  let extras = listed.find("extras").expect(&listed);
   let oas = listed.find("oas").expect(&listed);
-  assert!(bench < oas, "{listed}");
+  assert!(extras < oas, "{listed}");
   assert!(listed.contains("built-in"), "{listed}");
 
+  // The 0.1 spellings are gone, `bench list` with them, and `sources` takes
+  // nothing to add one with.
   for command in [
+    vec!["bench", "list"],
     vec!["bench", "add", "second", "/tmp"],
     vec!["bench", "remove", "extras"],
     vec!["bench", "trust", "extras", "RWS"],
+    vec!["sources", "add", "second", "/tmp"],
     vec!["refresh", "--allow-unsigned"],
   ] {
     let output = fixture.luthier().args(&command).output().unwrap();
@@ -1633,7 +1637,7 @@ fn completions_and_the_man_page_need_nothing_to_be_configured() {
     assert!(text.contains(marker), "{shell}: {text}");
     // Every subcommand a user can type is in there.
     assert!(text.contains("install"), "{shell}");
-    assert!(text.contains("bench"), "{shell}");
+    assert!(text.contains("sources"), "{shell}");
     assert!(text.contains("cache"), "{shell}");
   }
 

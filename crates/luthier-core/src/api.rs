@@ -137,7 +137,7 @@ impl Session {
 
   /// Registries that could not be read, if any.
   ///
-  /// A second bench the user has not fetched yet does not stop the first
+  /// A second source the user has not fetched yet does not stop the first
   /// from working, so the absence has to be reported somewhere or a command
   /// silently answers from half the registries it was configured with.
   pub fn registry_problems(&self) -> Vec<String> {
@@ -150,7 +150,7 @@ impl Session {
   }
 
   /// Every configured registry, merged, without touching the network. The
-  /// first to claim an ID keeps it, so a curated bench corrects a broader
+  /// first to claim an ID keeps it, so extras corrects a broader
   /// source rather than colliding with it.
   ///
   /// Built once and reused for the rest of the session. Snapshots only change
@@ -186,8 +186,8 @@ impl Session {
     for provider in providers.iter().filter(|p| !p.is_built_in()) {
       match provider.refresh().await {
         Ok(outcome) => outcomes.push(outcome),
-        // One bench that cannot be reached does not cost a user the others.
-        // A failed refresh leaves that bench's previous snapshot alone, so
+        // One source that cannot be reached does not cost a user the others.
+        // A failed refresh leaves that source's previous snapshot alone, so
         // the command answers with what it could update and says what it
         // could not; only nothing at all is an error.
         Err(error) => {
@@ -595,7 +595,7 @@ impl Session {
               }),
             provisioning_hint: entry.manifest.provisioning_hint.clone(),
           },
-          // Named by a bench but carried by no configured registry: it
+          // Named by a source but carried by no configured registry: it
           // can still be detected, just not offered.
           None => EngineChoice {
             id: id.to_string(),
@@ -1143,26 +1143,26 @@ impl Session {
     )
   }
 
-  // ---------------------------------------------------------------- bench --
+  // -------------------------------------------------------------- sources --
 
-  /// The benches this build reads, highest priority first.
+  /// The sources this build reads, highest priority first.
   ///
-  /// A fixed list: the curated bench, then the Open Audio Stack registry it
+  /// A fixed list: extras, then the Open Audio Stack registry it
   /// corrects. Order is the whole mechanism behind that correction, so it is
-  /// what this reports: the first bench to claim an ID keeps it.
+  /// what this reports: the first source to claim an ID keeps it.
   ///
   /// The built-in list rather than this session's, so that a session started
   /// with `--registry-path` still says where manifests normally come from.
-  pub fn benches(&self) -> Vec<BenchSummary> {
+  pub fn sources(&self) -> Vec<SourceSummary> {
     Self::summarise(&Config::default())
   }
 
-  fn summarise(config: &Config) -> Vec<BenchSummary> {
+  fn summarise(config: &Config) -> Vec<SourceSummary> {
     config
       .registries
       .iter()
       .enumerate()
-      .map(|(i, registry)| BenchSummary {
+      .map(|(i, registry)| SourceSummary {
         priority: i + 1,
         name: registry.name.clone(),
         kind: match registry.source {
@@ -2102,10 +2102,10 @@ pub struct InstallPlan {
   pub space: Vec<SpaceRequirement>,
 }
 
-/// One configured bench, and where it sits in the precedence order.
+/// One source, and where it sits in the precedence order.
 #[derive(Debug, Clone, Serialize)]
-pub struct BenchSummary {
-  /// 1 is consulted first and wins any ID two benches both carry.
+pub struct SourceSummary {
+  /// 1 is consulted first and wins any ID two sources both carry.
   pub priority: usize,
   pub name: String,
   pub kind: String,

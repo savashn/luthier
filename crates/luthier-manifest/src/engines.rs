@@ -8,7 +8,7 @@
 //! user who has the other.
 //!
 //! So the two facts are kept apart. The content comes from the package; the
-//! engines come from this file at the root of a bench, and the manager checks
+//! engines come from this file at the root of a source, and the manager checks
 //! the system for any one of them before downloading anything. An entry names
 //! an engine by package ID and may carry detect rules, because an engine from
 //! a registry with no such field would otherwise only be recognised when this
@@ -58,24 +58,24 @@ pub const ENGINES_FILE: &str = "engines.toml";
 
 /// The engines every build knows about before a single registry is read.
 ///
-/// This was a bench's file alone, and that put general knowledge in an
+/// This used to be `engines.toml` alone, and that put general knowledge in an
 /// optional place: "an SFZ library needs an SFZ engine, and sfizz is one" is
 /// true of formats and of well-known software, not of anybody's package list.
 /// A user who configures only the Open Audio Stack registry — which has no
 /// field for what plays what — otherwise gets told nothing can play a library
 /// while sfizz sits installed on their machine.
 ///
-/// A bench's `engines.toml` still adds to this, so an engine that appears
-/// tomorrow does not wait for a release. Registry entries come first, so a
-/// bench refines an engine this list already names rather than colliding with
-/// it; nothing here can be *removed* by a bench, which is why what goes in is
-/// narrow: engines that are the reference implementation for their format, or
-/// that a curated bench has already vetted.
+/// A source's `engines.toml` still adds to this: one in `extras/` ships with
+/// the next release, as data rather than code. Registry entries come first,
+/// so a source refines an engine this list already names rather than colliding
+/// with it; nothing here can be *removed* by a source, which is why what goes
+/// in is narrow: engines that are the reference implementation for their
+/// format, or that extras has already vetted.
 ///
 /// Detect rules are carried only where the installed name is stable. `sfzq`
 /// stamps its release date into its filename, and a name that changes on
 /// every release would be a detection that silently stops working between
-/// releases of this manager — a bench is the right place for that one.
+/// releases of this manager — a source is the right place for that one.
 pub fn builtin_engines() -> Vec<EngineEntry> {
   fn entry(package: &str, plays: &[Content], detect: &[(Format, &str)]) -> EngineEntry {
     EngineEntry {
@@ -190,7 +190,7 @@ mod tests {
 
   #[test]
   fn the_built_in_engines_would_pass_the_validator() {
-    // They are data of the same kind a bench writes, so they answer to the
+    // They are data of the same kind a source writes, so they answer to the
     // same rules: one entry per package, something to play, and detect
     // rules only for formats with a directory to look in.
     let file = EnginesFile {

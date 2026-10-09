@@ -7,13 +7,13 @@
 # anything in the file to derive it from: the CLAP does not name the library
 # in DT_NEEDED, it dlopens it. The only statement that the library belongs
 # beside the plugin is the one upstream writes in prose, quoted on the rule
-# below, and reading prose is what a curated bench is for.
+# below, and reading prose is what extras is for.
 #
 # What going without costs: the CLAP still loads and every plugin works
 # except the 3D scene view, which only room_builder draws. The LV2 and VST3
 # builds are unaffected — each carries its own copy of the library inside
 # the bundle. What the shadow costs: OAS carries nine versions of this
-# package and the bench wins the collision, so only this one is offered.
+# package and extras wins the collision, so only this one is offered.
 #
 # Permanent, unless upstream stops shipping the library separately.
 schema = 1

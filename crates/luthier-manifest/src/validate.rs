@@ -968,7 +968,7 @@ dependencies = ["surge-xt", "dexed"]
 
   #[test]
   fn a_rule_may_accept_that_warning_deliberately() {
-    // Without this the bench's CI, which runs --strict, is red on a
+    // Without this, the CI of extras, which runs --strict, is red on a
     // manifest that is correct.
     let yaml = GOOD
       .replace("provides = [\"vst3\"]", "provides = [\"clap\"]")
@@ -1046,7 +1046,7 @@ dependencies = ["surge-xt", "dexed"]
   }
   #[test]
   fn a_manifest_cannot_ask_for_derived_install_rules() {
-    // The bench wins a collision with OAS because its rules were looked
+    // Extras wins a collision with OAS because its rules were looked
     // at. A manifest that could ask for derivation would hand that back.
     let text = GOOD.replace(
       r#"install = ["#,

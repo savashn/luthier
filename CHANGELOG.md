@@ -1,10 +1,10 @@
 # Changelog
 
-Notable changes to the manager. A package added to or corrected in `bench/` is
-not one of them — the git log says it better, and every manifest carries its
-own version history in the `releases` it lists. What is recorded here is a
-change to the *shape* of the bench: the schema, the layout, the conventions
-`engines.toml` follows.
+Notable changes to the manager. A package added to or corrected in `extras/`
+is not one of them — the git log says it better, and every manifest carries
+its own version history in the `releases` it lists. What is recorded here is a
+change to the *shape* of extras: the schema, the layout, the conventions
+`engines.toml` follows. Up to 0.4, extras was called the bench.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project follows [semantic versioning](https://semver.org/). Until 1.0 the
@@ -41,15 +41,20 @@ about.
 
 ### Changed
 
-- **The bench is built into Luthier, and is called `extras`.** The handful
-  of manifests Luthier corrects or adds to the Open Audio Stack registry
-  with were fetched as `luthier-extras` from the latest release; they are
-  now part of the binary, so they are there from the first command, offline
-  too, and a binary only ever reads the ones it was released with. They
-  change with Luthier itself (`luthier update --self`). `refresh` no longer
-  lists them; `bench list` shows them as `built-in`, located in `luthier
-  <version>`. Packages already installed from them keep `luthier-extras` as
-  their recorded source, which is only informational.
+- **Luthier's own manifests are built into it, and are called `extras`.**
+  The handful of manifests Luthier corrects or adds to the Open Audio Stack
+  registry with were fetched as `luthier-extras` from the latest release;
+  they are now part of the binary, so they are there from the first command,
+  offline too, and a binary only ever reads the ones it was released with.
+  They change with Luthier itself (`luthier update --self`). `refresh` no
+  longer lists them. Packages already installed from them keep
+  `luthier-extras` as their recorded source, which is only informational.
+- **`luthier bench list` is now `luthier sources`.** It lists the two
+  sources, extras (`built-in`, located in `luthier <version>`) and the Open
+  Audio Stack registry; its `--json` document is unchanged. There is no
+  `bench` alias, so a script calling `luthier bench list` gets a usage error.
+  "Bench" is no longer a word Luthier uses, and the manifests moved from
+  `bench/` to `extras/` in this repository.
 - **The Open Audio Stack list downloads only when it has changed.** Every
   request for it, `refresh`'s included, sends the `ETag` and `Last-Modified`
   the last one came with, and an unchanged list costs a 304 and no bytes

@@ -8,7 +8,7 @@ mod args;
 mod progress;
 mod render;
 
-use args::{BenchCommand, CacheCommand, Cli, Command, GlobalArgs, LocationCommand};
+use args::{CacheCommand, Cli, Command, GlobalArgs, LocationCommand};
 use clap::Parser;
 use luthier_core::api::{Session, Storage};
 use luthier_core::error::{Error, ExitCode, Result};
@@ -240,10 +240,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
   // answers, so a half-configured setup never looks like a complete one.
   //
   // Named as the commands that consult a registry rather than as the ones
-  // that do not: asking costs a full merge of every bench, and a command
+  // that do not: asking costs a full merge of every source, and a command
   // that only reads the state file — `list`, `verify`, `cleanup`, `pin`,
   // `unpin`, `env export` — has no reason to pay for one or to warn about
-  // benches it never opens. A deny-list had to be extended by hand for each
+  // sources it never opens. A deny-list had to be extended by hand for each
   // new registry-free command, and was not.
   //
   // The same commands bring a stale package list up to date first, so
@@ -454,14 +454,12 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.cleanup(&session.cleanup()?);
     }
 
-    Command::Bench { command } => match command {
-      BenchCommand::List => {
-        if global.registry_path.is_some() {
-          reporter.warn("--registry-path replaces the sources below for this command only");
-        }
-        reporter.benches(&session.benches());
+    Command::Sources => {
+      if global.registry_path.is_some() {
+        reporter.warn("--registry-path replaces the sources below for this command only");
       }
-    },
+      reporter.sources(&session.sources());
+    }
 
     Command::Cache { command } => match command {
       CacheCommand::List => reporter.cache_list(&session.cache_entries()?),

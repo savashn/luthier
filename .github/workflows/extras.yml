@@ -1,18 +1,18 @@
-# The part of validating the bench that the test suite cannot do.
+# The part of validating extras that the test suite cannot do.
 #
 # `validate --strict` itself runs in `ci.yml`, because the suite covers it:
-# `the_real_bench_passes_strict_validation` drives the real binary against
-# `bench/` exactly as this used to. What is left is the sweep that needs the
+# `extras_passes_strict_validation` drives the real binary against
+# `extras/` exactly as this used to. What is left is the sweep that needs the
 # network, which no test is allowed to do.
-name: bench
+name: extras
 
 on:
   pull_request:
     paths:
-      - 'bench/**'
+      - 'extras/**'
       - 'crates/luthier-manifest/**'
       - 'crates/luthier-registry-tool/**'
-      - '.github/workflows/bench.yml'
+      - '.github/workflows/extras.yml'
   workflow_dispatch:
 
 env:
@@ -33,4 +33,4 @@ jobs:
       # With the authoring features: --check-urls is one of the things they
       # are for.
       - name: Check URLs
-        run: cargo run --release -p luthier-registry-tool -- validate bench --check-urls
+        run: cargo run --release -p luthier-registry-tool -- validate extras --check-urls

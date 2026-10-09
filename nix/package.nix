@@ -1,7 +1,7 @@
 # Luthier, built from this repository.
 #
-# Only `luthier-cli` is built: `luthier-registry` is for maintaining the
-# bench, not for using the manager. The test suite runs as the check phase —
+# Only `luthier-cli` is built: `luthier-registry` is for maintaining
+# extras, not for using the manager. The test suite runs as the check phase —
 # it is offline by design (the one HTTP server it starts is on localhost), so
 # the sandbox is not a reason to skip it.
 {
@@ -22,14 +22,15 @@ rustPlatform.buildRustPackage {
 
   src = lib.fileset.toSource {
     root = ../.;
-    # What the build and the suite read: the workspace, the bench the
-    # validator tests against, and the schema a test compares to its source.
+    # What the build and the suite read: the workspace, extras, which the
+    # build embeds and the validator tests against, and the schema a test
+    # compares to its source.
     fileset = lib.fileset.unions [
       ../Cargo.toml
       ../Cargo.lock
       ../rustfmt.toml
       ../crates
-      ../bench
+      ../extras
       ../schemas
     ];
   };
@@ -73,7 +74,7 @@ rustPlatform.buildRustPackage {
     description = "Package manager for Linux audio plugins and sample libraries";
     longDescription = ''
       Installs CLAP, VST3 and LV2 plugins and the sample libraries that play
-      in them, from the Open Audio Stack registry and a curated bench, into
+      in them, from the Open Audio Stack registry and extras, into
       the directories hosts already scan. Nothing is ever run to install a
       package: it is downloaded, checked against its checksum, extracted and
       copied.

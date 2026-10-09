@@ -194,7 +194,7 @@ jobs:
           cat notes.md
 
       # Published straight away: nothing is signed by hand, so there is
-      # nothing to wait for. The bench is in the binaries.
+      # nothing to wait for. Extras is in the binaries.
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

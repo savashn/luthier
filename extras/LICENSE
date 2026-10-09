@@ -29,7 +29,7 @@ The MIT License above covers the contents of this directory: the package
 manifests under `plugins/`, `libraries/`, `presets/` and `packs/`.
 
 It does not cover the rest of the repository. Luthier itself — everything
-outside `bench/` — is licensed LGPL-2.1-or-later; see the `LICENSE` file at
+outside `extras/` — is licensed LGPL-2.1-or-later; see the `LICENSE` file at
 the repository root. The split is deliberate: the tool stays copyleft, the
 data stays maximally reusable, as it is in homebrew-core, nixpkgs and
 winget-pkgs.

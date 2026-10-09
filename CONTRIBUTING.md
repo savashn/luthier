@@ -56,7 +56,7 @@ crates/
   luthier-core/           registry, resolver, downloader, installer, state
   luthier-cli/            the `luthier` binary — arguments and rendering only
   luthier-registry-tool/  the `luthier-registry` validator and authoring helpers
-bench/               the default bench: manifests, MIT-licensed data
+extras/              Luthier's own manifests (extras), MIT-licensed data
 schemas/             generated JSON Schema, committed
 nix/                 the flake's package and Home Manager module
 docs/
@@ -100,4 +100,4 @@ Match the surrounding code. Beyond that:
 
 ## Adding a package
 
-Packages live under `bench/` in this repository. See [docs/REGISTRY.md](docs/REGISTRY.md).
+Packages live under `extras/` in this repository. See [docs/REGISTRY.md](docs/REGISTRY.md).

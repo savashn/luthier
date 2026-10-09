@@ -4,18 +4,18 @@
 //! is everything the command adds on top and that no rule can see: that a
 //! manifest is filed under its own ID, that two files do not claim one ID, that
 //! `engines.toml` is read and cross-checked, and that `--strict` changes the
-//! exit code rather than the output. The bench's CI is exactly this binary and
+//! exit code rather than the output. The CI of extras is exactly this binary and
 //! this flag, so a break here is a break in every pull request.
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 
-/// A bench built one file at a time.
-struct Bench {
+/// A manifest tree built one file at a time.
+struct Tree {
   dir: tempfile::TempDir,
 }
 
-impl Bench {
+impl Tree {
   fn new() -> Self {
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::create_dir_all(dir.path().join("plugins")).unwrap();
@@ -84,12 +84,12 @@ fn text_of(output: &std::process::Output) -> String {
 }
 
 #[test]
-fn a_clean_bench_passes_in_both_modes() {
-  let bench = Bench::new();
-  bench.good("plugins/alpha.toml", "alpha");
-  bench.good("plugins/beta.toml", "beta");
+fn a_clean_tree_passes_in_both_modes() {
+  let tree = Tree::new();
+  tree.good("plugins/alpha.toml", "alpha");
+  tree.good("plugins/beta.toml", "beta");
 
-  let plain = bench.validate(&[]);
+  let plain = tree.validate(&[]);
   assert!(plain.status.success(), "{}", text_of(&plain));
   assert!(
     text_of(&plain).contains("Checked 2 manifest(s): 0 error(s), 0 warning(s)."),
@@ -97,13 +97,13 @@ fn a_clean_bench_passes_in_both_modes() {
     text_of(&plain)
   );
 
-  assert!(bench.validate(&["--strict"]).status.success());
+  assert!(tree.validate(&["--strict"]).status.success());
 }
 
 #[test]
 fn an_empty_tree_is_not_a_failure() {
-  let bench = Bench::new();
-  let output = bench.validate(&[]);
+  let tree = Tree::new();
+  let output = tree.validate(&[]);
   assert!(output.status.success(), "{}", text_of(&output));
   assert!(
     text_of(&output).contains("No manifests found"),
@@ -114,12 +114,12 @@ fn an_empty_tree_is_not_a_failure() {
 
 #[test]
 fn a_path_that_is_not_a_directory_is_refused() {
-  let bench = Bench::new();
-  bench.good("plugins/alpha.toml", "alpha");
+  let tree = Tree::new();
+  tree.good("plugins/alpha.toml", "alpha");
   let mut command = Command::cargo_bin("luthier-registry").unwrap();
   let output = command
     .arg("validate")
-    .arg(bench.path().join("plugins/alpha.toml"))
+    .arg(tree.path().join("plugins/alpha.toml"))
     .output()
     .unwrap();
   assert!(!output.status.success());
@@ -134,10 +134,10 @@ fn a_path_that_is_not_a_directory_is_refused() {
 fn a_manifest_filed_under_the_wrong_name_is_an_error() {
   // Nothing in the rules can catch this: it is about the filename, which a
   // manifest cannot see.
-  let bench = Bench::new();
-  bench.write("plugins/wrongname.toml", &good_manifest("alpha"));
+  let tree = Tree::new();
+  tree.write("plugins/wrongname.toml", &good_manifest("alpha"));
 
-  let output = bench.validate(&[]);
+  let output = tree.validate(&[]);
   assert!(!output.status.success());
   assert!(
     text_of(&output).contains("must be filed as alpha.toml"),
@@ -150,11 +150,11 @@ fn a_manifest_filed_under_the_wrong_name_is_an_error() {
 fn two_files_claiming_one_id_is_an_error() {
   // The second file wins or the first does, depending on read order; either
   // way one package silently disappears, so it is refused.
-  let bench = Bench::new();
-  bench.good("plugins/alpha.toml", "alpha");
-  bench.write("libraries/alpha.toml", &good_manifest("alpha"));
+  let tree = Tree::new();
+  tree.good("plugins/alpha.toml", "alpha");
+  tree.write("libraries/alpha.toml", &good_manifest("alpha"));
 
-  let output = bench.validate(&[]);
+  let output = tree.validate(&[]);
   assert!(!output.status.success());
   assert!(
     text_of(&output).contains("is already defined in"),
@@ -165,11 +165,11 @@ fn two_files_claiming_one_id_is_an_error() {
 
 #[test]
 fn a_parse_error_costs_that_file_and_not_the_run() {
-  let bench = Bench::new();
-  bench.good("plugins/alpha.toml", "alpha");
-  bench.write("plugins/broken.toml", "schema = 1\nid = \"broken\"\nname =");
+  let tree = Tree::new();
+  tree.good("plugins/alpha.toml", "alpha");
+  tree.write("plugins/broken.toml", "schema = 1\nid = \"broken\"\nname =");
 
-  let output = bench.validate(&[]);
+  let output = tree.validate(&[]);
   assert!(!output.status.success());
   let text = text_of(&output);
   assert!(text.contains("broken.toml"), "{text}");
@@ -181,20 +181,20 @@ fn a_parse_error_costs_that_file_and_not_the_run() {
 fn an_unknown_field_is_caught_because_parsing_is_strict_here() {
   // The manager parses leniently so an older client can read a newer
   // registry (§7). The validator must not, or a contributor's typo lands.
-  let bench = Bench::new();
-  bench.write(
+  let tree = Tree::new();
+  tree.write(
     "plugins/alpha.toml",
     &good_manifest("alpha").replace("name = ", "nmae = \"typo\"\nname = "),
   );
-  let output = bench.validate(&[]);
+  let output = tree.validate(&[]);
   assert!(!output.status.success(), "{}", text_of(&output));
 }
 
 #[test]
 fn strict_turns_a_warning_into_a_failing_exit_code() {
-  let bench = Bench::new();
+  let tree = Tree::new();
   // No description: a warning, not an error.
-  bench.write(
+  tree.write(
     "plugins/alpha.toml",
     &good_manifest("alpha").replace(
       "description = \"A package for testing the validator.\"\n",
@@ -202,7 +202,7 @@ fn strict_turns_a_warning_into_a_failing_exit_code() {
     ),
   );
 
-  let lenient = bench.validate(&[]);
+  let lenient = tree.validate(&[]);
   assert!(lenient.status.success(), "{}", text_of(&lenient));
   assert!(
     text_of(&lenient).contains("0 error(s), 1 warning(s)"),
@@ -210,7 +210,7 @@ fn strict_turns_a_warning_into_a_failing_exit_code() {
     text_of(&lenient)
   );
 
-  let strict = bench.validate(&["--strict"]);
+  let strict = tree.validate(&["--strict"]);
   assert!(!strict.status.success(), "{}", text_of(&strict));
   // Same findings, different verdict.
   assert!(
@@ -223,34 +223,34 @@ fn strict_turns_a_warning_into_a_failing_exit_code() {
 #[test]
 fn a_rule_may_accept_a_warning_so_strict_stays_usable() {
   // LSP Plugins' case: a `.so` that has to live in the CLAP directory.
-  // Without an allowance the bench's CI is red on a correct manifest.
-  let bench = Bench::new();
+  // Without an allowance the CI of extras is red on a correct manifest.
+  let tree = Tree::new();
   let with_sidecar = good_manifest("alpha").replace(
     r#"  { format = "clap", source = "alpha.clap", kind = "file" },"#,
     "  { format = \"clap\", source = \"alpha.clap\", kind = \"file\" },\n  \
      { format = \"clap\", source = \"libalpha-helper.so\", kind = \"file\" },",
   );
-  bench.write("plugins/alpha.toml", &with_sidecar);
-  assert!(!bench.validate(&["--strict"]).status.success());
+  tree.write("plugins/alpha.toml", &with_sidecar);
+  assert!(!tree.validate(&["--strict"]).status.success());
 
-  bench.write(
+  tree.write(
     "plugins/alpha.toml",
     &with_sidecar.replace(
       r#"source = "libalpha-helper.so", kind = "file" }"#,
       r#"source = "libalpha-helper.so", kind = "file", allow = ["file-extension"] }"#,
     ),
   );
-  let allowed = bench.validate(&["--strict"]);
+  let allowed = tree.validate(&["--strict"]);
   assert!(allowed.status.success(), "{}", text_of(&allowed));
 }
 
 #[test]
 fn content_every_build_knows_needs_no_engines_file() {
-  // The cross-check the whole bench needs and no single manifest can do —
-  // and which a bench now rarely has to answer, because every build carries
-  // engines for the content types it knows. A bench adds to that list; it no
+  // The cross-check the whole tree needs and no single manifest can do —
+  // and which a tree now rarely has to answer, because every build carries
+  // engines for the content types it knows. A tree adds to that list; it no
   // longer has to restate it.
-  let bench = Bench::new();
+  let tree = Tree::new();
   let library = good_manifest("kit")
     .replace(
       "kind = \"plugin\"",
@@ -262,34 +262,34 @@ fn content_every_build_knows_needs_no_engines_file() {
       r#"{ format = "clap", source = "kit.clap", kind = "file" }"#,
       r#"{ format = "library", source = "Kit", kind = "bundle" }"#,
     );
-  bench.write("libraries/kit.toml", &library);
+  tree.write("libraries/kit.toml", &library);
 
   // DrumGizmo kits are played by engines this build already knows, so the
-  // bench needs no `engines.toml` to ship one.
-  let without = bench.validate(&["--strict"]);
+  // tree needs no `engines.toml` to ship one.
+  let without = tree.validate(&["--strict"]);
   assert!(without.status.success(), "{}", text_of(&without));
 
-  // Naming another engine still works, and is how a bench covers one that
+  // Naming another engine still works, and is how a tree covers one that
   // appeared after this build was released.
-  bench.good("plugins/drumcraker.toml", "drumcraker");
-  bench.write(
+  tree.good("plugins/drumcraker.toml", "drumcraker");
+  tree.write(
     "engines.toml",
     "schema = 1\n\n[[engine]]\npackage = \"drumcraker\"\nplays = [\"drumgizmo\"]\n",
   );
-  let with = bench.validate(&["--strict"]);
+  let with = tree.validate(&["--strict"]);
   assert!(with.status.success(), "{}", text_of(&with));
 }
 
 #[test]
 fn a_broken_engines_file_is_reported_rather_than_ignored() {
-  let bench = Bench::new();
-  bench.good("plugins/alpha.toml", "alpha");
-  bench.write(
+  let tree = Tree::new();
+  tree.good("plugins/alpha.toml", "alpha");
+  tree.write(
     "engines.toml",
     "schema = 1\n\n[[engine]]\nplays = [\"sfz\"]\n",
   );
 
-  let output = bench.validate(&[]);
+  let output = tree.validate(&[]);
   assert!(!output.status.success(), "{}", text_of(&output));
   assert!(
     text_of(&output).contains("engines.toml"),
@@ -299,7 +299,7 @@ fn a_broken_engines_file_is_reported_rather_than_ignored() {
 }
 
 #[test]
-fn the_committed_schema_can_be_printed_without_a_bench() {
+fn the_committed_schema_can_be_printed_without_a_tree() {
   // Registry CI regenerates this to check it is current, and does so with
   // the binary built without its authoring features.
   let mut command = Command::cargo_bin("luthier-registry").unwrap();
@@ -310,29 +310,29 @@ fn the_committed_schema_can_be_printed_without_a_bench() {
   assert!(text.contains("file-extension"), "{text}");
 }
 
-/// The bench that ships with this repository.
+/// Extras, which ships with this repository.
 ///
-/// Unconditional now that `bench/` is in the tree. It used to be skipped when
-/// the bench was a sibling checkout that might be absent, which meant the one
+/// Unconditional now that `extras/` is in the repository. It used to be skipped
+/// when it was a sibling checkout that might be absent, which meant the one
 /// test covering real data was the one most likely not to run.
 #[test]
-fn the_real_bench_passes_strict_validation() {
-  let bench = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench");
+fn extras_passes_strict_validation() {
+  let extras = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extras");
   assert!(
-    bench.join("plugins").is_dir(),
+    extras.join("plugins").is_dir(),
     "{} is missing from the checkout",
-    bench.display()
+    extras.display()
   );
   let mut command = Command::cargo_bin("luthier-registry").unwrap();
   let output = command
     .arg("validate")
-    .arg(&bench)
+    .arg(&extras)
     .arg("--strict")
     .output()
     .unwrap();
   assert!(
     output.status.success(),
-    "the bench workflow runs exactly this: {}",
+    "extras fails strict validation: {}",
     text_of(&output)
   );
 }

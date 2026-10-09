@@ -66,7 +66,7 @@ download is checked against the SHA-256 GitHub publishes for it.
 On ARM, Luthier installs what is published for ARM, and most Linux audio
 software is published for x86_64 only: some 65 of the Open Audio Stack
 registry's packages publish a Linux archive for aarch64, against some 330 for
-x86_64, and the bench's own packages are x86_64 only. `luthier search` shows everything;
+x86_64, and the packages in extras are x86_64 only. `luthier search` shows everything;
 installing a package with no build for your machine says so before anything
 is downloaded. The ARM build is for a 64-bit system: a 32-bit one on a 64-bit
 kernel, such as 32-bit Raspberry Pi OS on a Pi 4 or 5, reports `aarch64` too,
@@ -219,7 +219,7 @@ luthier unpin <package>         # let it be updated again
 luthier cache list              # what the download cache holds
 luthier cache clean             # delete archives nothing installed needs
 
-luthier bench list              # where packages come from, in precedence order
+luthier sources                 # where packages come from, in precedence order
 
 luthier completions <shell>     # bash, elvish, fish, powershell or zsh
 
@@ -236,7 +236,7 @@ Anything that deletes or installs asks first. In a script, `--yes` answers;
 have files removed. Without a terminal to ask on, such a command refuses rather
 than assuming.
 
-The bench (`extras`, built into Luthier) is consulted before the Open Audio
+Extras (`extras`, built into Luthier) is consulted before the Open Audio
 Stack registry, and the first to carry a package ID keeps it — which is how a
 curated manifest corrects a derived one.
 
@@ -247,7 +247,7 @@ distribution-provided engine as satisfying a dependency, unless
 
 A sample library says so before it is downloaded when nothing on the system
 can play it, and names what would. The library says what it holds
-(`content = ["sfz"]`), a built-in list and any bench's `engines.toml` say what
+(`content = ["sfz"]`), a built-in list and any source's `engines.toml` say what
 plays that, and any one engine — detected, already installed, or named in the
 same command — is enough. The warning comes with the plan, so you decide
 whether to go ahead:
@@ -323,9 +323,9 @@ tree — are Apache-2.0 only, which the FSF reads as incompatible with the
 version-2 licences and compatible with version 3. The option to take this
 under LGPL-3.0-or-later is what keeps a build of Luthier distributable.
 
-The package manifests live in `bench/`, under the MIT licence rather than the
+The package manifests live in `extras/`, under the MIT licence rather than the
 LGPL that covers the rest of the repository: the tool stays free, the data
-stays maximally reusable. See `bench/LICENSE`.
+stays maximally reusable. See `extras/LICENSE`.
 
 Two things follow for anyone integrating with it.
 

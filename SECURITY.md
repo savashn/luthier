@@ -8,8 +8,8 @@ document states what is trusted, what is not, and what the code does about it.
 | Input | Trusted? | Why |
 |---|---|---|
 | Registry manifests | Reviewed, not trusted | Manifests are reviewed in pull requests, but a manifest still cannot name a destination path or run a command |
-| Registry sources | Fixed in the binary | Luthier reads the Open Audio Stack registry and its own bench, and nothing else; users cannot add a source |
-| The bench and the Open Audio Stack index | HTTPS and the forge | Neither is signed. Whoever can publish a release of this repository, or change the OAS site, decides what the checksums say |
+| Registry sources | Fixed in the binary | Luthier reads the Open Audio Stack registry and extras, its own list, and nothing else; users cannot add a source |
+| Extras and the Open Audio Stack index | HTTPS and the forge | Neither is signed. Whoever can publish a release of this repository, or change the OAS site, decides what the checksums say |
 | Downloaded artifacts | Never | An artifact is bytes from the internet; the checksum only proves it is *the* expected bytes, not that they are safe |
 | Local state file | Structurally, not blindly | Removal re-checks that every path it is about to delete lies inside a managed directory |
 | The user's existing plugins | Never modified | Anything Luthier did not install is left alone |
@@ -58,7 +58,7 @@ The distinction that matters is not declared-versus-derived. It is this:
 
 - **A manifest may not leave the manager guessing.** `validate` refuses
   `derive_install` in a manifest, and an artifact that declares no rules and
-  does not derive them is not a release for the target at all. A curated bench
+  does not derive them is not a release for the target at all. Extras
   earns its precedence by carrying rules a person looked at.
 - **Derivation reads bytes whose checksum has already been verified**, by the
   same code `luthier-registry inspect` shows a contributor
@@ -134,7 +134,7 @@ An artifact is verified against a checksum in a manifest, so the document
 carrying that checksum is the weakest link in the chain. Luthier reads exactly
 two, and both are fixed in the binary:
 
-1. **Luthier's own bench** (`extras`), built from `bench/` in this repository
+1. **Extras**, Luthier's own list, built from `extras/` in this repository
    into the binary itself, so it is exactly as trustworthy as the binary,
    under the same provenance attestation, and nothing is fetched for it. (0.4
    and earlier fetched it as a `bench.tar.gz` asset of the latest release,
@@ -145,7 +145,7 @@ two, and both are fixed in the binary:
 There is no command to add a source, and `config.json` cannot name one: a
 `registries` list written there by 0.1 is ignored. `--registry-path` replaces
 both with a local directory for one command; it is hidden, and exists for
-developing the bench.
+developing extras.
 
 `registry/provenance.rs` records, for each source, the URL and the SHA-256 and
 size of what arrived, when. The record enforces nothing. It also says when the
@@ -161,11 +161,11 @@ lock everyone out the day a release moved one.)
 
 ## Trusting GitHub
 
-Nothing the manager reads is signed. The bench is part of the binary, so it is
+Nothing the manager reads is signed. Extras is part of the binary, so it is
 trusted on HTTPS and on GitHub exactly as the binary is, and the Open Audio
 Stack index on HTTPS and on the site that serves it. This is a deliberate
 choice, and it has a consequence worth stating plainly: **anyone who can
-publish a release of this repository can publish a binary whose bench points
+publish a release of this repository can publish a binary whose copy of extras points
 at any file with a matching checksum, and every user who updates installs it
 on their next `install`.** That means a compromised GitHub account, a leaked
 token with write access, or a compromised release workflow. Homebrew and Scoop
@@ -174,15 +174,15 @@ the latest release for a `bench.tar.gz` on every `refresh`. Releases no longer
 carry one, but the same access could attach one, and it would reach every
 such client whether it updates or not.
 
-0.1 signed the bench with a key kept off CI and compiled into the manager,
+0.1 signed extras with a key kept off CI and compiled into the manager,
 which closed that gap. It was removed to keep releases a single tag with no
-key to guard; 0.1 clients still require that signature and refuse the bench
+key to guard; 0.1 clients still require that signature and refuse extras
 from any later release until they are upgraded.
 
-What still holds whatever the bench says: a manifest cannot name a
+What still holds whatever extras says: a manifest cannot name a
 destination or run a command, every artifact is checked against the checksum
 its manifest gives, and extraction goes through one hardened policy. A
-malicious bench can make a user install a malicious *plugin*; it cannot make
+malicious manifest in extras can make a user install a malicious *plugin*; it cannot make
 the installer write outside the plugin and library directories.
 
 `luthier update --self` trusts GitHub the same way, and more directly: the
@@ -246,7 +246,7 @@ refused before the download when it would delete such changes, until
 
 ## Not yet implemented
 
-- **Signatures.** Neither the bench nor an individual manifest is signed
+- **Signatures.** Neither extras nor an individual manifest is signed
   (see *Trusting GitHub*), though the manifest format reserves room for it
   (§14).
 - **System-wide installation.** Everything is user-local; root is never

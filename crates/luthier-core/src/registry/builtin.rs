@@ -2,7 +2,7 @@
 //!
 //! They are what the Open Audio Stack registry cannot say — an engine to
 //! install from the distribution, content it does not carry, a correction to
-//! one of its packages — kept in `bench/` in this repository and built in by
+//! one of its packages — kept in `extras/` in this repository and built in by
 //! `build.rs`. Built in rather than fetched: they change only when Luthier is
 //! released, so a binary reads exactly the ones it was released with, never a
 //! later set written for a manifest format it does not know, and nothing has
@@ -70,15 +70,15 @@ mod tests {
   use super::*;
 
   #[test]
-  fn every_manifest_in_bench_is_built_in() {
-    let bench = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("../../bench")
+  fn every_manifest_in_extras_is_built_in() {
+    let extras = Path::new(env!("CARGO_MANIFEST_DIR"))
+      .join("../../extras")
       .canonicalize()
       .unwrap();
-    let on_disk: Vec<PathBuf> = luthier_manifest::manifest_files(&bench)
+    let on_disk: Vec<PathBuf> = luthier_manifest::manifest_files(&extras)
       .unwrap()
       .into_iter()
-      .map(|path| path.strip_prefix(&bench).unwrap().to_path_buf())
+      .map(|path| path.strip_prefix(&extras).unwrap().to_path_buf())
       .collect();
     let built_in: Vec<PathBuf> = generated::MANIFESTS
       .iter()
@@ -87,21 +87,21 @@ mod tests {
     assert_eq!(built_in, on_disk, "the same files, in the same order");
     for (path, text) in generated::MANIFESTS {
       assert_eq!(
-        std::fs::read_to_string(bench.join(path)).unwrap(),
+        std::fs::read_to_string(extras.join(path)).unwrap(),
         *text,
         "{path}"
       );
     }
     assert_eq!(
       generated::ENGINES.is_some(),
-      bench.join(luthier_manifest::ENGINES_FILE).is_file()
+      extras.join(luthier_manifest::ENGINES_FILE).is_file()
     );
 
     let index = BuiltinRegistry::new(NAME).load_index().unwrap();
     assert_eq!(index.len(), on_disk.len());
     assert!(!index.is_empty());
     // Read strictly too: what ships in the binary is held to what the
-    // bench's own CI holds it to.
+    // CI of extras holds it to.
     index_of(
       NAME,
       Path::new(""),

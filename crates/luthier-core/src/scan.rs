@@ -128,7 +128,7 @@ pub fn locate_external(layout: &Layout, manifest: &Manifest) -> Option<PathBuf> 
   locate(layout, &manifest.detect)
 }
 
-/// Engines the merged index knows — the built-in list plus any bench's
+/// Engines the merged index knows — the built-in list plus any source's
 /// `engines.toml` — that are present on this machine, found by their detect
 /// rules.
 ///

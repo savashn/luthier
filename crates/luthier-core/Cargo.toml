@@ -32,7 +32,7 @@ url.workspace = true
 percent-encoding.workspace = true
 async-trait.workspace = true
 
-# build.rs lists `bench/` with the same discovery rules the index builder
+# build.rs lists `extras/` with the same discovery rules the index builder
 # applies to any registry tree.
 [build-dependencies]
 luthier-manifest.workspace = true

@@ -1,11 +1,12 @@
-# The bench
+# Extras
 
-The default bench lives in this repository, under `bench/`. The manager
-consumes it as data; nothing is compiled in, and `bench/` is the one directory
-here that is MIT rather than LGPL — see `bench/LICENSE`.
+Extras, Luthier's own list of manifests, lives in this repository under
+`extras/`. It is data, embedded in the binary verbatim rather than turned into
+code, and `extras/` is the one directory here that is MIT rather than LGPL —
+see `extras/LICENSE`.
 
 ```
-bench/
+extras/
 ├── plugins/        lsp-plugins.toml, sfizz.toml, drumgizmo.toml
 ├── libraries/      sample libraries
 ├── presets/        preset packs
@@ -16,7 +17,7 @@ bench/
 
 Layout is for humans; the loader walks the whole tree. Two rules are enforced:
 a manifest must be filed as `<id>.toml`, and an ID may appear only once.
-`engines.toml` at the root is bench data rather than a package, and is skipped
+`engines.toml` at the root is extras data rather than a package, and is skipped
 by the walk. The JSON Schema is not here — it is generated from the manager's
 types and lives at `schemas/package-v1.json` in the repository root, so there
 is one copy rather than two to keep in step.
@@ -27,12 +28,12 @@ is one copy rather than two to keep in step.
 [Open Audio Stack registry][oas] instead.** Luthier reads that too, an entry
 there serves every OAS client rather than only this one, and a copy here would
 be a second record of the same release to keep current — by hand, including
-the checksum, on every upstream version. The bench also wins any ID collision,
+the checksum, on every upstream version. Extras also wins any ID collision,
 so a stale copy here silently overrides a maintained entry there.
 
 [oas]: https://github.com/open-audio-stack/open-audio-stack-registry
 
-That is why this bench is seven manifests against OAS's several hundred, and the
+That is why extras is seven manifests against OAS's several hundred, and the
 count is meant to fall rather than grow. What earns a place is what OAS cannot
 express:
 
@@ -45,25 +46,25 @@ express:
 | Shadows | A package OAS also carries, where its data or the derived install rules are wrong. Each says at the top of the file why it exists and what would retire it. |
 
 When something here becomes expressible upstream, the move is the point:
-send it to OAS and delete it from `bench/`. `surge-xt` and `dpf-plugins` both
+send it to OAS and delete it from `extras/`. `surge-xt` and `dpf-plugins` both
 left that way.
 
 ## How it reaches users
 
 It is built into the binary: `crates/luthier-core/build.rs` embeds every
-manifest in `bench/`, found by the same rules as in any registry tree, and
+manifest in `extras/`, found by the same rules as in any registry tree, and
 Luthier reads them as `extras` without fetching anything. So a binary reads
-exactly the bench it was released with, never one written for a manifest
+exactly the manifests it was released with, never ones written for a manifest
 format it does not know, and a change here reaches users with the release that
 carries it — through `luthier update --self`, or however they installed.
 
 0.4 and earlier fetched it on `refresh`, as `luthier-extras`, from a
-`bench.tar.gz` asset of the latest release; releases no longer carry one. The
-bench is not signed; see *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
+`bench.tar.gz` asset of the latest release; releases no longer carry one.
+Extras is not signed; see *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
-This bench and the Open Audio Stack registry are the only sources the manager
+Extras and the Open Audio Stack registry are the only sources the manager
 reads; users cannot add one. A package with a downloadable release belongs in
-the Open Audio Stack registry, and this bench holds only what cannot be
+the Open Audio Stack registry, and extras holds only what cannot be
 expressed there.
 
 There is deliberately no git dependency. A `GitRegistry` can be added later
@@ -72,7 +73,7 @@ behind the same `RegistryProvider` trait.
 During development, skip fetching entirely:
 
 ```console
-$ luthier --registry-path bench search synth
+$ luthier --registry-path extras search synth
 ```
 
 ## Adding a package
@@ -145,7 +146,7 @@ which is free-form. See [MANIFEST.md](MANIFEST.md#category-and-tags).
 ### Validate
 
 ```console
-$ cargo run -p luthier-registry-tool -- validate bench
+$ cargo run -p luthier-registry-tool -- validate extras
 Checked 9 manifest(s): 0 error(s), 0 warning(s).
 ```
 
@@ -187,9 +188,9 @@ than being ignored:
   only for formats that have a plugin directory
 
 Validation itself runs as part of the test suite —
-`the_real_bench_passes_strict_validation` drives the released binary against
-`bench/` exactly as a reviewer would — so a bad manifest fails `ci.yml` like
-any other change. `bench.yml` adds the one check no test may do, because the
+`extras_passes_strict_validation` drives the released binary against
+`extras/` exactly as a reviewer would — so a bad manifest fails `ci.yml` like
+any other change. `extras.yml` adds the one check no test may do, because the
 suite is offline by rule: a sweep that fetches every artifact URL. It is
 advisory, since reachability depends on hosts nobody here controls.
 
@@ -199,11 +200,11 @@ actually accepts, and builds the validator with `--no-default-features` —
 the configuration that keeps `luthier-manifest` free of async, HTTP and
 archive decoders.
 
-## Keeping the bench current
+## Keeping extras current
 
 ```console
-$ luthier-registry check-updates bench
-$ luthier-registry check-updates bench --all --json
+$ luthier-registry check-updates extras
+$ luthier-registry check-updates extras --all --json
 ```
 
 Asks each package's forge for its newest tag and reports what is behind. It
@@ -233,10 +234,10 @@ inferred from a filename, and a project that publishes only source becomes an
 cannot be recognised from a URL at all. Either is a small addition to
 `upstream.rs` on the day a manifest needs one.
 
-## Releasing the bench
+## Releasing extras
 
-The bench ships in the manager: pushing a `v*` tag runs `release.yml`, which
-builds the binaries with `bench/` inside them, attests their build provenance,
+Extras ships in the manager: pushing a `v*` tag runs `release.yml`, which
+builds the binaries with `extras/` inside them, attests their build provenance,
 and publishes the release. There is no step on the maintainer's machine.
 
 A published release is never re-run: replacing one of its files would change
@@ -275,7 +276,7 @@ soundfont file — because both are what upstreams actually ship.
 A library that needs an engine declares what it holds with `content = ["sfz"]`
 (or `sf2`, `drumgizmo`), never which engine plays it. Before downloading, the
 manager looks for one of the engines it knows for that content — the built-in
-list, plus anything a bench's `engines.toml` adds —
+list, plus anything a source's `engines.toml` adds —
 detected on the machine, installed, or arriving in the same command — and says
 so in the plan when it finds none. It installs either way: a format implies
 its player without any registry saying so, and refusing because *this*
@@ -284,7 +285,7 @@ plays the content, and if its registry carries no detect rules, read the name
 it installs as with `luthier-registry inspect <url>`. See
 [MANIFEST.md](MANIFEST.md#content-and-engines).
 
-## What is not in the bench, and why
+## What is not in extras, and why
 
 The initial set is small on purpose. A working experience for a handful of
 packages is worth more than a broken one for thousands.

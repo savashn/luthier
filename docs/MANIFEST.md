@@ -299,8 +299,8 @@ content = ["drumgizmo"]
 ```
 
 Which packages play each kind of content is in the manager's built-in engine
-list and in any bench's `engines.toml`
-at the root of a bench:
+list and in any source's `engines.toml`
+at the root of a source:
 
 ```toml
 [[engine]]
@@ -328,7 +328,7 @@ library read from there needs no translation: its `contains` becomes its
 `content`. A package that also ships a plugin plays its own content and
 declares none — `validate` refuses `content` outside `kind = "library"`, and
 `luthier-registry validate` refuses a value nothing plays: neither a built-in
-engine nor an entry in the bench's `engines.toml`.
+engine nor an entry in the validated tree's `engines.toml`.
 
 ## Forward compatibility
 

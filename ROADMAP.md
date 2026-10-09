@@ -26,23 +26,23 @@ Two registries are read together. The Open Audio Stack registry supplies
 anything with a downloadable release binary — 464 of its 560 packages
 translate, 299 of them installable on Linux x86_64 — and its install rules are
 derived from the verified archive rather than declared; it refreshes itself
-once a day, conditionally. The curated bench, `extras`, is built into the
+once a day, conditionally. Extras, Luthier's curated list, is built into the
 binary and down to 7 manifests: what OAS cannot express — two `external` engines, three
 DrumGizmo kits it does not carry, one shadow for an install rule nothing can
 derive, and one for an archive that holds two builds of the same plugin. What plays SFZ, SoundFont 2 and DrumGizmo content is no longer
-its business: that list ships with the manager, and a bench's `engines.toml`
+its business: that list ships with the manager, and a source's `engines.toml`
 adds to it. A library whose engines are all absent
 is reported before the download and installed anyway; the confirmation is where
-the user decides. Where both registries carry an ID, the bench wins.
+the user decides. Where both registries carry an ID, extras wins.
 
-Those two sources are the only ones, and users cannot add a third: the
-bench exists to correct OAS, not to host collections of its own. Neither is
+Those two sources are the only ones, and users cannot add a third:
+extras exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
 `v0.4.0` is the latest release: a static binary for Linux x86_64 and one for
 aarch64, each as a tarball, a .deb and an .rpm, an install script that picks the
-tarball for the machine, and the bench, from the public repository at `savashn/luthier`,
+tarball for the machine, and extras, from the public repository at `savashn/luthier`,
 published straight from a `v*` tag. Phase 0 is done.
 
 ---
@@ -59,9 +59,9 @@ they are the difference between a local working directory and a project.
 and the schema-drift check included. The release's musl build is 0.3; it
 first ran for `v0.1.0`.
 
-There used to be a second repository to publish. The bench now lives here
-under `bench/`, which removed the part of this item that was genuinely awkward:
-the bench's CI had to check out `savashn/luthier` to build the validator, and
+There used to be a second repository to publish. Extras now lives here
+under `extras/`, which removed the part of this item that was genuinely awkward:
+the CI for extras had to check out `savashn/luthier` to build the validator, and
 a workflow's default token reaches only its own repository, so a private
 manager meant a personal access token in the other repository's secrets. One
 repository needs none of that. Making the manager public remains the right
@@ -73,7 +73,7 @@ with the schema-drift check having run at least once~~.
 ### 0.2 Add the licence texts — done
 
 `luthier/LICENSE` carries the canonical LGPL-2.1 text, which is a standalone
-licence and needs no GPL text beside it. `bench/LICENSE` carries MIT plus
+licence and needs no GPL text beside it. `extras/LICENSE` carries MIT plus
 a scope note covering the generated schema and the fact that manifests record
 upstream licences rather than granting them.
 
@@ -105,7 +105,7 @@ default.
 ### 0.3 Publish a release, and make the default registry resolve — done
 
 `config.rs` pointed at `https://github.com/savashn/luthier/releases/latest/download/bench.tar.gz`
-(until the bench was built into the binary, after 0.4).
+(until extras was built into the binary, after 0.4).
 Until a release existed that URL did not resolve, `luthier refresh` failed out
 of the box and every user had to pass `--registry-path`; and the only install
 path was `cargo build --release` with a Rust 1.89 toolchain. The people this
@@ -122,8 +122,8 @@ refuses a tag that disagrees with the workspace version. The README's install
 section leads with that download.
 
 `v0.1.0` was tagged on 2026-09-27. The musl build passed on its first run,
-the bench was signed on the maintainer's machine and the draft published. On
-a clean root, the downloaded binary refreshed both benches with no flags,
+extras was signed on the maintainer's machine and the draft published. On
+a clean root, the downloaded binary refreshed both sources with no flags,
 verifying the signature, and installed and verified `lsp-plugins`. Signing
 was later removed (see 2.2); from 0.2 on, a tag publishes with no step on
 the maintainer's machine.
@@ -159,7 +159,7 @@ the git log is for.
 
 ## Phase 1 — Make the registry maintainable
 
-A curated registry dies of neglect, not of bad design. That is why the bench
+A curated registry dies of neglect, not of bad design. That is why extras
 carries only what OAS cannot: seven manifests. The three kits and the two
 shadows pin an artifact to a version upstream will move past; the two
 `external` engines have nothing of their own to go stale.
@@ -198,7 +198,7 @@ Three decisions worth keeping:
 This once read "GitLab and SourceForge would each be a small addition to
 `upstream.rs`". Both were written, and both came back out.
 
-The data is the first half of the reason: of the bench's seven manifests,
+The data is the first half of the reason: of the seven manifests in extras,
 the five with an artifact point at GitHub twice and at drumgizmo.org three
 times. Nothing uses either forge, and this command never sees the Open Audio
 Stack registry at all — it walks a directory of manifests.
@@ -224,7 +224,7 @@ CI does. `validate` — the component registry CI depends on to catch a
 contributor's mistake — now has a case per rule class: filing, duplicate IDs,
 a parse error costing one file rather than the run, strict mode, an accepted
 warning, content with no engine, a broken `engines.toml`, and a pass over the
-real bench when it is checked out.
+real `extras/` when it is checked out.
 
 `inspect`'s rule suggestion has cases too. They were added alongside the fix
 for its LV2 arm, which listed a bundle and suggested nothing, so every manifest
@@ -278,8 +278,8 @@ Two changes made this possible, both worth knowing:
   `--check-urls` lived inside it; the URL sweep is now a separate,
   feature-gated step. The validation pass is byte-identical in both builds.
 
-The manager's CI builds `--no-default-features` on every push. Since the
-bench moved into this repository nothing else builds it that way, so that
+The manager's CI builds `--no-default-features` on every push. Since
+extras moved into this repository nothing else builds it that way, so that
 job is what keeps the configuration from rotting silently.
 
 ---
@@ -294,31 +294,31 @@ built, shipped in 0.1, and then taken out: the project trusts GitHub instead.
 
 The document carrying every checksum was trusted on HTTPS alone.
 `registry/provenance.rs` first answered that with trust on first use: each
-bench's origin was pinned on first fetch, and a later change of host refused.
+source's origin was pinned on first fetch, and a later change of host refused.
 
-That only made sense while users could add benches. Once the sources became
+That only made sense while users could add sources. Once the sources became
 fixed in the binary (see 3.2), an origin pin protected nothing a compiled-in
 URL did not already fix, and would have locked every user out the day a
 release moved a URL — so it was removed. What remains is an audit record of
 each fetch: URL, digest, size and time. The key that signed it was recorded
-too while 0.1 signed the bench; that field is now ignored.
+too while 0.1 signed extras; that field is now ignored.
 
 ### 2.2 Signature verification — withdrawn
 
-0.1 signed the bench with Ed25519, a key kept off CI and compiled into the
+0.1 signed extras with Ed25519, a key kept off CI and compiled into the
 manager, and verified it between the download and the extractor. That closed
 the one gap HTTPS leaves: a compromised GitHub account, token or workflow
-could otherwise publish a bench that points every user at a file of its
+could otherwise publish a `bench.tar.gz` that points every user at a file of its
 choosing. For a while it was moved to minisign's format so the signature
 could be checked with standard tools.
 
-It was then removed, by decision: the bench is trusted on GitHub, as the
+It was then removed, by decision: extras is trusted on GitHub, as the
 binary is, and a release is a tag with no key to guard and no step on the
 maintainer's machine. Homebrew and Scoop make the same trade. What the
-manager still guarantees whatever the bench says — no destination in a
+manager still guarantees whatever extras says — no destination in a
 manifest, no scripts, checksums, one extraction policy — is in `SECURITY.md`
 under *Trusting GitHub*, together with the risk this leaves. 0.1 clients
-still require the signature and refuse the bench from later releases until
+still require the signature and refuse extras from later releases until
 they are upgraded.
 
 If it comes back, the history of `registry/signature.rs` has a minisign
@@ -343,11 +343,11 @@ people who install through their distribution's own tools.
 **Done when:** at least the AUR package exists and is referenced from the
 README.
 
-### 3.2 Third-party benches — withdrawn
+### 3.2 Third-party sources — withdrawn
 
-0.1 shipped `bench add`, `bench remove`, `bench trust` and `bench untrust`, so
+0.1 shipped commands to add, remove, trust and untrust sources, so
 users could read collections of manifests beyond the default one. They were
-removed: Luthier reads the Open Audio Stack registry and its own bench, and
+removed: Luthier reads the Open Audio Stack registry and extras, its own list, and
 nothing else. See *Deliberate ceilings*.
 
 ### 3.3 A `GitRegistry` backend
@@ -372,10 +372,10 @@ Concrete content gaps, in order of how visible they are:
 - **Few aarch64 artifacts.** From 0.4.0 on, releases ship an aarch64 build, and some 65
   Open Audio Stack packages publish a Linux archive for aarch64, against some
   330 for x86_64 (2026-10; counted before translation, unlike the 299 above);
-  the bench's own manifests list x86_64 only, the three DrumGizmo kits among
+  the manifests in extras list x86_64 only, the three DrumGizmo kits among
   them although a kit is the same on every architecture.
 - **Only two packages are `external`, and both are engines.** That is the point
-  now: the bench carries what OAS cannot, and `check-updates` is what will
+  now: extras carries what OAS cannot, and `check-updates` is what will
   notice when an upstream starts publishing binaries.
 
 **Done when:** at least one preset pack and one IR collection are listed, and
@@ -477,9 +477,9 @@ later and would call `luthier_core::api::Session` unchanged, which is why
 `luthier-cli` holds no decisions.
 
 **Two sources, and users cannot add a third.** Luthier reads the Open Audio
-Stack registry and its own bench, which corrects it, and nothing else. A
-package with a downloadable release belongs upstream in OAS; the bench keeps
-only what OAS cannot express. Third-party benches existed in 0.1 and were
+Stack registry and extras, its own list, which corrects it, and nothing else. A
+package with a downloadable release belongs upstream in OAS; extras keeps
+only what OAS cannot express. Third-party sources existed in 0.1 and were
 removed: every source is one more publisher whose manifests can decide what
 lands in a user's plugin directories, and one more host to trust, for
 a need that contributing to OAS already meets.
@@ -518,15 +518,16 @@ distinguish them.
 
 ### Third-party registries — decided: none
 
-This used to hold four entangled questions — what wins when two benches carry
+This used to hold four entangled questions — what wins when two sources carry
 one ID, whether third-party repositories carry a name prefix, what a user
 types to add one, and what the thing is called. The first answer stands for
-the two sources that remain: the bench is consulted first and wins, because
+the two sources that remain: extras is consulted first and wins, because
 correcting OAS is what it is for. The rest went away with the decision not to
-have third-party benches at all (see *Deliberate ceilings*).
+have third-party sources at all (see *Deliberate ceilings*).
 
-The vocabulary stays. A *bench* is a collection of manifests; `extras` is the
-one Luthier ships, built into it from `bench/` in this repository (0.4 and
-earlier fetched it, as `luthier-extras`); "registry"
-in code is the mechanism (`RegistryProvider`, `RegistryIndex`), which the Open
-Audio Stack registry is read through as well.
+The vocabulary changed after 0.4. A *source* is where Luthier reads manifests
+from, and there are two: *extras*, its own, built into it from `extras/` in
+this repository, and the Open Audio Stack registry. Up to 0.4 extras was the
+bench (`luthier-extras`), a generic name with no use once users could not add
+their own. "Registry" in code is the mechanism (`RegistryProvider`,
+`RegistryIndex`), which both are read through.

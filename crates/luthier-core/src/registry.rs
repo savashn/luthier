@@ -56,12 +56,12 @@ pub struct RegistryIndex {
   pub packages: BTreeMap<PackageId, IndexEntry>,
   /// Which packages play which content: the built-in list every build
   /// carries, plus every registry's `engines.toml`. An entry may name a
-  /// package from any registry, which is the point: the bench knows
+  /// package from any registry, which is the point: extras knows
   /// DrumCraker plays DrumGizmo kits, and the Open Audio Stack registry,
   /// which carries DrumCraker, has no field to say so.
   pub engines: Vec<luthier_manifest::EngineEntry>,
   /// Registries that could not be read. Kept rather than raised so that one
-  /// bench a user has not fetched yet does not cost them every command, and
+  /// source a user has not fetched yet does not cost them every command, and
   /// reported rather than dropped so the absence is never silent.
   pub problems: Vec<String>,
 }
@@ -76,10 +76,10 @@ pub struct SearchHit<'a> {
 impl RegistryIndex {
   /// Merges configured registries into one view, earliest wins.
   ///
-  /// Precedence is the configured order, and the curated bench is first.
+  /// Precedence is the configured order, and extras is first.
   /// That is what lets a hand-written manifest correct a broader source:
   /// where a derived entry installs the wrong thing, or an upstream record
-  /// points at the wrong artifact, the bench's version of that package is
+  /// points at the wrong artifact, the manifest in extras is
   /// the one the resolver sees. Refusing the collision instead would kill
   /// that ability, and namespacing it would make every ID two-part.
   pub fn merge(
@@ -118,9 +118,9 @@ impl RegistryIndex {
     }
 
     // Last, so a registry entry for the same engine wins the dedup in
-    // `engines_for`: a bench refines what this list already names — a
+    // `engines_for`: a source refines what this list already names — a
     // detect rule for a filename that changes, say — rather than being
-    // shadowed by it. What a bench cannot do is *remove* one, which is why
+    // shadowed by it. What a source cannot do is *remove* one, which is why
     // the built-in list is narrow.
     engines.extend(luthier_manifest::builtin_engines());
 
@@ -248,12 +248,12 @@ pub struct RefreshOutcome {
   pub packages: usize,
   /// False when the snapshot was already current.
   pub updated: bool,
-  /// Why this bench was not refreshed, when it was not.
+  /// Why this source was not refreshed, when it was not.
   ///
-  /// A bench that cannot be reached must not cost a user the ones that can:
-  /// the default configuration alone lists two, and an unpublished or
+  /// A source that cannot be reached must not cost a user the ones that can:
+  /// the default configuration fetched two until 0.4, and an unpublished or
   /// unreachable first one used to abort the whole command before the second
-  /// was asked. Each bench therefore reports for itself, and the snapshot
+  /// was asked. Each source therefore reports for itself, and the snapshot
   /// already on disk is what a failed one keeps.
   pub failure: Option<String>,
 }
@@ -433,7 +433,7 @@ pub use luthier_manifest::manifest_files;
 /// Downloads `url` to `destination` with nothing to check it against, and
 /// returns its size and SHA-256.
 ///
-/// For a registry snapshot — the bench tarball, the Open Audio Stack index —
+/// For a registry snapshot — a snapshot tarball, the Open Audio Stack index —
 /// which no manifest gives a checksum for: it is trusted on HTTPS and on the
 /// site that serves it (SECURITY.md, *Trusting GitHub*). Everything installed
 /// from it is still checked against the manifest's checksum.
@@ -521,31 +521,31 @@ mod tests {
   }
 
   #[test]
-  fn a_bench_names_engines_from_any_registry() {
+  fn a_source_names_engines_from_any_registry() {
     // DrumCraker comes from the Open Audio Stack registry, which cannot say
-    // it plays DrumGizmo kits. The bench says so, and the merged index
+    // it plays DrumGizmo kits. Extras says so, and the merged index
     // keeps the answer whichever registry carries the package.
-    let mut bench = index_of("bench", &["drumgizmo"]);
-    bench.engines = vec![
+    let mut extras = index_of("extras", &["drumgizmo"]);
+    extras.engines = vec![
       engine("drumgizmo", &["drumgizmo"]),
       engine("drumcraker", &["drumgizmo"]),
       engine("sfizz", &["sfz"]),
     ];
-    let merged = RegistryIndex::merge([Ok(bench), Ok(index_of("oas", &["drumcraker"]))]).unwrap();
+    let merged = RegistryIndex::merge([Ok(extras), Ok(index_of("oas", &["drumcraker"]))]).unwrap();
 
     let ids: Vec<&str> = merged
       .engines_for(&Content::Drumgizmo)
       .iter()
       .map(|e| e.package.as_str())
       .collect();
-    // The bench's entries come first; the built-in list follows, and here
+    // The entries in extras come first; the built-in list follows, and here
     // it names the same two.
     assert_eq!(&ids[..2], &["drumgizmo", "drumcraker"]);
   }
 
   #[test]
   fn an_engine_two_registries_both_name_is_listed_once() {
-    let mut first = index_of("bench", &[]);
+    let mut first = index_of("extras", &[]);
     first.engines = vec![engine("only-here", &["sfz"])];
     let mut second = index_of("other", &[]);
     second.engines = vec![engine("only-here", &["sfz", "sf2"])];
@@ -565,7 +565,7 @@ mod tests {
 
   #[test]
   fn the_built_in_engines_are_known_without_any_registry_saying_so() {
-    // The reason this list is not a bench's alone: a user who configures
+    // The reason this list is not a source's alone: a user who configures
     // only the Open Audio Stack registry — which has no field for what
     // plays what — would otherwise be told nothing can play a library
     // while sfizz sits installed on their machine.
@@ -588,10 +588,10 @@ mod tests {
   #[test]
   fn a_registry_refines_a_built_in_engine_rather_than_colliding_with_it() {
     // sfzq stamps its release date into its filename, so the built-in
-    // entry carries no detect rule and a bench supplies one. The bench's
-    // entry has to win, or the rule it added would never be read.
-    let mut bench = index_of("bench", &[]);
-    bench.engines = vec![luthier_manifest::EngineEntry {
+    // entry carries no detect rule and a source supplies one. The
+    // source's entry has to win, or the rule it added would never be read.
+    let mut extras = index_of("extras", &[]);
+    extras.engines = vec![luthier_manifest::EngineEntry {
       package: PackageId::new("sfzq").unwrap(),
       plays: vec![Content::Sfz],
       detect: vec![luthier_manifest::DetectRule {
@@ -602,7 +602,7 @@ mod tests {
       extra: Default::default(),
     }];
 
-    let merged = RegistryIndex::merge([Ok(bench)]).unwrap();
+    let merged = RegistryIndex::merge([Ok(extras)]).unwrap();
     let sfzq: Vec<_> = merged
       .engines_for(&Content::Sfz)
       .into_iter()
@@ -621,7 +621,7 @@ mod tests {
     )
     .unwrap();
 
-    let index = build_index("bench", dir.path(), ParseMode::Strict).unwrap();
+    let index = build_index("extras", dir.path(), ParseMode::Strict).unwrap();
     assert!(index.is_empty());
     assert_eq!(index.engines.len(), 1);
     assert_eq!(index.engines[0].package.as_str(), "sfizz");
@@ -629,19 +629,19 @@ mod tests {
 
   #[test]
   fn the_first_registry_to_claim_an_id_keeps_it() {
-    // This is what lets a curated bench correct a broader source: where
-    // the two carry the same package, the bench's manifest is the one the
+    // This is what lets extras correct a broader source: where
+    // the two carry the same package, the manifest in extras is the one the
     // resolver sees.
     let merged = RegistryIndex::merge([
-      Ok(index_of("bench", &["surge-xt", "sfizz"])),
+      Ok(index_of("extras", &["surge-xt", "sfizz"])),
       Ok(index_of("oas", &["surge-xt", "dexed"])),
     ])
     .unwrap();
 
     assert_eq!(merged.packages.len(), 3);
     let contested = &merged.packages[&PackageId::new("surge-xt").unwrap()];
-    assert_eq!(contested.registry, "bench");
-    assert_eq!(contested.manifest.name, "bench surge-xt");
+    assert_eq!(contested.registry, "extras");
+    assert_eq!(contested.manifest.name, "extras surge-xt");
     assert_eq!(
       merged.packages[&PackageId::new("dexed").unwrap()].registry,
       "oas"
@@ -650,10 +650,10 @@ mod tests {
 
   #[test]
   fn a_registry_that_cannot_be_read_is_reported_not_fatal() {
-    // A second bench the user has not fetched yet must not cost them
+    // A second source the user has not fetched yet must not cost them
     // every command against the first.
     let merged = RegistryIndex::merge([
-      Ok(index_of("bench", &["sfizz"])),
+      Ok(index_of("extras", &["sfizz"])),
       Err(Error::Registry(RegistryError::NotFetched("oas".into()))),
     ])
     .unwrap();

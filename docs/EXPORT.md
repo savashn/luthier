@@ -45,7 +45,7 @@ pin = "1.2.3"
 |---|---|
 | `meta.schema` | Format revision. A file from a newer revision is refused rather than half-understood. |
 | `meta.pinned` | Whether every package names a version. A `version` is a hard requirement wherever one is given, so a hand-written file with `pinned = false` can hold some packages at a version and let the rest follow the registry. |
-| `package.registry` | Where the manifest came from. Informational, and may be left out. A package installed by 0.4 or earlier from Luthier's own bench says `luthier-extras`, its name then; it is `extras` now. |
+| `package.registry` | Where the manifest came from. Informational, and may be left out. A package installed by 0.4 or earlier from extras says `luthier-extras`, its name then; it is `extras` now. |
 | `package.reason` | `explicit` packages are what import asks for by name; `dependency` entries are recorded so their versions reproduce, but stay dependencies. |
 | `package.pin` | A pin the user had applied, reapplied after the install. |
 

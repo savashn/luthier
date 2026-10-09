@@ -53,10 +53,10 @@ pub struct GlobalArgs {
   #[arg(long, global = true)]
   pub offline: bool,
 
-  /// Read manifests from this directory instead of the built-in sources.
+  /// Read manifests from this directory instead of the fixed sources.
   ///
-  /// For developing the bench against a checkout of `bench/`. Hidden: Luthier
-  /// reads the Open Audio Stack registry and its own bench, and nothing else.
+  /// For developing extras against a checkout of `extras/`. Hidden: Luthier
+  /// reads the Open Audio Stack registry and extras, its own list, and nothing else.
   #[arg(long, global = true, value_name = "DIR", hide = true)]
   pub registry_path: Option<PathBuf>,
 
@@ -191,10 +191,10 @@ pub enum Command {
   },
 
   /// Show where packages are read from.
-  Bench {
-    #[command(subcommand)]
-    command: BenchCommand,
-  },
+  ///
+  /// In the order they are consulted: extras, Luthier's own list, then the
+  /// Open Audio Stack registry.
+  Sources,
 
   /// Hold a package at a version so updates skip it.
   Pin {
@@ -219,13 +219,6 @@ pub enum Command {
   ///     luthier man > /usr/share/man/man1/luthier.1
   #[command(hide = true)]
   Man,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum BenchCommand {
-  /// List the sources packages are read from, in the order they are
-  /// consulted: Luthier's own bench, then the Open Audio Stack registry.
-  List,
 }
 
 #[derive(Debug, Subcommand)]

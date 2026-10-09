@@ -1,7 +1,7 @@
-//! Refreshing the sources: a snapshot bench fetched and extracted, and one
+//! Refreshing the sources: a snapshot fetched and extracted, and one
 //! source failing without costing the others.
 //!
-//! Benches are served over `file://`, which is what the suite does wherever
+//! Snapshots are served over `file://`, which is what the suite does wherever
 //! the behaviour under test is not HTTP itself (§55).
 
 mod support;
@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use support::{TarEntry, build_tar, gzip};
 use url::Url;
 
-/// A bench published as a tarball in a directory, the way a forge serves one.
+/// A snapshot published as a tarball in a directory, the way a forge serves one.
 struct Published {
   dir: tempfile::TempDir,
 }
@@ -25,7 +25,7 @@ impl Published {
   }
 
   fn snapshot_path(&self) -> PathBuf {
-    self.dir.path().join("bench.tar.gz")
+    self.dir.path().join("snapshot.tar.gz")
   }
 
   fn url(&self) -> Url {
@@ -41,10 +41,10 @@ impl Published {
        provisioning_hint = \"Install it from your distribution.\"\n"
     );
     let bytes = gzip(&build_tar(&[
-      TarEntry::dir("bench-main"),
-      TarEntry::dir("bench-main/plugins"),
+      TarEntry::dir("snapshot-main"),
+      TarEntry::dir("snapshot-main/plugins"),
       TarEntry::file(
-        &format!("bench-main/plugins/{id}.toml"),
+        &format!("snapshot-main/plugins/{id}.toml"),
         manifest.as_bytes(),
       ),
     ]));
@@ -68,11 +68,11 @@ impl Client {
     }
   }
 
-  fn bench(&self, url: &Url) -> HttpSnapshotRegistry {
+  fn snapshot(&self, url: &Url) -> HttpSnapshotRegistry {
     HttpSnapshotRegistry::new(
-      "bench",
+      "snapshot",
       url.clone(),
-      self.layout.registry_dir("bench"),
+      self.layout.registry_dir("snapshot"),
       self.layout.cache_dir(),
     )
   }
@@ -84,19 +84,19 @@ async fn a_snapshot_is_fetched_unwrapped_and_recorded() {
   published.publish("sfizz");
 
   let client = Client::new();
-  let outcome = client.bench(&published.url()).refresh().await.unwrap();
+  let outcome = client.snapshot(&published.url()).refresh().await.unwrap();
   assert_eq!(outcome.packages, 1);
   // The forge's wrapper directory is gone, so paths stay stable across
   // refreshes whatever the wrapper was called.
   assert!(
     client
       .layout
-      .registry_dir("bench")
+      .registry_dir("snapshot")
       .join("plugins/sfizz.toml")
       .is_file()
   );
 
-  let recorded = provenance::load(&client.layout.registries_dir(), "bench").unwrap();
+  let recorded = provenance::load(&client.layout.registries_dir(), "snapshot").unwrap();
   assert_eq!(
     recorded.bytes,
     std::fs::metadata(published.snapshot_path()).unwrap().len()
@@ -104,22 +104,22 @@ async fn a_snapshot_is_fetched_unwrapped_and_recorded() {
 
   // A later snapshot replaces the earlier one rather than merging into it.
   published.publish("sfizz-2");
-  client.bench(&published.url()).refresh().await.unwrap();
-  let plugins = client.layout.registry_dir("bench").join("plugins");
+  client.snapshot(&published.url()).refresh().await.unwrap();
+  let plugins = client.layout.registry_dir("snapshot").join("plugins");
   assert!(plugins.join("sfizz-2.toml").is_file());
   assert!(!plugins.join("sfizz.toml").exists());
 }
 
 // ------------------------------------------------------------------ refresh --
 
-/// A bench nobody can reach must not cost the user the ones they can.
+/// A source nobody can reach must not cost the user the ones they can.
 ///
-/// The default configuration alone lists two benches, and until this the
+/// The default configuration fetched two sources until 0.4, and until this the
 /// first one failing aborted the command before the second was asked — so an
-/// unpublished or briefly unreachable bench made `refresh` useless rather
+/// unpublished or briefly unreachable one made `refresh` useless rather
 /// than partial.
 #[tokio::test]
-async fn one_unreachable_bench_does_not_stop_the_others() {
+async fn one_unreachable_source_does_not_stop_the_others() {
   use luthier_core::api::Session;
   use luthier_core::config::{Config, RegistryConfig, RegistrySource};
 
@@ -132,7 +132,7 @@ async fn one_unreachable_bench_does_not_stop_the_others() {
       RegistryConfig::new(
         "gone",
         RegistrySource::Snapshot {
-          url: Url::parse("file:///nonexistent/bench.tar.gz").unwrap(),
+          url: Url::parse("file:///nonexistent/snapshot.tar.gz").unwrap(),
         },
       ),
       RegistryConfig::new(
@@ -166,7 +166,7 @@ async fn a_refresh_that_updated_nothing_at_all_is_an_error() {
     registries: vec![RegistryConfig::new(
       "gone",
       RegistrySource::Snapshot {
-        url: Url::parse("file:///nonexistent/bench.tar.gz").unwrap(),
+        url: Url::parse("file:///nonexistent/snapshot.tar.gz").unwrap(),
       },
     )],
     locations: Default::default(),
@@ -248,26 +248,26 @@ async fn a_command_fetches_a_package_list_it_has_never_had() {
 }
 
 #[tokio::test]
-async fn a_bench_is_not_refreshed_on_its_own() {
+async fn a_snapshot_is_not_refreshed_on_its_own() {
   use luthier_core::config::{RegistryConfig, RegistrySource};
 
   let published = Published::new();
   published.publish("sfizz");
   let client = Client::new();
-  let bench = vec![RegistryConfig::new(
-    "bench",
+  let snapshot = vec![RegistryConfig::new(
+    "snapshot",
     RegistrySource::Snapshot {
       url: published.url(),
     },
   )];
 
   assert!(
-    reading(&client, bench, false)
+    reading(&client, snapshot, false)
       .refresh_due()
       .await
       .is_empty()
   );
-  assert!(!client.layout.registry_dir("bench").exists());
+  assert!(!client.layout.registry_dir("snapshot").exists());
 }
 
 #[tokio::test]

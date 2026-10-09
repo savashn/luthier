@@ -51,7 +51,8 @@ jobs:
 
       # What keeps `luthier-manifest` free of async, HTTP and archive decoders:
       # built this way the tool pulls 70 crates instead of 164, which is the
-      # configuration a bench's CI can afford. Nothing else asserts it, so an
+      # configuration a CI that only validates manifests can afford. Nothing else
+      # asserts it, so an
       # import added under the default features would rot it unnoticed.
       - name: Registry tool builds without the authoring features
         if: matrix.arch == 'x86_64'

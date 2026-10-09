@@ -6,7 +6,7 @@ contact_links:
       Almost every package comes from the Open Audio Stack registry, and an
       entry there serves every client that reads it rather than only this
       one. A wrong checksum, a missing version or a package that should be
-      listed goes there. The bench in this repository carries only what that
+      listed goes there. Extras in this repository carries only what that
       registry cannot express — see docs/REGISTRY.md.
 
   - name: Report a security issue

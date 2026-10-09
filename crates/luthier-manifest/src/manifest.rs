@@ -78,7 +78,7 @@ pub struct Manifest {
   /// Only meaningful for [`PackageKind::Library`]. Content nothing on the
   /// system can play is reported before the download rather than refused;
   /// which packages count as engines for each is the built-in engine list
-  /// plus any bench's `engines.toml`, not this manifest. Named after the
+  /// plus any source's `engines.toml`, not this manifest. Named after the
   /// format rather than an engine because a kit that DrumCraker plays as
   /// well as DrumGizmo needs neither by name.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -186,7 +186,7 @@ pub struct Artifact {
   /// Set by a registry provider whose source carries no rules — the Open
   /// Audio Stack registry says which *formats* an archive holds, never which
   /// *entry* is which. A manifest may not request it: `validate` refuses the
-  /// field, because a curated bench earns its precedence by carrying rules a
+  /// field, because extras earns its precedence by carrying rules a
   /// person looked at.
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub derive_install: bool,

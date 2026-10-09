@@ -57,7 +57,7 @@ impl HttpSnapshotRegistry {
     &self.snapshot_dir
   }
 
-  /// The directory holding every bench's snapshot, and the provenance records
+  /// The directory holding every source's snapshot, and the provenance records
   /// that sit beside them.
   fn registries_dir(&self) -> PathBuf {
     self

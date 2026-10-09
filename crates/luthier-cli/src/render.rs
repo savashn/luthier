@@ -6,8 +6,8 @@
 //! piping `--json` into a tool stays clean.
 
 use luthier_core::api::{
-  AvailableUpdate, BenchSummary, CacheCleaned, CacheEntry, ImportOutcome, InstallOutcome,
-  InstallPlan, InstalledSummary, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult,
+  AvailableUpdate, CacheCleaned, CacheEntry, ImportOutcome, InstallOutcome, InstallPlan,
+  InstalledSummary, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult, SourceSummary,
   StrandedContent, VerifyResult,
 };
 use luthier_core::registry::RefreshOutcome;
@@ -608,21 +608,21 @@ impl Reporter {
     }
   }
 
-  // ----------------------------------------------------------------- bench --
+  // --------------------------------------------------------------- sources --
 
-  pub fn benches(&self, benches: &[BenchSummary]) {
+  pub fn sources(&self, sources: &[SourceSummary]) {
     if self.json {
-      return self.emit(&benches);
+      return self.emit(&sources);
     }
-    if benches.is_empty() {
+    if sources.is_empty() {
       self.note("No sources; nothing can be installed.");
       return;
     }
     println!("{:<4}  {:<20}  {:<9}  LOCATION", "#", "NAME", "TYPE");
-    for bench in benches {
+    for source in sources {
       println!(
         "{:<4}  {:<20}  {:<9}  {}",
-        bench.priority, bench.name, bench.kind, bench.location
+        source.priority, source.name, source.kind, source.location
       );
     }
     println!("\nConsulted in this order; the first to carry a package ID keeps it.");

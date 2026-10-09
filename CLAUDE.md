@@ -29,10 +29,10 @@ The Nix daemon is often stopped on this machine; `nix` then fails with
 "cannot connect to socket" and the user has to start it
 (`sudo systemctl start nix-daemon`).
 
-Manual run against the bench, which lives in this repository under `bench/`:
+Manual run against extras, which lives in this repository under `extras/`:
 
 ```console
-cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path bench \
+cargo run -p luthier-cli -- --root /tmp/luthier-test --registry-path extras \
   --yes install lsp-plugins
 ```
 
@@ -154,10 +154,10 @@ the crate map keeps that out of `luthier-manifest`.
   nothing a later call could see that the first did not. The two detection
   scans memoise for the same reason: `install` ran each twice, and a session is
   one command.
-- **The bench is built in; the OAS index refreshes itself.** `build.rs` embeds
-  every manifest `manifest_files` finds in `bench/` (`registry/builtin.rs`,
+- **Extras is built in; the OAS index refreshes itself.** `build.rs` embeds
+  every manifest `manifest_files` finds in `extras/` (`registry/builtin.rs`,
   `RegistrySource::BuiltIn`, named `extras`), so a binary reads exactly the
-  bench it was released with and nothing is fetched for it; `refresh` skips
+  extras it was released with and nothing is fetched for it; `refresh` skips
   it (`is_built_in`), so it can never make a refresh that reached nothing
   look partial. 0.4 and earlier fetched it as `luthier-extras`, from a
   `bench.tar.gz` release asset releases no longer carry. A copy one fetched
@@ -197,10 +197,10 @@ the crate map keeps that out of `luthier-manifest`.
   below a root, and never a root itself — roots nest, so that means *any*
   root.
 - **The sources are fixed, and `config.json` cannot name one.** Luthier
-  reads OAS and its own bench, nothing else — the user's decision, not a
+  reads OAS and extras, its own list, nothing else — the user's decision, not a
   missing feature. `Config::registries` is `#[serde(skip)]`, so a list 0.1
   wrote there is ignored; it stays a field only so a test or a front end can
-  hand a `Session` different sources. Do not add `bench add` back, and do not
+  hand a `Session` different sources. Do not bring back 0.1's `bench add`, or any way to add a source, and do not
   add pinning of an origin: with the URL compiled in, a pin protects nothing
   and locks everyone out the day a release moves it.
 - **The Home Manager module runs luthier; it does not reimplement it.**
@@ -233,7 +233,7 @@ the crate map keeps that out of `luthier-manifest`.
   aborts — use `unique_id`); `/app/lib/ardour9/ardour-vst3-scanner -f <bundle>`
   loads a VST3 given `LD_LIBRARY_PATH=/app/lib/ardour9`. The findings are in
   `docs/FLATHUB.md`.
-- **Nothing is signed, by decision.** The bench is part of the binary, and
+- **Nothing is signed, by decision.** Extras is part of the binary, and
   trusted on HTTPS and GitHub as it is; `SECURITY.md` *Trusting GitHub* states
   the risk.
   0.1 signed it (Ed25519, key compiled in) and briefly used minisign; both
@@ -248,12 +248,12 @@ the crate map keeps that out of `luthier-manifest`.
 - **A `.part` is never held by a package.** Its digest names what the finished
   file will hash to, so matching it against installed artifacts reports a
   truncated download as in use and keeps `cache clean` from ever collecting it.
-- **One bench failing does not fail `refresh`.** Each provider reports for
+- **One source failing does not fail `refresh`.** Each provider reports for
   itself (`RefreshOutcome::failure`), the snapshot already on disk survives a
-  failed fetch, and only *every* bench failing is an error. The default
-  configuration fetched two until the bench was built in, so the old
+  failed fetch, and only *every* source failing is an error. The default
+  configuration fetched two until extras was built in, so the old
   behaviour — `?` on the first provider — meant an unpublished or briefly
-  unreachable bench cost the user the one that was working. A built-in source
+  unreachable source cost the user the one that was working. A built-in source
   is not counted either way.
 - **Derived rules can only promise what derivation recognises.**
   `install::installable` refuses an artifact whose rules are derived and whose
@@ -311,7 +311,7 @@ the crate map keeps that out of `luthier-manifest`.
 - **An engine** → `builtin_engines()` in `luthier-manifest/src/engines.rs` when
   it is the reference implementation for its format or otherwise worth every
   build knowing, with a `detect` rule only if the installed name is stable;
-  otherwise one `[[engine]]` entry in a bench's `engines.toml`, which merges on
+  otherwise one `[[engine]]` entry in a source's `engines.toml`, which merges on
   top. Nothing else in code. A `detect` rule is what finds a copy this manager
   did not install, so it is needed wherever the engine's own manifest carries
   none — everything from OAS. **New content** (a value like `sfz`) → add it to
@@ -334,7 +334,7 @@ the crate map keeps that out of `luthier-manifest`.
   network.
 - `crates/luthier-registry-tool/tests/validate.rs` drives the `validate`
   binary the way a reviewer would, including `--strict`. It also validates the
-  real `bench/`, unconditionally: that used to be a sibling checkout that might
+  real `extras/`, unconditionally: that used to be a sibling checkout that might
   be absent, which made the one test covering real data the one most likely not
   to run.
 - `crates/luthier-core/tests/archive_security.rs` is the malicious-archive corpus.
@@ -358,7 +358,7 @@ as the managed roots: `/usr/lib`, the Debian multiarch directory,
 
 A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
 `builtin_engines()` maps content to engine package IDs, and an `engines.toml`
-at a bench's root adds to it — from any registry. Installing
+at a source's root adds to it — from any registry. Installing
 content with no engine present, installed, or in the same plan is reported
 before download (`engine::unplayable`), and the confirmation decides; it is
 not refused, since a registry with no field for what plays what would make
@@ -378,13 +378,13 @@ removes what the file neither names nor needs.
 the repo from the **artifact URL**, not `repository` — those disagree (Surge XT
 publishes from `releases-xt`). Tests point it at a `wiremock` server through the
 hidden `--api` flag, so the suite stays offline. GitHub is the only forge, by
-decision: nothing in the bench points anywhere else, and SourceForge would mean
+decision: nothing in extras points anywhere else, and SourceForge would mean
 inferring a version from a filename (ROADMAP 1.1).
 
 A `v*` tag publishes a release directly: for each of x86_64 and aarch64, the
 static binary as a tarball and a `.deb` and an `.rpm` of the same files
 (`packaging/nfpm.yaml`); and one `install.sh` that installs the right tarball
-into `~/.local` — the bench is inside the binaries — all with build provenance attested
+into `~/.local` — extras is inside the binaries — all with build provenance attested
 through Sigstore (`gh attestation verify`). Nothing is signed by hand. Each
 architecture builds and runs the suite on a runner of its own kind
 (`ubuntu-24.04-arm` for aarch64), and `packaging/package.sh` packages it;
@@ -431,9 +431,9 @@ of the user's choosing (`locations` in `config.json`).
 
 `luthier cache list` / `cache clean` prune the content-addressed artifact
 cache; an entry is kept when some installed package recorded its digest.
-`luthier bench list` shows the two built-in sources in precedence order;
+`luthier sources` shows the two fixed sources in precedence order;
 there is nothing to add or remove. `--registry-path` (hidden) swaps both for a
-local directory, for developing the bench. `registry/provenance.rs` records
+local directory, for developing extras. `registry/provenance.rs` records
 each fetch, when the source was last asked and the validators for asking
 again; it enforces nothing.
 
@@ -441,14 +441,17 @@ Deferred, roughly in order of value: macOS and
 Windows layouts (the schema and resolver already model them; `Layout` and the
 installers are Linux-only); reading OAS's `presets/` and
 `projects/` indexes, which is blocked on deciding where a preset installs
-given that a manifest may not name a destination; aarch64 manifests in the
-bench, which so far lists x86_64 builds only; a `GitRegistry` backend. A *bench* is the kind —
-any collection of manifests, the official one included; `extras` is just the
-default bench's name, as `homebrew-core` names the default tap (0.4 and
-earlier called it `luthier-extras`). It lives in this repository under
-`bench/` and is built into the binary, so users read what a release shipped,
-not whatever `main` holds, and never a bench written for a manifest format
-their binary does not know.
+given that a manifest may not name a destination; aarch64 manifests in
+extras, which so far lists x86_64 builds only; a `GitRegistry` backend.
+
+Vocabulary: a *source* is where Luthier reads package manifests from, and
+there are exactly two; `luthier sources` lists them. *Extras* is Luthier's own
+one, the manifests in `extras/` in this repository, built into the binary, so
+users read what a release shipped, not whatever `main` holds, and never a set
+written for a manifest format their binary does not know. The other is the
+Open Audio Stack registry, `oas`. Up to 0.4 extras was called the bench (and
+`luthier-extras`), and a bench was any such collection; neither word is used
+now.
 "Registry" in code stays the mechanism (`RegistryProvider`, `RegistryIndex`).
 
 The spec lives in the original task description; section references like §30

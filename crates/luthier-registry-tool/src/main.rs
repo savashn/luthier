@@ -335,7 +335,7 @@ fn check_engines(
   warnings: &mut usize,
 ) -> Result<BTreeSet<Content>, Box<dyn std::error::Error>> {
   let name = luthier_manifest::ENGINES_FILE;
-  // Every build carries engines for the formats it knows, so a bench needs
+  // Every build carries engines for the formats it knows, so a source needs
   // an `engines.toml` only to add to them.
   let mut played = luthier_manifest::builtin_content();
   let path = root.join(name);
@@ -587,7 +587,7 @@ fn render_entry(entry: &install::Listed) -> String {
 /// Writes a new key pair.
 ///
 /// Refuses to overwrite: a key file is the one thing here that cannot be
-/// regenerated, and replacing one silently would retire a bench's identity
+/// regenerated, and replacing one silently would retire a source's identity
 /// without anybody deciding to.
 #[cfg(feature = "authoring")]
 fn tempdir() -> std::io::Result<TempDir> {

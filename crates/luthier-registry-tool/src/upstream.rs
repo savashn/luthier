@@ -29,7 +29,7 @@
 //! be inferred from a filename, and a project that publishes only source
 //! becomes an `external` package here, which this command skips anyway.
 //! Self-hosted GitLab cannot be recognised from a URL at all. Neither earned
-//! its place against a bench where nothing uses them.
+//! its place against extras, where nothing uses them.
 
 use luthier_manifest::Manifest;
 use semver::Version;

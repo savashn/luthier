@@ -1,10 +1,10 @@
 name: check-updates
 
-# Version tracking by hand does not scale, so this asks each bench package's
-# forge weekly and files the result as an issue. It never fails the build: a
-# package being behind is news, not a broken bench.
+# Version tracking by hand does not scale, so this asks the forge of each
+# package in extras weekly and files the result as an issue. It never fails the
+# build: a package being behind is news, not broken extras.
 #
-# It covers `bench/` only. Everything with a downloadable binary belongs in
+# It covers `extras/` only. Everything with a downloadable binary belongs in
 # the Open Audio Stack registry, which tracks its own upstreams.
 on:
   schedule:
@@ -35,8 +35,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ./target/release/luthier-registry check-updates bench | tee report.txt
-          ./target/release/luthier-registry check-updates bench --json \
+          ./target/release/luthier-registry check-updates extras | tee report.txt
+          ./target/release/luthier-registry check-updates extras --json \
             > report.json
           behind=$(python3 -c "import json;print(sum(1 for p in json.load(open('report.json')) if p['state']=='behind'))")
           echo "behind=$behind" >> "$GITHUB_OUTPUT"

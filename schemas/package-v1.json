@@ -43,7 +43,7 @@
           "$ref": "#/$defs/Checksum"
         },
         "derive_install": {
-          "description": "Read the install rules from the archive instead of from here.\n\nSet by a registry provider whose source carries no rules — the Open\nAudio Stack registry says which *formats* an archive holds, never which\n*entry* is which. A manifest may not request it: `validate` refuses the\nfield, because a curated bench earns its precedence by carrying rules a\nperson looked at.",
+          "description": "Read the install rules from the archive instead of from here.\n\nSet by a registry provider whose source carries no rules — the Open\nAudio Stack registry says which *formats* an archive holds, never which\n*entry* is which. A manifest may not request it: `validate` refuses the\nfield, because extras earns its precedence by carrying rules a\nperson looked at.",
           "type": "boolean"
         },
         "install": {
@@ -391,7 +391,7 @@
       "description": "The single primary classification. Required: every package is filed\nunder exactly one, from a closed vocabulary (§5)."
     },
     "content": {
-      "description": "What the package holds that only an engine can play, e.g. `sfz`.\n\nOnly meaningful for [`PackageKind::Library`]. Content nothing on the\nsystem can play is reported before the download rather than refused;\nwhich packages count as engines for each is the built-in engine list\nplus any bench's `engines.toml`, not this manifest. Named after the\nformat rather than an engine because a kit that DrumCraker plays as\nwell as DrumGizmo needs neither by name.",
+      "description": "What the package holds that only an engine can play, e.g. `sfz`.\n\nOnly meaningful for [`PackageKind::Library`]. Content nothing on the\nsystem can play is reported before the download rather than refused;\nwhich packages count as engines for each is the built-in engine list\nplus any source's `engines.toml`, not this manifest. Named after the\nformat rather than an engine because a kit that DrumCraker plays as\nwell as DrumGizmo needs neither by name.",
       "items": {
         "$ref": "#/$defs/Content"
       },

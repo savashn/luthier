@@ -18,8 +18,8 @@ rather than decorative:
   validator runs in CI on every pull request and should not need one.
 - **`luthier-core`** holds every decision about packages. `luthier-cli` contains none, so
   a GUI can reuse it unchanged.
-- **`luthier-registry-tool`** is separate so a bench's CI can build the validator
-  without pulling in the CLI.
+- **`luthier-registry-tool`** is separate so a build that only validates
+  manifests stays small (70 crates rather than 164, which `ci.yml` asserts).
 
 Splitting `luthier-core` further — a crate each for resolver, downloader, installer —
 was considered and rejected: they share the error and manifest types, and the
@@ -32,7 +32,7 @@ everything that needs the network or an archive decoder — `hash-url`,
 `--no-default-features` it pulls 70 crates instead of 164, with no tokio, no
 reqwest, no archive decoders and no `luthier-core`, and still validates a tree
 and prints the schema. The manager's CI builds it that way on every push, so
-the configuration cannot rot unnoticed now that the bench lives in this
+the configuration cannot rot unnoticed now that extras lives in this
 repository and nothing else builds it.
 
 That is also why manifest discovery (`manifest_files`) lives in
@@ -67,8 +67,8 @@ call; the rest is one pipeline, from a request to a recorded install.
 
 | Module | Holds |
 |---|---|
-| `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, benches, pins, export/import, and `--prune`'s convergence |
-| `registry` | Merging the bench and the Open Audio Stack registry into one `RegistryIndex`, bench first; `builtin`, `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
+| `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, sources, pins, export/import, and `--prune`'s convergence |
+| `registry` | Merging extras and the Open Audio Stack registry into one `RegistryIndex`, extras first; `builtin`, `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
 | `archive` | Opening untrusted containers: `safe` is the single extraction policy, the per-format modules only say what entries exist |
@@ -79,7 +79,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | `layout` | Every path, injected rather than computed from `$HOME`; the search path a relocated plugin root needs |
 | `envfile` | The portable file `export` writes and `import` reads |
 | `engine` | Whether anything on the machine can play the content about to be installed |
-| `config` | The persisted bench list and `RegistrySource` |
+| `config` | The fixed source list (`default_registries`) and `RegistrySource` |
 | `error`, `fsutil` | The error model with exit codes and hints; the filesystem primitives the state store and installer share |
 
 ### `luthier-cli` — the `luthier` binary
@@ -126,10 +126,10 @@ implementations planned than exist today, which is why they are traits rather
 than enums.
 
 **`RegistryProvider`** — where manifests come from. `BuiltinRegistry` reads
-the bench built into the binary from `bench/` by `build.rs`; `LocalRegistry`
+extras built into the binary from `extras/` by `build.rs`; `LocalRegistry`
 reads a directory; `HttpSnapshotRegistry` fetches a snapshot tarball over HTTPS
 and extracts it through the same hardened extractor as any plugin — how 0.4
-and earlier read the bench, and in no default list now;
+and earlier read extras, and in no default list now;
 `OasRegistry` reads an Open Audio Stack site, which publishes static JSON rather
 than TOML manifests. Each is a `RegistrySource` variant in `config.rs`. Which
 sources a user reads is fixed — `default_registries()` — so a new provider is
@@ -219,21 +219,21 @@ archive, never where to put it.
 
 ### Two sources, in a fixed order
 
-Two registries are read at once, and only two: Luthier's own bench
-(`extras`, built into the binary from `bench/` in this repository) and the
-Open Audio Stack registry. Users cannot add a source; `config.json` does not carry the
-list, and `--registry-path` — hidden, for developing the bench — is the only
+Two sources are read at once, and only two: extras, Luthier's own list (built
+into the binary from `extras/` in this repository), and the Open Audio Stack
+registry. Users cannot add a source; `config.json` does not carry the
+list, and `--registry-path` — hidden, for developing extras — is the only
 override. `Session::index()` merges both into one `RegistryIndex`, memoised
 because building it three times in one `install` was a real regression rather
 than a hypothetical one.
 
-Where both carry the same package ID, the bench wins. That is not a tie-break:
+Where both carry the same package ID, extras wins. That is not a tie-break:
 it is the mechanism by which a curated manifest corrects a derived one, which
-reading a large upstream registry makes necessary, and it is the bench's whole
-reason to exist.
+reading a large upstream registry makes necessary, and it is the whole reason
+extras exists.
 
 Neither source is signed: both are trusted on HTTPS and on the host that
-serves them, which for the bench is this repository's releases.
+serves them, which for extras is this repository's releases.
 `registry/provenance.rs` records what each fetch brought, when the source was
 last asked, and the `ETag`/`Last-Modified` that make the next ask conditional;
 it enforces nothing. See *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
@@ -291,7 +291,7 @@ package manager: it only looks for files, and never invokes anything.
 A sample library is the one package that installs correctly and still does
 nothing. Its manifest says what it holds (`content = ["drumgizmo"]`, read from
 `contains` for the Open Audio Stack registry); the built-in engine list and
-any bench's `engines.toml` say
+any source's `engines.toml` say
 which packages play that. After resolution and before any download,
 `engine::unplayable` looks for one engine per content value — detected on disk,
 recorded in state, or in the plan being executed — and reports the ones it
@@ -304,16 +304,17 @@ It is not modelled as a dependency because a dependency names one package and
 engines are interchangeable: a DrumGizmo kit plays in DrumGizmo or DrumCraker,
 and depending on either would refuse the other's users.
 
-The list starts in code — `luthier_manifest::builtin_engines` — and any bench
-adds to it. That split took two goes to get right. Keeping it out of code
+The list starts in code — `luthier_manifest::builtin_engines` — and a source's
+`engines.toml` adds to it. That split took two goes to get right. Keeping it out of code
 entirely was the first answer, on the grounds that engines appear faster than
 this manager is released, and it put general knowledge in an optional place: a
 user who configures only the Open Audio Stack registry, which has no field for
 what plays what, was told nothing could play a library while sfizz sat
 installed on their machine. Built-in entries carry detect rules where the
-installed name is stable, which is what makes that user's copy count; a bench
-still adds engines the day they appear, and registry entries come first so a
-bench refines rather than collides. What a bench cannot do is remove one, which
+installed name is stable, which is what makes that user's copy count; an
+`engines.toml` in `extras/` still adds engines as data, with the next release,
+and a source's entries come first so it refines rather than collides. What a
+source cannot do is remove one, which
 is why the built-in list is narrow.
 
 ### Determinism

@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use url::Url;
 
-/// What was fetched for one bench, and from where.
+/// What was fetched for one source, and from where.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
   /// The URL as configured, recorded in full for the audit trail.
@@ -151,7 +151,7 @@ mod tests {
 
   #[test]
   fn a_record_0_1_wrote_still_parses() {
-    // 0.1 recorded the key that signed the bench; that field is ignored now.
+    // 0.1 recorded the key that signed extras; that field is ignored now.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
       record_path(dir.path(), "luthier-extras"),
@@ -207,7 +207,7 @@ mod tests {
   #[test]
   fn a_corrupted_record_is_ignored_rather_than_fatal() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(record_path(dir.path(), "bench"), b"{ not json").unwrap();
-    assert!(load(dir.path(), "bench").is_none());
+    std::fs::write(record_path(dir.path(), "extras"), b"{ not json").unwrap();
+    assert!(load(dir.path(), "extras").is_none());
   }
 }
