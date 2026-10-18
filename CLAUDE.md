@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 455 tests, fully offline
+cargo test --workspace                     # 458 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -253,32 +253,40 @@ the crate map keeps that out of `luthier-manifest`.
   `update <package>` are gone with no alias: nobody used Luthier yet.
   `upgrade --self` stays apart from `upgrade`: packages never need root,
   and a .deb or .rpm Luthier goes through sudo.
+- **An installed package no source can supply is a fixed point.**
+  `resolver::frozen` lists, before the walk, every installed package no
+  source carries or builds for this target, and everything those reach
+  in the state (`Frozen::NeededBy`). The resolver resolves each one at
+  the installed version, from the state when no release of that version
+  is published (`Resolution::kept`), and checks every requirement
+  against it, so a gone package never fails a resolution and nothing
+  moves what it was built against — its manifest, and with it what it
+  supports, is gone. A requirement it cannot meet is
+  `ResolveError::KeptConflict`, naming what holds it, whichever was
+  reached first. Computed up front because a hold must not depend on
+  whether its holder was reached: it stays installed either way.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
-  `Session::survey` decides both. `upgrade` with nothing named resolves
-  every explicit package except one nothing can upgrade any more (no
-  source carries it — `SourceUnreadable` instead while a source failed
-  to load, since the index cannot tell the two apart — or no release for
-  this machine). What such a package reaches is held at the installed
-  version (`NeededByUnavailable`, passed as required versions), because
-  the resolver reads only the requirements of what it resolves: leaving
-  the package out and letting the rest move a shared dependency would
-  break it silently. Whether a newer release of a root still needs such
-  a package is not predicted from the installed graph; the resolution
-  fails, and `plan_upgrade` reports it as `Unupgradable` (or
-  `HeldVersionMissing`/`HeldConflict`). An update is listed only where
-  a resolved root reaches it; an orphan's is `Orphaned`. The plan
-  carries `held_back`, the `roots` it resolved and the `held` versions,
+  `Session::survey` reads `resolver::frozen` rather than predicting it.
+  `upgrade` with nothing named resolves every explicit package; what the
+  resolver keeps is an `Unavailable` (`NotCarried`, or `SourceUnreadable`
+  while a source failed to load, since the index cannot tell the two
+  apart; `NoReleaseForTarget`; `NeededByUnavailable`), an update is
+  listed where an explicit package reaches it, and an orphan's is
+  `Orphaned`. The plan carries `held_back` and the `roots` it resolved,
   and `Session::upgrade` executes those, not ones worked out again after
   the user answered.
 - **An explicit package is never demoted.** `Purpose::record_reasons`
   overrides the resolver, which knows roots and dependencies only: every
   installed package keeps its recorded reason, except a root of an
-  install, which becomes explicit (`marked_requested`, applied by
-  `install_for` or, with nothing else to do, `Session::mark_requested`,
-  as apt marks a package manual). `import` applies its file's reasons
-  (`Session::import_reasons`): explicit always, dependency only with
-  `--prune`, where the file describes the installation. Demoting one is a deletion waiting for
-  the next `autoremove`. `State::orphans` is reachability from explicit
+  install, which becomes explicit, as apt marks a package manual. An
+  import also marks what its file says: explicit always, dependency only
+  with `--prune`, where the file describes the installation
+  (`Session::plan_import`). The plan carries the marks
+  (`marked_requested`, `marked_dependency`); `install_for` applies them as
+  it goes, and a plan with nothing else to do goes to
+  `Session::record_marks` — a front end decides nothing. Demoting an
+  explicit package any other way is a deletion waiting for the next
+  `autoremove`. `State::orphans` is reachability from explicit
   packages, so a chain or a cycle goes in one pass; `autoremove` then
   keeps any orphan engine that is the last player of content still
   installed, since content never depends on an engine. What content a

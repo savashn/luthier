@@ -20,11 +20,12 @@ about.
 - **`luthier upgrade` with no package upgrades everything installed**,
   after showing the plan and asking, as every upgrade does. Dependencies
   come along to their newest compatible release; a pinned package stays
-  put and is named. An explicit package nothing can upgrade any more is
-  left where it is, and so is everything it needs, at the version it
-  needs: nothing else moves a shared dependency past what it supports. A
-  newer release that still needs such a package stops the upgrade, saying
-  which and what needs it, rather than being skipped. An
+  put and is named. A package nothing can upgrade any more — no source
+  carries it, or none builds it for this machine — stays where it is and
+  is named; whatever needs it resolves against the copy installed, and
+  what it needs stays at the version installed, so nothing moves a shared
+  dependency past what it was built against. A release that needs more
+  than such a copy is a conflict, named with what holds it. An
   upgrade never changes why a package is installed: a dependency upgraded
   by name is still a dependency. What runs is the plan that was shown, even
   if another terminal installs something while the question is open.

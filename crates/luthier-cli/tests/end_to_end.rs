@@ -855,11 +855,10 @@ fn installing_a_dependency_by_name_keeps_it_from_autoremove() {
 }
 
 #[test]
-fn an_upgrade_that_needs_what_nothing_can_upgrade_stops_and_says_which() {
-  // `plugin` 1.1.0 still needs `dep`, which no source builds for this
-  // machine any more. Leaving `plugin` out and upgrading the rest could
-  // move what they share past what `plugin` supports; the upgrade stops,
-  // naming both, and naming the others still works.
+fn a_package_nothing_can_upgrade_stays_and_everything_else_upgrades() {
+  // No source builds `dep` for this machine any more. It still works where
+  // it is, so `plugin`, which needs it, resolves against the copy
+  // installed, and one gone package no longer stops every upgrade.
   let fixture = Fixture::new();
   for (id, deps) in [
     ("dep", &[][..]),
@@ -942,11 +941,15 @@ fn an_upgrade_that_needs_what_nothing_can_upgrade_stops_and_says_which() {
   );
 
   let output = fixture.luthier().arg("upgrade").output().unwrap();
-  assert!(!output.status.success());
-  let stderr = String::from_utf8_lossy(&output.stderr);
+  let stdout = stdout_of(&output);
   assert!(
-    stderr.contains("dep can no longer be upgraded, and plugin needs it"),
-    "{stderr}"
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(
+    stdout.contains("Dep stays at 1.0.0: no release is built for this machine any more."),
+    "{stdout}"
   );
   let listed = || {
     let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
@@ -963,24 +966,40 @@ fn an_upgrade_that_needs_what_nothing_can_upgrade_stops_and_says_which() {
       .unwrap()
       .to_owned()
   };
-  assert_eq!(version(&listed(), "other"), "1.0.0", "nothing moved");
+  let now = listed();
+  assert_eq!(version(&now, "other"), "1.1.0");
+  assert_eq!(version(&now, "plugin"), "1.1.0");
+  assert_eq!(version(&now, "dep"), "1.0.0");
+  assert_eq!(version(&now, "engine"), "1.0.0", "an orphan is not reached");
 
-  fixture
-    .luthier()
-    .args(["upgrade", "other"])
-    .assert()
-    .success();
-  assert_eq!(version(&listed(), "other"), "1.1.0");
+  // A release that needs more than the copy installed is a conflict, said
+  // with what holds it, and nothing moves.
+  let artifact = fixture.make_artifact("Plugin");
+  fixture.add_plugin("plugin", "1.2.0", &artifact, &["dep"]);
+  let manifest = fixture.registry().join("plugins/plugin.toml");
+  let text = std::fs::read_to_string(&manifest).unwrap().replace(
+    "dependencies = [\"dep\"]",
+    "dependencies = [{ id = \"dep\", version = \">=2\" }]",
+  );
+  std::fs::write(&manifest, text).unwrap();
+  let output = fixture.luthier().arg("upgrade").output().unwrap();
+  assert!(!output.status.success());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(
+    stderr.contains(
+      "plugin needs dep >=2, but dep stays at 1.0.0: no release of it is built for this \
+       machine any more"
+    ),
+    "{stderr}"
+  );
+  assert_eq!(version(&listed(), "plugin"), "1.1.0");
 
   // Named, `dep` itself is left and said to be.
   let output = fixture.luthier().args(["upgrade", "dep"]).output().unwrap();
   let stdout = stdout_of(&output);
   assert!(output.status.success(), "{stdout}");
   assert!(stdout.contains("Nothing to upgrade."), "{stdout}");
-  assert!(
-    stdout.contains("Dep stays at 1.0.0: no release is built for this machine any more."),
-    "{stdout}"
-  );
+  assert!(stdout.contains("Dep stays at 1.0.0"), "{stdout}");
 }
 
 #[test]
@@ -1007,17 +1026,8 @@ fn what_a_package_nothing_can_upgrade_needs_stays_where_it_is() {
     let artifact = fixture.make_artifact(&capitalise(id));
     fixture.add_plugin(id, "2.0.0", &artifact, deps);
   }
-  // The held version has to still be published to be resolved to.
-  let shared = fixture.registry().join("plugins/shared.toml");
-  let newest = std::fs::read_to_string(&shared).unwrap();
-  let artifact = fixture.make_artifact("Shared");
-  fixture.add_plugin("shared", "1.0.0", &artifact, &[]);
-  let first = std::fs::read_to_string(&shared).unwrap();
-  std::fs::write(
-    &shared,
-    newest + &first[first.find("\n[[releases]]").unwrap()..],
-  )
-  .unwrap();
+  // The registry keeps only 2.0.0, as extras does: what is held is
+  // resolved from the copy installed, not from a release.
 
   let json = stdout_of(
     &fixture

@@ -202,8 +202,14 @@ impl Reporter {
          requested, so `autoremove` keeps it."
       ));
     }
+    for id in &plan.marked_dependency {
+      self.note(format!(
+        "{id} was installed by name; the file lists it as a dependency, which is how it is \
+         recorded, so `autoremove` removes it once nothing needs it."
+      ));
+    }
     if actionable.is_empty() {
-      if plan.marked_requested.is_empty() {
+      if plan.marked_requested.is_empty() && plan.marked_dependency.is_empty() {
         self.note("Everything requested is already installed.");
       }
     } else {
@@ -273,6 +279,15 @@ impl Reporter {
         };
         eprintln!("  {:<width$}  {how}", engine.id, width = width);
       }
+    }
+  }
+
+  /// An import with nothing to install or remove.
+  pub fn import_unchanged(&self, plan: &InstallPlan) {
+    if plan.marked_requested.is_empty() && plan.marked_dependency.is_empty() {
+      self.note("Nothing to do; the installation already matches.");
+    } else {
+      self.note("Nothing else to do; the installation now matches.");
     }
   }
 

@@ -76,6 +76,16 @@ pub struct Resolution<'a> {
   /// Dependencies before dependents.
   pub order: Vec<ResolvedPackage<'a>>,
   pub externals: Vec<ExternalRequirement>,
+  /// Installed packages resolved from the state, left as they are: see
+  /// [`frozen`]. Nothing is done to them, and nothing records them anew.
+  pub kept: Vec<KeptPackage>,
+}
+
+/// An installed package a resolution leaves exactly as it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptPackage {
+  pub id: PackageId,
+  pub version: Version,
 }
 
 impl<'a> Resolution<'a> {
@@ -110,6 +120,74 @@ pub struct ResolveRequest<'a> {
   pub required_versions: &'a BTreeMap<PackageId, Version>,
 }
 
+/// Why an installed package is resolved from the state rather than a source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Frozen {
+  /// No source carries it any more.
+  NotCarried,
+  /// A source carries it, and no release of it is built for this target.
+  NoReleaseForTarget,
+  /// A package nothing can upgrade any more needs it, so it stays at the
+  /// version installed: what that package supports is not known.
+  NeededBy(PackageId),
+}
+
+/// The installed packages every resolution leaves where they are.
+///
+/// A package no source can supply any more still works where it is, and
+/// whatever needs it must not fail to resolve over it; what it needs in
+/// turn must not be moved past what it was built against, because with
+/// its manifest gone nothing says what it supports. Both are fixed points:
+/// resolved at the installed version, from the state, needing no release
+/// in any registry. A requirement they do not meet is a conflict, said as
+/// one ([`ResolveError::KeptConflict`]).
+pub fn frozen<S: PackageSource>(
+  source: &S,
+  state: &State,
+  target: &Target,
+) -> BTreeMap<PackageId, Frozen> {
+  let mut frozen = BTreeMap::new();
+  for package in state.packages.values() {
+    let why = match source.manifest(&package.id) {
+      None => Frozen::NotCarried,
+      // A pack has no artifacts to be built for anything.
+      Some(manifest) if manifest.kind == PackageKind::Pack => continue,
+      Some(manifest)
+        if !manifest
+          .releases
+          .iter()
+          .any(|release| select_artifact(release, target).is_some()) =>
+      {
+        Frozen::NoReleaseForTarget
+      }
+      Some(_) => continue,
+    };
+    frozen.insert(package.id.clone(), why);
+  }
+  let unavailable: Vec<PackageId> = frozen.keys().cloned().collect();
+  for id in &unavailable {
+    for reached in state.reachable_from([id]) {
+      if !frozen.contains_key(reached) {
+        frozen.insert(reached.clone(), Frozen::NeededBy(id.clone()));
+      }
+    }
+  }
+  frozen
+}
+
+/// The conflict a requirement makes with a package held where it is.
+fn kept_conflict(id: &PackageId, version: &Version, requirement: String, why: &Frozen) -> Error {
+  let because = match why {
+    Frozen::NotCarried => "no source carries it any more".to_string(),
+    Frozen::NoReleaseForTarget => "no release of it is built for this machine any more".to_string(),
+    Frozen::NeededBy(by) => format!("{by} needs it, and can no longer be upgraded"),
+  };
+  Error::Resolve(ResolveError::KeptConflict {
+    id: id.clone(),
+    detail: format!("{requirement}, but {id} stays at {version}: {because}"),
+  })
+}
+
 /// Resolves `request` against `source`.
 pub fn resolve<'a, S: PackageSource>(
   source: &'a S,
@@ -120,6 +198,11 @@ pub fn resolve<'a, S: PackageSource>(
   let mut edges: BTreeMap<PackageId, Vec<PackageId>> = BTreeMap::new();
   let mut externals: BTreeMap<PackageId, ExternalRequirement> = BTreeMap::new();
   let mut reasons: BTreeMap<PackageId, InstallReason> = BTreeMap::new();
+  let mut kept: BTreeMap<PackageId, Version> = BTreeMap::new();
+  // Worked out before the walk, not as it goes: whether a dependency is
+  // held must not depend on whether the package holding it was reached
+  // first. It stays installed either way.
+  let frozen = frozen(source, request.state, request.target);
 
   let mut pending: BTreeSet<PackageId> = request.roots.iter().cloned().collect();
   for root in request.roots {
@@ -131,6 +214,46 @@ pub fn resolve<'a, S: PackageSource>(
   // smallest pending package, so the traversal order is fixed.
   while let Some(id) = pending.iter().next().cloned() {
     pending.remove(&id);
+    let constraints = requirements.get(&id).cloned().unwrap_or_default();
+
+    // A fixed point: the version installed, whatever is released.
+    let mut held_at = None;
+    if let (Some(installed), Some(why)) = (request.state.get(&id), frozen.get(&id)) {
+      for (requirer, req) in &constraints {
+        if !req.matches(&installed.version) {
+          return Err(kept_conflict(
+            &id,
+            &installed.version,
+            format!("{requirer} needs {id} {req}"),
+            why,
+          ));
+        }
+      }
+      if let Some(wanted) = request.required_versions.get(&id)
+        && wanted != &installed.version
+      {
+        return Err(kept_conflict(
+          &id,
+          &installed.version,
+          format!("the file needs {id} {wanted}"),
+          why,
+        ));
+      }
+      // Resolved through its source when that still publishes what is
+      // installed, so a reinstall still has something to fetch; from the
+      // state otherwise.
+      let published = matches!(why, Frozen::NeededBy(_))
+        && source.manifest(&id).is_some_and(|manifest| {
+          manifest.release(&installed.version).is_some_and(|release| {
+            manifest.kind == PackageKind::Pack || select_artifact(release, request.target).is_some()
+          })
+        });
+      if !published {
+        kept.insert(id.clone(), installed.version.clone());
+        continue;
+      }
+      held_at = Some(installed.version.clone());
+    }
 
     let manifest = source
       .manifest(&id)
@@ -149,20 +272,25 @@ pub fn resolve<'a, S: PackageSource>(
       continue;
     }
 
-    let constraints = requirements.get(&id).cloned().unwrap_or_default();
-    // A version demanded by an imported environment file outranks a stored
-    // pin: the user asked for this exact set just now. The two are kept
-    // apart because they fail differently — a stored pin naming a version
-    // the registry has dropped falls back, a required one cannot.
-    let required = request.required_versions.get(&id);
-    let pin = request.state.get(&id).and_then(|p| p.pin.clone());
-    let version = select_version(
-      manifest,
-      &constraints,
-      request.target,
-      required,
-      pin.as_ref(),
-    )?;
+    let version = match held_at {
+      Some(version) => version,
+      None => {
+        // A version demanded by an imported environment file outranks a
+        // stored pin: the user asked for this exact set just now. The two
+        // are kept apart because they fail differently — a stored pin
+        // naming a version the registry has dropped falls back, a
+        // required one cannot.
+        let required = request.required_versions.get(&id);
+        let pin = request.state.get(&id).and_then(|p| p.pin.clone());
+        select_version(
+          manifest,
+          &constraints,
+          request.target,
+          required,
+          pin.as_ref(),
+        )?
+      }
+    };
 
     if let Some(previous) = chosen.get(&id) {
       if previous != &version {
@@ -186,32 +314,42 @@ pub fn resolve<'a, S: PackageSource>(
     edges.insert(id.clone(), dependencies.clone());
 
     for dependency in &release.dependencies {
+      let req = dependency.version.clone().unwrap_or(VersionReq::STAR);
       requirements
         .entry(dependency.id.clone())
         .or_default()
-        .push((
-          id.clone(),
-          dependency.version.clone().unwrap_or(VersionReq::STAR),
-        ));
+        .push((id.clone(), req.clone()));
       reasons
         .entry(dependency.id.clone())
         .or_insert(InstallReason::Dependency);
-      if !chosen.contains_key(&dependency.id) && !externals.contains_key(&dependency.id) {
-        pending.insert(dependency.id.clone());
-      } else if let Some(selected) = chosen.get(&dependency.id) {
-        // Already decided: check the new constraint still holds rather
-        // than silently keeping an incompatible version.
-        if let Some(req) = &dependency.version
-          && !req.matches(selected)
-        {
-          return Err(Error::Resolve(ResolveError::Conflict {
-            id: dependency.id.clone(),
-            requirers: requirements
-              .get(&dependency.id)
-              .cloned()
-              .unwrap_or_default(),
-          }));
+      // Already decided: check the new constraint still holds rather than
+      // silently keeping an incompatible version.
+      let decided = kept
+        .get(&dependency.id)
+        .or_else(|| chosen.get(&dependency.id));
+      match decided {
+        Some(selected) if !req.matches(selected) => {
+          return Err(match frozen.get(&dependency.id) {
+            Some(why) => kept_conflict(
+              &dependency.id,
+              selected,
+              format!("{id} needs {} {req}", dependency.id),
+              why,
+            ),
+            None => Error::Resolve(ResolveError::Conflict {
+              id: dependency.id.clone(),
+              requirers: requirements
+                .get(&dependency.id)
+                .cloned()
+                .unwrap_or_default(),
+            }),
+          });
         }
+        Some(_) => {}
+        None if !externals.contains_key(&dependency.id) => {
+          pending.insert(dependency.id.clone());
+        }
+        None => {}
       }
     }
   }
@@ -269,6 +407,10 @@ pub fn resolve<'a, S: PackageSource>(
   Ok(Resolution {
     order,
     externals: externals.into_values().collect(),
+    kept: kept
+      .into_iter()
+      .map(|(id, version)| KeptPackage { id, version })
+      .collect(),
   })
 }
 
@@ -899,5 +1041,131 @@ mod tests {
     )
     .unwrap_err();
     assert!(err.to_string().contains("no release for"), "{err}");
+  }
+
+  /// A state with `packages` installed, as `(id, version, dependencies)`,
+  /// every one explicit.
+  fn installed(packages: &[(&str, &str, &[&str])]) -> State {
+    let mut state = State::default();
+    for (name, version, deps) in packages {
+      state.packages.insert(
+        id(name),
+        crate::state::InstalledPackage {
+          id: id(name),
+          name: (*name).into(),
+          version: version.parse().unwrap(),
+          registry: "test".into(),
+          manifest_digest: Sha256Hash::from_bytes([0; 32]),
+          reason: InstallReason::Explicit,
+          pin: None,
+          installed_at: jiff::Timestamp::UNIX_EPOCH,
+          formats: vec![],
+          content: vec![],
+          artifacts: vec![],
+          dependencies: deps.iter().map(|d| id(d)).collect(),
+          files: vec![],
+        },
+      );
+    }
+    state
+  }
+
+  fn resolve_in<'a>(fixture: &'a Fixture, state: &State, roots: &[&str]) -> Result<Resolution<'a>> {
+    let roots: Vec<PackageId> = roots.iter().map(|r| id(r)).collect();
+    resolve(
+      fixture,
+      &ResolveRequest {
+        roots: &roots,
+        target: &linux(),
+        state,
+        detected_externals: &BTreeSet::new(),
+        force: false,
+        required_versions: &BTreeMap::new(),
+      },
+    )
+  }
+
+  fn version_of(resolution: &Resolution<'_>, name: &str) -> String {
+    resolution
+      .order
+      .iter()
+      .find(|p| p.id().as_str() == name)
+      .map(|p| p.version.to_string())
+      .or_else(|| {
+        resolution
+          .kept
+          .iter()
+          .find(|k| k.id.as_str() == name)
+          .map(|k| k.version.to_string())
+      })
+      .unwrap_or_else(|| panic!("{name} is not in the resolution"))
+  }
+
+  #[test]
+  fn an_installed_dependency_no_source_carries_is_kept_as_it_is() {
+    // `gone` left every source. `app` still needs it and still resolves,
+    // against the copy installed.
+    let fixture = Fixture::new().add("app", &[("2.0.0", &["gone"])]);
+    let state = installed(&[("app", "1.0.0", &["gone"]), ("gone", "1.0.0", &[])]);
+    let resolution = resolve_in(&fixture, &state, &["app"]).unwrap();
+    assert_eq!(version_of(&resolution, "app"), "2.0.0");
+    assert_eq!(
+      resolution.kept,
+      vec![KeptPackage {
+        id: id("gone"),
+        version: Version::new(1, 0, 0),
+      }]
+    );
+  }
+
+  #[test]
+  fn what_a_gone_package_needs_stays_whichever_is_reached_first() {
+    // `old` left every source and needs `lib`. `alpha` and `zeta` need
+    // `lib` too, and sort on either side of it: held either way, and from
+    // the copy installed, though the registry dropped 1.0.0.
+    let fixture = Fixture::new()
+      .add("lib", &[("2.0.0", &[])])
+      .add("alpha", &[("1.0.0", &["lib"])])
+      .add("zeta", &[("1.0.0", &["lib"])]);
+    let state = installed(&[("old", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    for roots in [&["alpha"][..], &["zeta"][..], &["alpha", "zeta"][..]] {
+      let resolution = resolve_in(&fixture, &state, roots).unwrap();
+      assert_eq!(version_of(&resolution, "lib"), "1.0.0", "{roots:?}");
+    }
+  }
+
+  #[test]
+  fn a_requirement_a_held_package_cannot_meet_names_what_holds_it() {
+    // `lib` is decided before `zeta` asks for more: the conflict is still
+    // said as the hold it is, not as a plain conflict.
+    let fixture = Fixture::new()
+      .add("lib", &[("1.0.0", &[]), ("2.0.0", &[])])
+      .add("alpha", &[("1.0.0", &["lib"])])
+      .insert(
+        &[
+          "schema = 1",
+          "id = \"zeta\"",
+          "name = \"zeta\"",
+          "kind = \"plugin\"",
+          "category = \"instrument\"",
+          "license = { kind = \"open-source\", spdx = \"MIT\" }",
+          "\n[[releases]]",
+          "version = \"1.0.0\"",
+          "dependencies = [{ id = \"lib\", version = \">=2\" }]",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .chain(artifact_lines("zeta"))
+        .collect::<Vec<_>>()
+        .join("\n"),
+        "zeta",
+      );
+    let state = installed(&[("old", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    let err = resolve_in(&fixture, &state, &["alpha", "zeta"]).unwrap_err();
+    let message = err.to_string();
+    assert!(
+      message.contains("zeta needs lib >=2, but lib stays at 1.0.0: old needs it"),
+      "{message}"
+    );
   }
 }

@@ -320,7 +320,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       };
       let env_file = luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
 
-      let plan = session.plan_import(&env_file)?;
+      let plan = session.plan_import(&env_file, *prune)?;
       let prunable = if *prune {
         session.prune_candidates(&env_file)?
       } else {
@@ -331,10 +331,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         if let Some(error) = plan.refusal() {
           return Err(error);
         }
-        // Nothing to install, but the file still says which packages were
-        // asked for, and `autoremove` reads that.
-        session.import_reasons(&env_file, *prune)?;
-        reporter.note("Nothing to do; the installation already matches.");
+        // Nothing to install; what the plan marks is still recorded, and
+        // the plan already said so.
+        session.record_marks(&plan)?;
+        reporter.import_unchanged(&plan);
         return Ok(());
       }
 
@@ -407,7 +407,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         }
         // Asked for by name, so no longer a dependency `autoremove` may
         // take; the plan already said so.
-        session.mark_requested(&plan)?;
+        session.record_marks(&plan)?;
         return Ok(());
       }
 
