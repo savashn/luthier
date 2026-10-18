@@ -236,7 +236,8 @@ resolve as though the machine were bare.
 Anything that deletes or installs asks first. In a script, `--yes` answers;
 `--json` does not, because choosing how output is rendered is not agreeing to
 have files removed. Without a terminal to ask on, such a command refuses rather
-than assuming.
+than assuming, and so does one under `--json`, which shows no plan to answer
+about.
 
 Extras (`extras`, built into Luthier) is consulted before the Open Audio
 Stack registry, and the first to carry a package ID keeps it — which is how a

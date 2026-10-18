@@ -20,18 +20,29 @@ about.
 - **`luthier upgrade` with no package upgrades everything installed**,
   after showing the plan and asking, as every upgrade does. Dependencies
   come along to their newest compatible release; a pinned package stays
-  put and is named. An upgrade never changes why a package is installed:
-  a dependency upgraded by name is still a dependency.
+  put and is named. A package that needs one nothing can upgrade any more
+  is left where it is, and said to be, rather than failing the rest. An
+  upgrade never changes why a package is installed: a dependency upgraded
+  by name is still a dependency. What runs is the plan that was shown, even
+  if another terminal installs something while the question is open.
 - **`luthier autoremove`** removes the packages installed as dependencies
   that nothing needs any more, after showing what it will delete and
   asking; `--dry-run` only shows it. A whole chain goes in one pass: a
   dependency needed only by another orphan is one too. An engine that is
   the last thing able to play a library still installed is kept, and said
-  to be.
+  to be (in `--json` too, as `kept`) — also when no source carries the
+  library any more, since what a library holds is now recorded when it is
+  installed. A package installed by name is never collected: installing
+  one that came in as a dependency marks it as requested, as apt marks it
+  manual, and installing or upgrading another package that needs it no
+  longer records it as a dependency.
 - **`luthier outdated` names what nothing can upgrade any more**: a
-  package neither source carries now, or one with no release built for
-  this machine. It keeps working where it is; `update` counts these, and
-  `upgrade` says it left them. They used to be skipped without a word.
+  package neither source carries now (or, while a source cannot be read,
+  one that source may still carry), one with no release built for this
+  machine, one that needs such a package, and an orphan nothing installed
+  needs. It keeps working where it is; `update` counts these, and
+  `upgrade` says it left them. They used to be skipped without a word, or
+  listed as updates `upgrade` never made.
 - **`luthier upgrade --self`.** Luthier upgrades itself the way it was
   installed: a binary from the install script or the tarball is run once
   where it will live, then replaces the old one, with the man page and
@@ -65,8 +76,9 @@ about.
   cleanup`, which only listed orphans, is `luthier autoremove`, which
   removes them. There are no aliases: the 0.4 spellings are usage errors.
   `outdated --json` is an object, `{"updates": [...], "unavailable": [...]}`,
-  where `update --json` printed the list of updates alone.
-  The Home Manager module's `refresh` option is `update`, and runs
+  where `update --json` printed the list of updates alone. A command that
+  would ask first refuses under `--json` without `--yes`, at a terminal as
+  well: the plan it would ask about is not shown.  The Home Manager module's `refresh` option is `update`, and runs
   `luthier update`.
 - **Luthier's own manifests are built into it, and are called `extras`.**
   The handful of manifests Luthier corrects or adds to the Open Audio Stack

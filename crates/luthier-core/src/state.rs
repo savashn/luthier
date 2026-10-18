@@ -9,7 +9,7 @@ use crate::error::{Error, Result, StateError};
 use crate::fsutil;
 use crate::layout::Layout;
 use jiff::Timestamp;
-use luthier_manifest::{Format, PackageId, Sha256Hash};
+use luthier_manifest::{Content, Format, PackageId, Sha256Hash};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,6 +93,12 @@ pub struct InstalledPackage {
   pub pin: Option<Version>,
   pub installed_at: Timestamp,
   pub formats: Vec<Format>,
+  /// The content its manifest declared, if it is a library: what an engine
+  /// has to play. Recorded so that `autoremove` and `remove` know what still
+  /// needs an engine when the manifest is no longer in any source, or the
+  /// source cannot be read.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub content: Vec<Content>,
   pub artifacts: Vec<ArtifactRecord>,
   pub dependencies: Vec<PackageId>,
   pub files: Vec<InstalledEntry>,
@@ -315,6 +321,7 @@ mod tests {
       pin: None,
       installed_at: Timestamp::UNIX_EPOCH,
       formats: vec![Format::Clap],
+      content: vec![],
       artifacts: vec![],
       dependencies: deps.iter().map(|d| PackageId::new(*d).unwrap()).collect(),
       files: vec![InstalledEntry::File {

@@ -158,6 +158,13 @@ fn confirm(global: &GlobalArgs, question: &str) -> Result<bool> {
   if global.yes {
     return Ok(true);
   }
+  // Under `--json` the plan is not shown, since the outcome is the one
+  // document; asking at a terminal would be asking about a list nobody saw.
+  if global.json {
+    return Err(Error::InvalidArgument(
+      "--json shows no plan to confirm; re-run with --yes to proceed".into(),
+    ));
+  }
   if !std::io::stdin().is_terminal() {
     // Refusing rather than assuming yes: this is the safe default for a
     // command that writes to a user's plugin directories.
@@ -395,6 +402,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         if let Some(error) = plan.refusal() {
           return Err(error);
         }
+        // Asked for by name, so no longer a dependency `autoremove` may
+        // take; the plan already said so.
+        session.mark_requested(&plan)?;
         return Ok(());
       }
 
@@ -431,28 +441,27 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       // one; which those are is the session's call. Upgrading everything
       // asks first, as every upgrade does, so it is never silent (§26).
       let named = ids(&session, packages)?;
-      let plan = session.plan_upgrade(&named)?;
       // §27: a pin is a decision to stay put and is reported, not silently
-      // obeyed. Without this, `upgrade <pinned>` says "up to date" while
-      // `outdated` says a newer release is being held back — the same
-      // question, two answers.
-      let held_back = session.held_back(&named)?;
+      // obeyed. The plan carries what it leaves (`held_back`), or `upgrade
+      // <pinned>` would say "up to date" while `outdated` says a newer
+      // release is being held back — the same question, two answers.
+      let plan = session.plan_upgrade(&named)?;
       if plan.is_blocked() || plan.actionable().next().is_none() {
         reporter.upgrade_plan(&plan);
         if let Some(error) = plan.refusal() {
           return Err(error);
         }
-        reporter.held_back(&held_back);
+        reporter.held_back(&plan.held_back);
         return Ok(());
       }
       reporter.install_preview(&plan);
-      reporter.held_back(&held_back);
+      reporter.held_back(&plan.held_back);
       if !confirm(global, "\nProceed?")? {
         return Err(Error::Cancelled);
       }
       let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
       let mut bar = BarProgress::new(show_progress);
-      reporter.install_outcome(&session.upgrade(&named, &mut bar).await?);
+      reporter.install_outcome(&session.upgrade(&plan, &mut bar).await?);
     }
 
     Command::Verify { packages } => {
@@ -473,10 +482,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       // if one of them became needed in between, rather than this
       // recomputing it after the confirmation and removing something
       // nobody was shown.
-      let found = session.autoremove_candidates()?;
-      let plan = session.plan_remove(&found.remove)?;
-      reporter.kept_engines(&found.kept);
-      if *dry_run || found.remove.is_empty() {
+      let plan = session.plan_autoremove()?;
+      reporter.kept_engines(&plan.kept);
+      if *dry_run || plan.ids.is_empty() {
         reporter.autoremove_plan(&plan);
         return Ok(());
       }
@@ -484,7 +492,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       if !confirm(global, "Proceed?")? {
         return Err(Error::Cancelled);
       }
-      reporter.remove_outcome(&session.remove(&found.remove, false)?);
+      reporter.remove_outcome(&session.remove(&plan.ids, false)?);
     }
 
     Command::Sources => {

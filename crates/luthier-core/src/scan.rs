@@ -224,6 +224,7 @@ mod tests {
         pin: None,
         installed_at: jiff::Timestamp::UNIX_EPOCH,
         formats: vec![Format::Clap],
+        content: vec![],
         artifacts: vec![],
         dependencies: vec![],
         files: vec![InstalledEntry::File {

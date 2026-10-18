@@ -205,6 +205,7 @@ mod tests {
       pin: None,
       installed_at: Timestamp::now(),
       formats: vec![Format::Clap],
+      content: vec![],
       artifacts: vec![ArtifactRecord {
         url: "https://example.invalid/a.zip".into(),
         sha256: Sha256Hash::from_bytes([2; 32]),

@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 447 tests, fully offline
+cargo test --workspace                     # 453 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -239,27 +239,44 @@ the crate map keeps that out of `luthier-manifest`.
   installer re-derive a verdict from freshly-read state; two derivations can
   disagree, and then something nobody confirmed gets installed.
 - **`--json` is not consent.** It says how to render an answer. Destructive
-  commands need `--yes`, exactly as they do on any non-interactive stdin.
+  commands need `--yes`, exactly as they do on any non-interactive stdin —
+  and at a terminal too, since under `--json` the preview is silent and a
+  question would be about a list nobody saw (`confirm` in `main.rs`).
 - **A `.part` is never held by a package.** Its digest names what the finished
   file will hash to, so matching it against installed artifacts reports a
   truncated download as in use and keeps `cache clean` from ever collecting it.
 - **The commands follow apt and Homebrew, by decision.** `update` fetches the
   package lists (`Session::refresh`; the method kept its name) and counts
-  what can be upgraded; `outdated` lists it, and what nothing can upgrade
-  any more (`Unavailable`: no source carries it, or no release is built
-  for this machine); `upgrade` upgrades the named packages, or with none
-  named everything, after a confirmation, and names what it leaves
-  (`held_back`); `autoremove` removes orphans. 0.4's `refresh`, `cleanup`
-  and `update <package>` are gone with no alias: nobody used Luthier yet.
+  what can be upgraded; `outdated` lists it; `upgrade` upgrades the named
+  packages, or with none named every explicit one, after a confirmation;
+  `autoremove` removes orphans. 0.4's `refresh`, `cleanup` and
+  `update <package>` are gone with no alias: nobody used Luthier yet.
   `upgrade --self` stays apart from `upgrade`: packages never need root,
-  and a .deb or .rpm Luthier goes through sudo. `Session::upgrade` resolves
-  the *explicit* packages when none is named, and records every package
-  with the reason it already had (`Purpose::Upgrade`) — the resolver marks
-  roots explicit, and a dependency upgraded by name would otherwise never
-  be collected again. `State::orphans` is reachability from explicit
-  packages, so a chain or a cycle goes in one pass; `autoremove_candidates`
-  then keeps any orphan engine that is the last player of content still
-  installed, since content never depends on an engine.
+  and a .deb or .rpm Luthier goes through sudo.
+- **`outdated` and `upgrade` share one survey, or they disagree.**
+  `Session::survey` decides both: an update is listed only where an
+  explicit root `upgrade` will resolve reaches it, and everything else
+  with a newer release is an `Unavailable` with its reason — no source
+  carries it (`SourceUnreadable` instead while a source failed to load:
+  the index cannot tell the two apart), no release for this machine, it
+  needs such a package (`DependencyUnavailable`; resolving it would fail,
+  so its root is left and the rest upgrades), or nothing explicit needs
+  it (`Orphaned`). The plan carries `held_back` and the `roots` it
+  resolved, and `Session::upgrade` executes those roots, not ones worked
+  out again after the user answered.
+- **An explicit package is never demoted.** `Purpose::record_reasons`
+  overrides the resolver, which knows roots and dependencies only: every
+  installed package keeps its recorded reason, except a root of an
+  install, which becomes explicit (`marked_requested`, applied by
+  `install_for` or, with nothing else to do, `Session::mark_requested`,
+  as apt marks a package manual). Demoting one is a deletion waiting for
+  the next `autoremove`. `State::orphans` is reachability from explicit
+  packages, so a chain or a cycle goes in one pass; `autoremove` then
+  keeps any orphan engine that is the last player of content still
+  installed, since content never depends on an engine. What content a
+  package holds is recorded in state (`InstalledPackage::content`) when it
+  is installed, so a library whose manifest left every source, or whose
+  source cannot be read, still keeps its player.
 - **Nothing is kept for 0.1–0.4.** Nobody used Luthier before 0.5, so no
   alias, shim or migration exists for what an earlier version spelled or
   left on disk — 0.2's `envs` directory, 0.4's `luthier-extras` snapshot,

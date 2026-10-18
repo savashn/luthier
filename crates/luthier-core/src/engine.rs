@@ -123,10 +123,19 @@ pub fn stranded_by_removal(
     if removing.contains(&installed.id) {
       continue;
     }
-    let Ok(entry) = index.get(&installed.id) else {
-      continue;
+    // What the package declared when it was installed, so a library whose
+    // manifest left every source, or whose source cannot be read right now,
+    // still keeps its player. The index is asked only for a record that
+    // carries none.
+    let declared = if installed.content.is_empty() {
+      match index.get(&installed.id) {
+        Ok(entry) => &entry.manifest.content,
+        Err(_) => continue,
+      }
+    } else {
+      &installed.content
     };
-    let mut content: Vec<&Content> = entry.manifest.content.iter().collect();
+    let mut content: Vec<&Content> = declared.iter().collect();
     content.sort();
     content.dedup();
     for wanted in content {

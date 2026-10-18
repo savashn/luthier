@@ -665,8 +665,10 @@ fn upgrade_with_nothing_named_upgrades_everything_but_a_pin() {
   // Upgraded as a dependency, it is still one, so `autoremove` still owns it.
   assert_eq!(row("engine")["reason"], "dependency");
 
+  // Not "up to date": the pin is still holding one back, and says so.
   let again = stdout_of(&fixture.luthier().arg("upgrade").output().unwrap());
-  assert!(again.contains("Everything is up to date"), "{again}");
+  assert!(again.contains("Nothing to upgrade."), "{again}");
+  assert!(again.contains("held is pinned to 1.0.0"), "{again}");
 }
 
 #[test]
@@ -759,6 +761,247 @@ fn outdated_names_what_nothing_can_upgrade_any_more() {
   let listed = stdout_of(&fixture.luthier().arg("list").output().unwrap());
   assert!(listed.contains("1.1.0"), "{listed}");
   assert!(listed.contains("Gone"), "{listed}");
+}
+
+/// The reason `list --json` records for `id`.
+fn reason_of(fixture: &Fixture, id: &str) -> String {
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let list: serde_json::Value = serde_json::from_str(&json).unwrap();
+  list
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|p| p["id"] == id)
+    .unwrap_or_else(|| panic!("{id} is not listed: {json}"))["reason"]
+    .as_str()
+    .unwrap()
+    .to_owned()
+}
+
+#[test]
+fn a_package_asked_for_by_name_is_never_demoted_to_a_dependency() {
+  // Installed by name, then upgraded because another package needs it: it
+  // is still the user's, and `autoremove` must not take it with the other.
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  fixture
+    .luthier()
+    .args(["install", "engine"])
+    .assert()
+    .success();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.1.0", &engine, &[]);
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+
+  let output = fixture
+    .luthier()
+    .args(["install", "library"])
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{}", stdout_of(&output));
+  assert_eq!(reason_of(&fixture, "engine"), "explicit");
+
+  fixture
+    .luthier()
+    .args(["remove", "library"])
+    .assert()
+    .success();
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["autoremove", "--dry-run", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let planned: serde_json::Value = serde_json::from_str(&json).unwrap();
+  assert_eq!(planned["packages"], serde_json::json!([]), "{json}");
+}
+
+#[test]
+fn installing_a_dependency_by_name_keeps_it_from_autoremove() {
+  // apt marks such a package manual. Nothing is downloaded or asked: the
+  // package is there, and only why it is there changes.
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+  fixture
+    .luthier()
+    .args(["install", "library"])
+    .assert()
+    .success();
+  assert_eq!(reason_of(&fixture, "engine"), "dependency");
+
+  let output = fixture
+    .luthier()
+    .args(["install", "engine"])
+    .output()
+    .unwrap();
+  let stdout = stdout_of(&output);
+  assert!(output.status.success(), "{stdout}");
+  assert!(
+    stdout.contains("it is now recorded as requested"),
+    "{stdout}"
+  );
+  assert_eq!(reason_of(&fixture, "engine"), "explicit");
+
+  fixture
+    .luthier()
+    .args(["remove", "library"])
+    .assert()
+    .success();
+  fixture.luthier().arg("autoremove").assert().success();
+  assert!(fixture.clap_dir().join("Engine.clap").is_file());
+}
+
+#[test]
+fn a_package_held_back_by_its_dependency_is_said_to_be_and_the_rest_upgrades() {
+  // `plugin` needs `dep`, which no source builds for this machine any more:
+  // resolving `plugin` would fail, so `upgrade` leaves it, says why, and
+  // upgrades everything else rather than nothing at all.
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("dep", &[][..]),
+    ("plugin", &["dep"][..]),
+    ("other", &[][..]),
+    ("engine", &[][..]),
+    ("library", &["engine"][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "plugin", "other", "library"])
+    .assert()
+    .success();
+  // `engine` is an orphan from here on: nothing installed needs it.
+  fixture
+    .luthier()
+    .args(["remove", "library"])
+    .assert()
+    .success();
+  for (id, deps) in [
+    ("plugin", &["dep"][..]),
+    ("other", &[][..]),
+    ("engine", &[][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.1.0", &artifact, deps);
+  }
+  let other_arch = if ARCH == "x86_64" {
+    "aarch64"
+  } else {
+    "x86_64"
+  };
+  let dep = fixture.registry().join("plugins/dep.toml");
+  let text = std::fs::read_to_string(&dep).unwrap();
+  std::fs::write(
+    &dep,
+    text.replace(
+      &format!("arch = \"{ARCH}\""),
+      &format!("arch = \"{other_arch}\""),
+    ),
+  )
+  .unwrap();
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let updates: Vec<&str> = found["updates"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| u["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(updates, ["other"], "{json}");
+  let held: Vec<(&str, &str)> = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| (u["id"].as_str().unwrap(), u["reason"].as_str().unwrap()))
+    .collect();
+  assert_eq!(
+    held,
+    [
+      ("dep", "no-release-for-target"),
+      ("engine", "orphaned"),
+      ("plugin", "dependency-unavailable"),
+    ],
+    "{json}"
+  );
+
+  let output = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&output);
+  assert!(output.status.success(), "{stdout}");
+  assert!(
+    stdout.contains("Plugin stays at 1.0.0: it needs dep, which can no longer be upgraded."),
+    "{stdout}"
+  );
+  let listed = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+  let version = |id: &str| {
+    listed
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|p| p["id"] == id)
+      .unwrap()["version"]
+      .as_str()
+      .unwrap()
+      .to_owned()
+  };
+  assert_eq!(version("other"), "1.1.0");
+  assert_eq!(version("plugin"), "1.0.0");
+  assert_eq!(version("engine"), "1.0.0");
+
+  // Named, the same answer rather than a resolution error.
+  let output = fixture
+    .luthier()
+    .args(["upgrade", "plugin"])
+    .output()
+    .unwrap();
+  let stdout = stdout_of(&output);
+  assert!(output.status.success(), "{stdout}");
+  assert!(stdout.contains("Nothing to upgrade."), "{stdout}");
+  assert!(stdout.contains("Plugin stays at 1.0.0"), "{stdout}");
+}
+
+#[test]
+fn json_is_not_consent_and_shows_no_plan_to_confirm() {
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Testsynth");
+  fixture.add_plugin("testsynth", "1.0.0", &artifact, &[]);
+  fixture
+    .luthier()
+    .args(["install", "testsynth"])
+    .assert()
+    .success();
+  // The fixture passes `--yes`; this command must not.
+  let output = Command::cargo_bin("luthier")
+    .unwrap()
+    .arg("--root")
+    .arg(fixture.root())
+    .arg("--registry-path")
+    .arg(fixture.registry())
+    .args(["--no-system-plugins", "--json", "remove", "testsynth"])
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  assert!(
+    String::from_utf8_lossy(&output.stderr).contains("--yes"),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(fixture.clap_dir().join("Testsynth.clap").is_file());
 }
 
 #[test]
@@ -1831,6 +2074,20 @@ fn autoremove_keeps_the_last_engine_for_content_still_installed() {
     .args(["remove", "bundle"])
     .assert()
     .success();
+  // What the kit holds was recorded when it was installed, so the player
+  // stays even once no source carries the kit, or its source cannot be read.
+  std::fs::remove_file(&path).unwrap();
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["autoremove", "--dry-run", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let planned: serde_json::Value = serde_json::from_str(&json).unwrap();
+  assert_eq!(planned["kept"][0]["id"], "drumcraker", "{json}");
+  assert_eq!(planned["packages"][0]["id"], "stray", "{json}");
 
   let output = fixture.luthier().arg("autoremove").output().unwrap();
   let stdout = stdout_of(&output);

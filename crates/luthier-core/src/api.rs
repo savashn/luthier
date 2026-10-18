@@ -42,21 +42,30 @@ pub const AUTOMATIC_REFRESH_AFTER: jiff::SignedDuration = jiff::SignedDuration::
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Purpose {
   /// The roots were asked for, and are recorded as explicitly installed
-  /// (§24), as the resolver marks them.
+  /// (§24), as the resolver marks them — a dependency installed by name
+  /// becomes one the user wants, as apt marks it manual.
   Install,
-  /// The roots are being brought to a newer release, so an installed
-  /// package keeps the reason it was recorded with. Naming a dependency
-  /// to upgrade it is not asking to keep it forever.
+  /// The roots are being brought to a newer release, so they keep the
+  /// reason they were recorded with. Naming a dependency to upgrade it is
+  /// not asking to keep it forever.
   Upgrade,
 }
 
 impl Purpose {
+  /// Overrides what the resolver says with what state already records.
+  ///
+  /// The resolver knows only roots and dependencies; it cannot tell a
+  /// package the user asked for last week from one another package pulls
+  /// in today. So an explicit package is never demoted: upgraded or
+  /// reinstalled as someone else's dependency, it stays explicit, or
+  /// `autoremove` would delete something asked for by name.
   fn record_reasons(self, resolution: &mut Resolution<'_>, state: &State) {
-    if self != Purpose::Upgrade {
-      return;
-    }
     for package in &mut resolution.order {
-      if let Some(installed) = state.get(package.id()) {
+      let Some(installed) = state.get(package.id()) else {
+        continue;
+      };
+      let asked_for = self == Purpose::Install && package.reason == InstallReason::Explicit;
+      if !asked_for {
         package.reason = installed.reason;
       }
     }
@@ -396,14 +405,21 @@ impl Session {
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
   ) -> Result<InstallPlan> {
-    self.plan_for(ids, force, required_versions, Purpose::Install)
+    self.require_locations(&LocationKind::ALL)?;
+    let state = crate::state::load(&self.layout)?;
+    self.plan_for(ids, force, required_versions, Purpose::Install, &state)
   }
 
   /// What [`Session::upgrade`] would do with `ids`: the named packages, or
-  /// with none named every explicitly installed one.
+  /// with none named every explicitly installed one, and what it leaves
+  /// where it is (`held_back`).
   pub fn plan_upgrade(&self, ids: &[PackageId]) -> Result<InstallPlan> {
-    let roots = self.upgrade_roots(ids)?;
-    self.plan_for(&roots, false, &BTreeMap::new(), Purpose::Upgrade)
+    self.require_locations(&LocationKind::ALL)?;
+    let state = crate::state::load(&self.layout)?;
+    let (roots, held_back) = self.upgrade_roots(ids, &state)?;
+    let mut plan = self.plan_for(&roots, false, &BTreeMap::new(), Purpose::Upgrade, &state)?;
+    plan.held_back = held_back;
+    Ok(plan)
   }
 
   fn plan_for(
@@ -412,25 +428,24 @@ impl Session {
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
     purpose: Purpose,
+    state: &State,
   ) -> Result<InstallPlan> {
-    self.require_locations(&LocationKind::ALL)?;
     let index = self.index()?;
-    let state = crate::state::load(&self.layout)?;
     let detected = self.externals_present(index);
     let mut resolution = resolver::resolve(
       index,
       &ResolveRequest {
         roots: ids,
         target: &self.target,
-        state: &state,
+        state,
         detected_externals: detected,
         force,
         required_versions,
       },
     )?;
-    purpose.record_reasons(&mut resolution, &state);
+    purpose.record_reasons(&mut resolution, state);
 
-    let unplayable = self.unplayable(&resolution, index, &state);
+    let unplayable = self.unplayable(&resolution, index, state);
     let sizes = ArtifactSizes::of(&resolution, &self.layout);
     let space = self.space_needed(&sizes);
 
@@ -439,7 +454,7 @@ impl Session {
     // than relying on the installer to derive the same verdict a second time
     // from freshly-read state. Two derivations can disagree; the one the user
     // was shown is the one that must decide.
-    let local_changes = self.local_changes(&resolution, &state, force)?;
+    let local_changes = self.local_changes(&resolution, state, force)?;
     let blocked = resolution
       .missing_externals()
       .next()
@@ -498,6 +513,20 @@ impl Session {
         .map(|found| self.describe_unplayable(found, index))
         .collect(),
       space,
+      marked_requested: resolution
+        .order
+        .iter()
+        .filter(|package| {
+          package.disposition == Disposition::Satisfied
+            && package.reason == InstallReason::Explicit
+            && state
+              .get(package.id())
+              .is_some_and(|installed| installed.reason == InstallReason::Dependency)
+        })
+        .map(|package| package.id().clone())
+        .collect(),
+      roots: ids.to_vec(),
+      held_back: Outdated::default(),
     })
   }
 
@@ -673,22 +702,56 @@ impl Session {
       .await
   }
 
-  /// Brings `ids` and their dependencies to their newest compatible
-  /// releases — with none named, everything explicitly installed — as
-  /// [`Session::plan_upgrade`] showed.
+  /// Carries out an upgrade [`Session::plan_upgrade`] planned: the packages
+  /// it resolved, and their dependencies, to their newest compatible
+  /// releases.
   ///
-  /// Unlike an install, it records every package as what it already was: a
-  /// dependency upgraded by name is still a dependency, and `autoremove`
-  /// still collects it once nothing needs it (§24).
+  /// The plan's roots, not ones worked out again: a package installed in
+  /// another terminal while the user read the plan is not upgraded by an
+  /// answer to a question that never named it. Unlike an install, it
+  /// records every package as what it already was: a dependency upgraded
+  /// by name is still a dependency, and `autoremove` still collects it once
+  /// nothing needs it (§24).
   pub async fn upgrade(
     &self,
-    ids: &[PackageId],
+    plan: &InstallPlan,
     progress: &mut dyn Progress,
   ) -> Result<InstallOutcome> {
-    let roots = self.upgrade_roots(ids)?;
     self
-      .install_for(&roots, false, &BTreeMap::new(), Purpose::Upgrade, progress)
+      .install_for(
+        &plan.roots,
+        false,
+        &BTreeMap::new(),
+        Purpose::Upgrade,
+        progress,
+      )
       .await
+  }
+
+  /// Records the plan's `marked_requested` packages as explicitly
+  /// installed, for an install with nothing else to do.
+  ///
+  /// No confirmation is wanted for it, as apt asks none: it places nothing,
+  /// and only keeps `autoremove` from removing what the user just asked
+  /// for. Only a package still recorded as a dependency changes.
+  pub fn mark_requested(&self, plan: &InstallPlan) -> Result<Vec<InstalledSummary>> {
+    if plan.marked_requested.is_empty() {
+      return Ok(Vec::new());
+    }
+    let mut guard = StateGuard::acquire(&self.layout)?;
+    let mut marked = Vec::new();
+    for id in &plan.marked_requested {
+      if let Some(record) = guard.state_mut().packages.get_mut(id)
+        && record.reason == InstallReason::Dependency
+      {
+        record.reason = InstallReason::Explicit;
+        marked.push(InstalledSummary::from(&*record));
+      }
+    }
+    if !marked.is_empty() {
+      guard.commit()?;
+    }
+    Ok(marked)
   }
 
   async fn install_for(
@@ -763,12 +826,20 @@ impl Session {
 
     for package in &resolution.order {
       if package.disposition == Disposition::Satisfied {
-        skipped.push(InstalledSummary::from(
-          guard
-            .state()
-            .get(package.id())
-            .expect("satisfied means installed"),
-        ));
+        // Nothing to place, but a dependency asked for by name is now
+        // one the user wants, and that is worth a state write.
+        let record = guard
+          .state_mut()
+          .packages
+          .get_mut(package.id())
+          .expect("satisfied means installed");
+        let promoted = record.reason != package.reason;
+        record.reason = package.reason;
+        let summary = InstalledSummary::from(&*record);
+        if promoted {
+          guard.commit()?;
+        }
+        skipped.push(summary);
         continue;
       }
 
@@ -785,6 +856,7 @@ impl Session {
           pin: guard.state().get(package.id()).and_then(|p| p.pin.clone()),
           installed_at: Timestamp::now(),
           formats: Vec::new(),
+          content: package.entry.manifest.content.clone(),
           artifacts: Vec::new(),
           dependencies: package.dependencies.clone(),
           files: Vec::new(),
@@ -904,6 +976,7 @@ impl Session {
           formats.dedup();
           formats
         },
+        content: package.entry.manifest.content.clone(),
         artifacts: vec![ArtifactRecord {
           url: artifact.source.url.to_string(),
           sha256: artifact.checksum.sha256,
@@ -961,7 +1034,12 @@ impl Session {
       });
     }
 
-    Ok(RemovalPlan { packages, stranded })
+    Ok(RemovalPlan {
+      packages,
+      stranded,
+      kept: Vec::new(),
+      ids: ids.to_vec(),
+    })
   }
 
   /// Installed content that removing `ids` would leave with no engine.
@@ -1149,18 +1227,38 @@ impl Session {
 
   // --------------------------------------------------------------- update --
 
-  /// What `outdated` reports (§26): the packages with a newer release, and
-  /// those nothing can upgrade any more. Changes nothing.
+  /// What `outdated` reports (§26): the packages `upgrade` would bring to a
+  /// newer release, and those it would leave where they are, with why.
+  /// Changes nothing.
   pub fn outdated(&self) -> Result<Outdated> {
-    let index = self.index()?;
     let state = crate::state::load(&self.layout)?;
-    let mut outdated = Outdated::default();
+    Ok(self.survey(&state)?.outdated)
+  }
+
+  /// Works out, once, what `outdated` says and what `upgrade` with nothing
+  /// named resolves, so the two cannot disagree.
+  ///
+  /// `upgrade` resolves the explicit packages, and resolving one brings its
+  /// dependencies along. So an update is listed as one only when an
+  /// explicit package `upgrade` will resolve reaches it; anything else with
+  /// a newer release is listed with what stops it. A package nothing can
+  /// upgrade any more holds back, with it, every explicit package that
+  /// reaches it: resolving that one would need a release that is not there.
+  fn survey(&self, state: &State) -> Result<Survey> {
+    let index = self.index()?;
+    // A source that could not be read may well carry what is missing.
+    let complete = index.problems.is_empty();
+    let mut direct = BTreeMap::new();
+    let mut newest = BTreeMap::new();
 
     for package in state.packages.values() {
       let Some(entry) = index.packages.get(&package.id) else {
-        outdated
-          .unavailable
-          .push(Unavailable::of(package, UnavailableReason::NotCarried));
+        let reason = if complete {
+          UnavailableReason::NotCarried
+        } else {
+          UnavailableReason::SourceUnreadable
+        };
+        direct.insert(package.id.clone(), reason);
         continue;
       };
       // A pack has no artifacts, so no release of one is ever built for a
@@ -1168,102 +1266,138 @@ impl Session {
       if entry.manifest.kind == PackageKind::Pack {
         continue;
       }
-      let Some(latest) = entry
+      match entry
         .manifest
         .releases_newest_first()
         .into_iter()
         .find(|release| release.artifacts_for(&self.target).next().is_some())
-      else {
-        outdated.unavailable.push(Unavailable::of(
-          package,
-          UnavailableReason::NoReleaseForTarget,
-        ));
+      {
+        None => {
+          direct.insert(package.id.clone(), UnavailableReason::NoReleaseForTarget);
+        }
+        Some(latest) if latest.version > package.version => {
+          newest.insert(package.id.clone(), latest.version.clone());
+        }
+        Some(_) => {}
+      }
+    }
+
+    let mut survey = Survey {
+      outdated: Outdated::default(),
+      roots: Vec::new(),
+      newest,
+      direct,
+    };
+    let mut blocked = Vec::new();
+    for package in state.packages.values() {
+      if package.reason != InstallReason::Explicit {
+        continue;
+      }
+      match survey.blocker(state, &package.id) {
+        Some(blocker) => blocked.push((&package.id, blocker)),
+        None => survey.roots.push(package.id.clone()),
+      }
+    }
+    let reach = state.reachable_from(&survey.roots);
+    // What a held-back explicit package would have brought along.
+    let mut held: BTreeMap<&PackageId, PackageId> = BTreeMap::new();
+    for (root, blocker) in blocked {
+      for id in state.reachable_from([root]) {
+        if !reach.contains(id) {
+          held.entry(id).or_insert_with(|| blocker.clone());
+        }
+      }
+    }
+
+    for package in state.packages.values() {
+      if let Some(reason) = survey.direct.get(&package.id) {
+        survey
+          .outdated
+          .unavailable
+          .push(Unavailable::of(package, *reason, None, None));
+        continue;
+      }
+      let Some(available) = survey.newest.get(&package.id) else {
         continue;
       };
-      if latest.version > package.version {
-        outdated.updates.push(AvailableUpdate {
-          id: package.id.to_string(),
-          name: package.name.clone(),
-          installed: package.version.to_string(),
-          available: latest.version.to_string(),
-          // §27: a pin is a decision to stay put, and is reported
-          // rather than silently overridden.
-          pinned: package.pin.as_ref().map(ToString::to_string),
-        });
+      if reach.contains(&package.id) {
+        survey
+          .outdated
+          .updates
+          .push(AvailableUpdate::of(package, available));
+        continue;
       }
+      let (reason, because_of) = match held.get(&package.id) {
+        Some(blocker) => (UnavailableReason::DependencyUnavailable, Some(blocker)),
+        None => (UnavailableReason::Orphaned, None),
+      };
+      survey.outdated.unavailable.push(Unavailable::of(
+        package,
+        reason,
+        because_of,
+        Some(available),
+      ));
     }
-    Ok(outdated)
+    Ok(survey)
   }
 
-  /// What `upgrade` resolves: the named packages, or with none named, every
-  /// explicitly installed package a source still carries a release of for
-  /// this machine.
+  /// What `upgrade` resolves, and what it leaves where it is: the named
+  /// packages, or with none named every explicit package the survey found
+  /// nothing holding back.
   ///
-  /// The explicit ones only: resolving a root brings its dependencies to
-  /// their newest compatible release, and a dependency nothing explicit
-  /// reaches any more is for `autoremove`, not for upgrading. A package
-  /// nothing can upgrade any more is left as it is rather than failing the
-  /// whole upgrade: there is nothing to upgrade it to, and [`Self::held_back`]
-  /// says so.
-  ///
-  /// A named package has to be installed already. Upgrading something that
-  /// is not there is an install, and saying so beats doing one unasked.
-  fn upgrade_roots(&self, ids: &[PackageId]) -> Result<Vec<PackageId>> {
-    let state = crate::state::load(&self.layout)?;
-    if !ids.is_empty() {
-      if let Some(missing) = ids.iter().find(|id| !state.is_installed(id)) {
-        return Err(Error::State(StateError::NotInstalled {
-          id: missing.clone(),
-        }));
-      }
-      return Ok(ids.to_vec());
+  /// A package nothing can upgrade is left as it is rather than failing the
+  /// whole upgrade, and said to be; so is one that needs such a package. A
+  /// named package has to be installed already. Upgrading something that is
+  /// not there is an install, and saying so beats doing one unasked.
+  fn upgrade_roots(&self, ids: &[PackageId], state: &State) -> Result<(Vec<PackageId>, Outdated)> {
+    if let Some(missing) = ids.iter().find(|id| !state.is_installed(id)) {
+      return Err(Error::State(StateError::NotInstalled {
+        id: missing.clone(),
+      }));
     }
-    let index = self.index()?;
-    Ok(
-      state
-        .packages
-        .values()
-        .filter(|package| package.reason == InstallReason::Explicit)
-        .filter(|package| {
-          index.packages.get(&package.id).is_some_and(|entry| {
-            entry.manifest.kind == PackageKind::Pack
-              || entry
-                .manifest
-                .releases
-                .iter()
-                .any(|release| release.artifacts_for(&self.target).next().is_some())
-          })
-        })
-        .map(|package| package.id.clone())
-        .collect(),
-    )
-  }
+    let survey = self.survey(state)?;
+    if ids.is_empty() {
+      // §27: a pin is a decision to stay put, and is reported rather
+      // than silently obeyed.
+      let held = Outdated {
+        updates: survey
+          .outdated
+          .updates
+          .iter()
+          .filter(|update| update.pinned.is_some())
+          .cloned()
+          .collect(),
+        unavailable: survey.outdated.unavailable.clone(),
+      };
+      return Ok((survey.roots, held));
+    }
 
-  /// What `upgrade` leaves where it is among the named packages, or among
-  /// every package with none named: updates a pin holds back, and packages
-  /// nothing can upgrade any more.
-  ///
-  /// `upgrade` resolves through the pin and reports the package as already
-  /// installed, which is true and, by itself, silent about why. §27 says a
-  /// pin is reported rather than silently obeyed, and `outdated` does report
-  /// it; this is what lets `upgrade` say the same thing. A package no source
-  /// carries is skipped by [`Self::upgrade_roots`] just as quietly.
-  pub fn held_back(&self, ids: &[PackageId]) -> Result<Outdated> {
-    let named = |id: &str| ids.is_empty() || ids.iter().any(|named| named.as_str() == id);
-    let Outdated {
-      updates,
-      unavailable,
-    } = self.outdated()?;
-    Ok(Outdated {
-      updates: updates
-        .into_iter()
-        .filter(|update| update.pinned.is_some() && named(&update.id))
-        .collect(),
-      unavailable: unavailable
-        .into_iter()
-        .filter(|package| named(&package.id))
-        .collect(),
-    })
+    let mut roots = Vec::new();
+    let mut held = Outdated::default();
+    for id in ids {
+      let package = state.get(id).expect("checked above");
+      let available = survey.newest.get(id);
+      if let Some(reason) = survey.direct.get(id) {
+        held
+          .unavailable
+          .push(Unavailable::of(package, *reason, None, None));
+      } else if let Some(blocker) = survey.blocker(state, id) {
+        held.unavailable.push(Unavailable::of(
+          package,
+          UnavailableReason::DependencyUnavailable,
+          Some(&blocker),
+          available,
+        ));
+      } else {
+        if let Some(available) = available
+          && package.is_pinned()
+        {
+          held.updates.push(AvailableUpdate::of(package, available));
+        }
+        roots.push(id.clone());
+      }
+    }
+    Ok((roots, held))
   }
 
   // ----------------------------------------------------------- autoremove --
@@ -1279,15 +1413,22 @@ impl Session {
   /// engine that could play the content is kept, not one picked: choosing
   /// between players is the user's call, and `remove` makes it.
   ///
-  /// A front end shows [`Session::plan_remove`] for `remove` and, once
-  /// confirmed, hands the same list to [`Session::remove`], which refuses if
-  /// one became needed again in between — rather than recomputing the list
-  /// and removing something nobody was shown.
-  pub fn autoremove_candidates(&self) -> Result<Autoremoval> {
+  /// The plan is a removal plan, with `kept` filled in. A front end shows
+  /// it and, once confirmed, hands its `ids` to [`Session::remove`], which
+  /// refuses if one became needed again in between — rather than
+  /// recomputing the list and removing something nobody was shown.
+  pub fn plan_autoremove(&self) -> Result<RemovalPlan> {
+    let (remove, kept) = self.autoremove_candidates()?;
+    let mut plan = self.plan_remove(&remove)?;
+    plan.kept = kept;
+    Ok(plan)
+  }
+
+  fn autoremove_candidates(&self) -> Result<(Vec<PackageId>, Vec<KeptEngine>)> {
     let state = crate::state::load(&self.layout)?;
     let mut remove: BTreeSet<PackageId> = state.orphans().into_iter().collect();
     if remove.is_empty() {
-      return Ok(Autoremoval::default());
+      return Ok((Vec::new(), Vec::new()));
     }
     let index = self.index()?;
     let detected = self.externals_present(index);
@@ -1315,10 +1456,7 @@ impl Session {
       remove.retain(|id| !needed.contains(id));
     }
 
-    Ok(Autoremoval {
-      remove: remove.into_iter().collect(),
-      kept,
-    })
+    Ok((remove.into_iter().collect(), kept))
   }
 
   // -------------------------------------------------------------- sources --
@@ -2278,6 +2416,20 @@ pub struct InstallPlan {
   /// determined.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub space: Vec<SpaceRequirement>,
+  /// Packages installed as dependencies and now asked for by name: nothing
+  /// is placed for them, and they are recorded as explicitly installed, so
+  /// `autoremove` keeps them.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub marked_requested: Vec<PackageId>,
+  /// What the plan resolved, which is what carrying it out resolves again:
+  /// for an upgrade with nothing named, the explicit packages as they were
+  /// when the plan was made, not as they are once the user has answered.
+  #[serde(skip)]
+  pub roots: Vec<PackageId>,
+  /// For an upgrade, what it leaves where it is: updates a pin holds back,
+  /// and packages nothing can upgrade any more.
+  #[serde(skip_serializing_if = "Outdated::is_empty")]
+  pub held_back: Outdated,
 }
 
 /// One source, and where it sits in the precedence order.
@@ -2397,13 +2549,13 @@ pub struct RemovalPlan {
   /// Installed content this removal would leave with nothing to play it.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub stranded: Vec<StrandedContent>,
-}
-
-/// What `autoremove` would remove, and the orphans it keeps.
-#[derive(Debug, Clone, Default, Serialize)]
-pub struct Autoremoval {
-  pub remove: Vec<PackageId>,
+  /// For `autoremove`, the orphans it keeps because content still
+  /// installed needs them.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
   pub kept: Vec<KeptEngine>,
+  /// The packages this plan removes, as [`Session::remove`] takes them.
+  #[serde(skip)]
+  pub ids: Vec<PackageId>,
 }
 
 /// An orphan `autoremove` keeps: the last engine for content still installed.
@@ -2459,10 +2611,16 @@ pub struct VerifyResult {
 /// What [`Session::outdated`] found.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Outdated {
-  /// Packages with a newer release, pinned ones included.
+  /// Packages `upgrade` brings to a newer release, pinned ones included.
   pub updates: Vec<AvailableUpdate>,
-  /// Packages that stay at the version installed, whatever is released.
+  /// Packages that stay at the version installed, and why.
   pub unavailable: Vec<Unavailable>,
+}
+
+impl Outdated {
+  pub fn is_empty(&self) -> bool {
+    self.updates.is_empty() && self.unavailable.is_empty()
+  }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2474,23 +2632,50 @@ pub struct AvailableUpdate {
   pub pinned: Option<String>,
 }
 
-/// An installed package nothing can upgrade any more. It keeps working; it
-/// is reported so that it does not fall silently behind.
+impl AvailableUpdate {
+  fn of(package: &InstalledPackage, available: &Version) -> Self {
+    Self {
+      id: package.id.to_string(),
+      name: package.name.clone(),
+      installed: package.version.to_string(),
+      available: available.to_string(),
+      // §27: a pin is a decision to stay put, and is reported rather
+      // than silently overridden.
+      pinned: package.pin.as_ref().map(ToString::to_string),
+    }
+  }
+}
+
+/// An installed package `upgrade` leaves at the version installed. It
+/// keeps working; it is reported so that it does not fall silently behind.
 #[derive(Debug, Clone, Serialize)]
 pub struct Unavailable {
   pub id: String,
   pub name: String,
   pub installed: String,
+  /// A newer release, when there is one it is held back from.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub available: Option<String>,
   pub reason: UnavailableReason,
+  /// For [`UnavailableReason::DependencyUnavailable`], the package it needs.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub because_of: Option<String>,
 }
 
 impl Unavailable {
-  fn of(package: &InstalledPackage, reason: UnavailableReason) -> Self {
+  fn of(
+    package: &InstalledPackage,
+    reason: UnavailableReason,
+    because_of: Option<&PackageId>,
+    available: Option<&Version>,
+  ) -> Self {
     Self {
       id: package.id.to_string(),
       name: package.name.clone(),
       installed: package.version.to_string(),
+      available: available.map(ToString::to_string),
       reason,
+      because_of: because_of.map(ToString::to_string),
     }
   }
 }
@@ -2500,6 +2685,122 @@ impl Unavailable {
 pub enum UnavailableReason {
   /// Neither source carries the package any more.
   NotCarried,
+  /// It is missing from the sources that could be read, and one could not
+  /// be: that one may well still carry it.
+  SourceUnreadable,
   /// A source carries it, with no release built for this machine.
   NoReleaseForTarget,
+  /// It needs a package nothing can upgrade, so resolving it would fail.
+  DependencyUnavailable,
+  /// Installed as a dependency, and nothing explicitly installed needs it
+  /// now, so upgrading everything never reaches it. `autoremove` removes
+  /// it; `upgrade <package>` upgrades it.
+  Orphaned,
+}
+
+/// What [`Session::survey`] worked out.
+struct Survey {
+  outdated: Outdated,
+  /// The explicit packages `upgrade` with nothing named resolves.
+  roots: Vec<PackageId>,
+  /// The newest release built for this machine, where it is newer.
+  newest: BTreeMap<PackageId, Version>,
+  /// Packages nothing can upgrade any more, whatever needs them.
+  direct: BTreeMap<PackageId, UnavailableReason>,
+}
+
+impl Survey {
+  /// The first package `id` reaches, itself included, that nothing can
+  /// upgrade any more.
+  fn blocker(&self, state: &State, id: &PackageId) -> Option<PackageId> {
+    state
+      .reachable_from([id])
+      .into_iter()
+      .find(|reached| self.direct.contains_key(*reached))
+      .cloned()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::config::RegistryConfig;
+  use luthier_manifest::Sha256Hash;
+
+  /// A session over `sources`, with `gone` installed and carried by none.
+  fn session_with(dir: &Path, sources: Vec<RegistryConfig>) -> Session {
+    let layout = Layout::rooted_at(dir);
+    let mut guard = StateGuard::acquire(&layout).unwrap();
+    let id = PackageId::new("gone").unwrap();
+    guard.state_mut().packages.insert(
+      id.clone(),
+      InstalledPackage {
+        id,
+        name: "Gone".into(),
+        version: Version::new(1, 0, 0),
+        registry: "second".into(),
+        manifest_digest: Sha256Hash::from_bytes([0; 32]),
+        reason: InstallReason::Explicit,
+        pin: None,
+        installed_at: Timestamp::UNIX_EPOCH,
+        formats: vec![Format::Clap],
+        content: vec![],
+        artifacts: vec![],
+        dependencies: vec![],
+        files: vec![],
+      },
+    );
+    guard.commit().unwrap();
+    let config = Config {
+      registries: sources,
+      ..Config::default()
+    };
+    Session::new(layout, config).unwrap()
+  }
+
+  fn reason_for_gone(session: &Session) -> UnavailableReason {
+    let outdated = session.outdated().unwrap();
+    assert_eq!(outdated.unavailable.len(), 1, "{outdated:?}");
+    outdated.unavailable[0].reason
+  }
+
+  #[test]
+  fn a_package_missing_while_a_source_cannot_be_read_is_not_said_to_be_gone() {
+    // The source that could not be read may well carry it: "no source
+    // carries it any more" would be a guess, and `update` the fix.
+    let dir = tempfile::tempdir().unwrap();
+    let readable = dir.path().join("readable");
+    std::fs::create_dir_all(&readable).unwrap();
+    let session = session_with(
+      dir.path(),
+      vec![
+        RegistryConfig::new("first", RegistrySource::Path { path: readable }),
+        RegistryConfig::new(
+          "second",
+          RegistrySource::Path {
+            path: dir.path().join("never-fetched"),
+          },
+        ),
+      ],
+    );
+    assert_eq!(
+      reason_for_gone(&session),
+      UnavailableReason::SourceUnreadable
+    );
+  }
+
+  #[test]
+  fn a_package_missing_from_every_source_that_was_read_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let readable = dir.path().join("readable");
+    std::fs::create_dir_all(&readable).unwrap();
+    let session = session_with(
+      dir.path(),
+      vec![RegistryConfig::new(
+        "first",
+        RegistrySource::Path { path: readable },
+      )],
+    );
+    assert_eq!(reason_for_gone(&session), UnavailableReason::NotCarried);
+  }
 }
