@@ -11,7 +11,7 @@ use crate::config::{Config, RegistrySource};
 use crate::download::{Downloader, Progress};
 use crate::engine;
 use crate::envfile::EnvFile;
-use crate::error::{Error, InstallError, RegistryError, ResolveError, Result, StateError};
+use crate::error::{Error, InstallError, ResolveError, Result, StateError};
 use crate::fsutil;
 use crate::install::{self, EntryStatus, InstallTransaction};
 use crate::layout::{Layout, LocationKind};
@@ -446,7 +446,7 @@ impl Session {
       ids,
       force,
       required_versions,
-      &BTreeSet::new(),
+      false,
       Purpose::Install,
       &state,
     )
@@ -463,7 +463,7 @@ impl Session {
       &roots,
       false,
       &BTreeMap::new(),
-      &BTreeSet::new(),
+      false,
       Purpose::Upgrade,
       &state,
     )?;
@@ -476,12 +476,17 @@ impl Session {
     ids: &[PackageId],
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
-    leaving: &BTreeSet<PackageId>,
+    prune: bool,
     purpose: Purpose,
     state: &State,
   ) -> Result<InstallPlan> {
     let index = self.index()?;
     let detected = self.externals_present(index);
+    let leaving = if prune {
+      self.import_leaving(ids, required_versions, state)?
+    } else {
+      BTreeSet::new()
+    };
     let mut resolution = resolver::resolve(
       index,
       &ResolveRequest {
@@ -491,7 +496,7 @@ impl Session {
         detected_externals: detected,
         force,
         required_versions,
-        leaving,
+        leaving: &leaving,
       },
     )?;
     purpose.record_reasons(&mut resolution, state);
@@ -566,6 +571,8 @@ impl Session {
       space,
       marked_requested: requested_marks(&resolution, state, purpose, ids),
       kept: resolution.kept.iter().map(|kept| kept.id.clone()).collect(),
+      prune: leaving.into_iter().collect(),
+      prune_withheld: if prune { self.prune_withheld()? } else { None },
       marked_dependency: Vec::new(),
       roots: ids.to_vec(),
       held_back: Outdated::default(),
@@ -744,7 +751,7 @@ impl Session {
         ids,
         force,
         required_versions,
-        &BTreeSet::new(),
+        false,
         Purpose::Install,
         progress,
       )
@@ -771,7 +778,7 @@ impl Session {
         &plan.roots,
         false,
         &BTreeMap::new(),
-        &BTreeSet::new(),
+        false,
         Purpose::Upgrade,
         progress,
       )
@@ -823,7 +830,7 @@ impl Session {
     ids: &[PackageId],
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
-    leaving: &BTreeSet<PackageId>,
+    prune: bool,
     purpose: Purpose,
     progress: &mut dyn Progress,
   ) -> Result<InstallOutcome> {
@@ -841,6 +848,13 @@ impl Session {
 
     let index = self.index()?;
     let detected = self.externals_present(index);
+    // From the state under the lock, so what an `import --prune` frees is
+    // worked out from the state it then changes.
+    let leaving = if prune {
+      self.import_leaving(ids, required_versions, guard.state())?
+    } else {
+      BTreeSet::new()
+    };
     let mut resolution = resolver::resolve(
       index,
       &ResolveRequest {
@@ -850,7 +864,7 @@ impl Session {
         detected_externals: detected,
         force,
         required_versions,
-        leaving,
+        leaving: &leaving,
       },
     )?;
     purpose.record_reasons(&mut resolution, guard.state());
@@ -1336,7 +1350,7 @@ impl Session {
     let index = self.index()?;
     // A source that could not be read may well carry what is missing.
     let complete = index.problems.is_empty();
-    let frozen = resolver::frozen(index, state, &self.target, &BTreeSet::new());
+    let frozen = resolver::frozen(index, state, &self.target, &BTreeSet::new(), &[]);
     let mut survey = Survey::default();
 
     let explicit: Vec<&PackageId> = state
@@ -1780,7 +1794,7 @@ impl Session {
   ///
   /// With `prune`, the import converges rather than adds: once what the file
   /// names is installed, every package it neither names nor needs is
-  /// removed ([`Session::prune_candidates`]). That is what makes the file a
+  /// removed (`InstallPlan::prune`). That is what makes the file a
   /// description of the installation rather than a lower bound on it, and
   /// what a declarative front end — the Home Manager module — relies on.
   /// A file naming nothing is refused without `prune`, since it would do
@@ -1798,20 +1812,11 @@ impl Session {
       ));
     }
     let required = file.required_versions();
-    let state = crate::state::load(&self.layout)?;
-    let leaving = Self::leaving(file, prune, &state);
     let outcome = if roots.is_empty() {
       InstallOutcome::default()
     } else {
       self
-        .install_for(
-          &roots,
-          false,
-          &required,
-          &leaving,
-          Purpose::Install,
-          progress,
-        )
+        .install_for(&roots, false, &required, prune, Purpose::Install, progress)
         .await?
     };
 
@@ -1825,9 +1830,14 @@ impl Session {
 
     // After the install, not before: a failed install then leaves what was
     // there in place instead of an environment with things removed and
-    // nothing added.
-    let pruned = if prune {
-      let candidates = self.prune_candidates(file)?;
+    // nothing added. Worked out again from the state the install left.
+    let prune_withheld = if prune { self.prune_withheld()? } else { None };
+    let pruned = if prune && prune_withheld.is_none() {
+      let state = crate::state::load(&self.layout)?;
+      let candidates: Vec<PackageId> = self
+        .import_leaving(&roots, &required, &state)?
+        .into_iter()
+        .collect();
       if candidates.is_empty() {
         None
       } else {
@@ -1842,6 +1852,7 @@ impl Session {
       reapplied_pins,
       skipped_pins,
       pruned,
+      prune_withheld,
     })
   }
 
@@ -1873,45 +1884,109 @@ impl Session {
     (requested, dependency)
   }
 
-  /// What an `import --prune` of `file` is about to remove, as far as can
-  /// be told before resolving: installed packages the file neither names
-  /// nor reaches through what it names. They hold nothing at the version
-  /// installed ([`ResolveRequest::leaving`](resolver::ResolveRequest)), or
-  /// a file that drops a package no source carries, and moves what it
-  /// needed, could never be imported: the install would refuse on a hold
-  /// the prune was about to remove.
-  fn leaving(file: &EnvFile, prune: bool, state: &State) -> BTreeSet<PackageId> {
-    if !prune {
-      return BTreeSet::new();
+  /// Why `import --prune` must remove nothing now, if it must: a source
+  /// could not be read. A package that source carries would be missing
+  /// from the resolution, which is how a package the file does not need
+  /// looks, and the Home Manager module runs `import --prune` unattended.
+  fn prune_withheld(&self) -> Result<Option<String>> {
+    Ok(self.index()?.problems.first().cloned())
+  }
+
+  /// What an `import --prune` of `file` removes: the installed packages the
+  /// resolution of its roots neither reaches nor keeps from the state, nor
+  /// reaches through what it keeps. Empty while [`Self::prune_withheld`].
+  ///
+  /// The same set is what the resolution frees from holding anything at
+  /// the version installed ([`ResolveRequest::leaving`](resolver::ResolveRequest)),
+  /// or a file that drops a package no source carries, and moves what it
+  /// needed, could never be imported. The two depend on each other — a
+  /// lifted hold can change what a root's new release reaches — so this
+  /// starts from everything but what the file names, and resolves until
+  /// the set stops changing: what a resolution reaches comes back, holds
+  /// and all. Not from what the file reaches through the state, which is
+  /// the graph before the upgrade: a release that dropped a gone package
+  /// would be held by it and refuse.
+  fn import_leaving(
+    &self,
+    roots: &[PackageId],
+    required: &BTreeMap<PackageId, Version>,
+    state: &State,
+  ) -> Result<BTreeSet<PackageId>> {
+    if self.prune_withheld()?.is_some() {
+      return Ok(BTreeSet::new());
     }
-    let named = file
-      .packages
-      .iter()
-      .map(|entry| &entry.id)
-      .filter(|id| state.is_installed(id));
-    let staying = state.reachable_from(named);
-    state
+    let index = self.index()?;
+    let detected = self.externals_present(index);
+    let mut leaving: BTreeSet<PackageId> = state
       .packages
       .keys()
-      .filter(|id| !staying.contains(id))
+      .filter(|id| !roots.contains(id))
       .cloned()
-      .collect()
+      .collect();
+    // Bounded: each pass that changes the set is a different resolution,
+    // and there are only so many packages to free or hold.
+    for _ in 0..=state.packages.len() {
+      let unreached: BTreeSet<PackageId> = if roots.is_empty() {
+        state.packages.keys().cloned().collect()
+      } else {
+        let resolution = resolver::resolve(
+          index,
+          &ResolveRequest {
+            roots,
+            target: &self.target,
+            state,
+            detected_externals: detected,
+            force: false,
+            required_versions: required,
+            leaving: &leaving,
+          },
+        )?;
+        let mut reached: BTreeSet<&PackageId> = resolution
+          .order
+          .iter()
+          .map(|package| package.id())
+          .collect();
+        reached.extend(state.reachable_from(resolution.kept.iter().map(|kept| &kept.id)));
+        state
+          .packages
+          .keys()
+          .filter(|id| !reached.contains(id))
+          .cloned()
+          .collect()
+      };
+      if unreached == leaving {
+        break;
+      }
+      leaving = unreached;
+    }
+    Ok(leaving)
   }
 
   /// Reports what importing `file` would do, without changing anything:
-  /// what it installs, and what it marks.
+  /// what it installs, what it marks, and with `prune` what it removes.
   pub fn plan_import(&self, file: &EnvFile, prune: bool) -> Result<InstallPlan> {
     let roots = file.roots();
     let state = crate::state::load(&self.layout)?;
     let mut plan = if roots.is_empty() {
-      InstallPlan::default()
+      InstallPlan {
+        prune: if prune {
+          self
+            .import_leaving(&roots, &BTreeMap::new(), &state)?
+            .into_iter()
+            .collect()
+        } else {
+          Vec::new()
+        },
+        prune_withheld: if prune { self.prune_withheld()? } else { None },
+        ..InstallPlan::default()
+      }
     } else {
       self.require_locations(&LocationKind::ALL)?;
       self.plan_for(
         &roots,
         false,
         &file.required_versions(),
-        &Self::leaving(file, prune, &state),
+        prune,
         Purpose::Install,
         &state,
       )?
@@ -1920,44 +1995,6 @@ impl Session {
     plan.marked_requested = requested;
     plan.marked_dependency = dependency;
     Ok(plan)
-  }
-
-  /// Installed packages that `file` neither names nor needs: what
-  /// `import --prune` removes.
-  ///
-  /// Everything the resolved plan for the file touches is kept — its roots,
-  /// and every dependency of theirs, installed yet or not — so a package the
-  /// file lists only as a dependency survives exactly as long as something
-  /// named still needs it. The rest of the state goes, explicit or not,
-  /// which also collects dependencies that only a pruned package needed.
-  /// What the resolution keeps from the state is wanted too: a package the
-  /// file names stays when no source carries it any more.
-  ///
-  /// Refused while a source cannot be read. A package that source carries
-  /// would be missing from the resolution, which is how a package the file
-  /// does not need looks, and `import --prune` runs unattended.
-  pub fn prune_candidates(&self, file: &EnvFile) -> Result<Vec<PackageId>> {
-    if let Some(problem) = self.index()?.problems.first() {
-      return Err(Error::Registry(RegistryError::PruneWithoutSource(
-        problem.clone(),
-      )));
-    }
-    let plan = self.plan_import(file, true)?;
-    let wanted: BTreeSet<String> = plan
-      .steps
-      .into_iter()
-      .map(|step| step.id)
-      .chain(plan.kept.iter().map(ToString::to_string))
-      .collect();
-    let state = crate::state::load(&self.layout)?;
-    Ok(
-      state
-        .packages
-        .keys()
-        .filter(|id| !wanted.contains(id.as_str()))
-        .cloned()
-        .collect(),
-    )
   }
 
   // ---------------------------------------------------------- self-update --
@@ -2401,6 +2438,9 @@ pub struct ImportOutcome {
   /// What `--prune` removed, when it removed anything.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pruned: Option<RemoveOutcome>,
+  /// Why `--prune` removed nothing this time: a source could not be read.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub prune_withheld: Option<String>,
 }
 
 /// The name an artifact was published under: the last segment of its URL,
@@ -2588,6 +2628,14 @@ pub struct InstallPlan {
   /// needs them at the version installed.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub kept: Vec<PackageId>,
+  /// For `import --prune`, the installed packages it removes once the file
+  /// is installed: those the file neither names nor needs.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub prune: Vec<PackageId>,
+  /// Why `import --prune` removes nothing this time: a source could not be
+  /// read. The install still goes ahead.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub prune_withheld: Option<String>,
   /// What the plan resolved, which is what carrying it out resolves again:
   /// for an upgrade with nothing named, the explicit packages as they were
   /// when the plan was made, not as they are once the user has answered.
@@ -2962,9 +3010,10 @@ mod tests {
   }
 
   #[test]
-  fn import_prune_is_refused_while_a_source_cannot_be_read() {
+  fn import_prune_removes_nothing_while_a_source_cannot_be_read() {
     // A package that source carries would look like one the file does not
-    // need, and `import --prune` runs unattended.
+    // need, and `import --prune` runs unattended. The install still goes
+    // ahead; only the removal waits.
     let dir = tempfile::tempdir().unwrap();
     let readable = dir.path().join("readable");
     std::fs::create_dir_all(&readable).unwrap();
@@ -2986,7 +3035,8 @@ mod tests {
       "empty.toml",
     )
     .unwrap();
-    let err = session.prune_candidates(&file).unwrap_err();
-    assert!(err.to_string().contains("not pruning"), "{err}");
+    let plan = session.plan_import(&file, true).unwrap();
+    assert!(plan.prune.is_empty(), "{:?}", plan.prune);
+    assert!(plan.prune_withheld.is_some());
   }
 }

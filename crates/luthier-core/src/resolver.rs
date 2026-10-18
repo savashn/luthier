@@ -149,6 +149,7 @@ pub fn frozen<S: PackageSource>(
   state: &State,
   target: &Target,
   leaving: &BTreeSet<PackageId>,
+  roots: &[PackageId],
 ) -> BTreeMap<PackageId, Frozen> {
   let mut frozen = BTreeMap::new();
   for package in state.packages.values() {
@@ -165,16 +166,20 @@ pub fn frozen<S: PackageSource>(
   }
   // Only what stays needs what it was built against: a package nothing
   // explicit reaches is `autoremove`'s, and one about to be removed holds
-  // nothing either.
+  // nothing either. One named in this command stays, explicit or not: it
+  // is about to be recorded as asked for.
   let explicit = state
     .packages
     .values()
-    .filter(|package| package.reason == InstallReason::Explicit && !leaving.contains(&package.id))
+    .filter(|package| {
+      (package.reason == InstallReason::Explicit && !leaving.contains(&package.id))
+        || roots.contains(&package.id)
+    })
     .map(|package| &package.id);
   let staying = state.reachable_from(explicit);
   let holders: Vec<PackageId> = frozen
     .keys()
-    .filter(|id| staying.contains(id))
+    .filter(|id| staying.contains(id) && !leaving.contains(*id))
     .cloned()
     .collect();
   for id in &holders {
@@ -233,7 +238,13 @@ pub fn resolve<'a, S: PackageSource>(
   // Worked out before the walk, not as it goes: whether a dependency is
   // held must not depend on whether the package holding it was reached
   // first. It stays installed either way.
-  let frozen = frozen(source, request.state, request.target, request.leaving);
+  let frozen = frozen(
+    source,
+    request.state,
+    request.target,
+    request.leaving,
+    request.roots,
+  );
 
   let mut pending: BTreeSet<PackageId> = request.roots.iter().cloned().collect();
   for root in request.roots {
@@ -271,14 +282,14 @@ pub fn resolve<'a, S: PackageSource>(
         ));
       }
       // Resolved through its source when that still publishes what is
-      // installed, so a reinstall still has something to fetch; from the
-      // state otherwise.
-      let published = matches!(why, Frozen::NeededBy(_))
-        && source.manifest(&id).is_some_and(|manifest| {
-          manifest.release(&installed.version).is_some_and(|release| {
-            manifest.kind == PackageKind::Pack || select_artifact(release, request.target).is_some()
-          })
-        });
+      // installed — a yanked release included, since it is what is there —
+      // so a reinstall still has something to fetch; from the state
+      // otherwise.
+      let published = source.manifest(&id).is_some_and(|manifest| {
+        manifest.release(&installed.version).is_some_and(|release| {
+          manifest.kind == PackageKind::Pack || select_artifact(release, request.target).is_some()
+        })
+      });
       if !published {
         // Asked to reinstall it, which is what `verify` says repairs a
         // package: there is nothing to fetch, and saying "already
@@ -289,7 +300,10 @@ pub fn resolve<'a, S: PackageSource>(
             detail: format!(
               "{id} {} cannot be reinstalled: {}",
               installed.version,
-              held_because(why)
+              match why {
+                Frozen::NotCarried => held_because(why),
+                _ => "that version is no longer published for this machine".to_string(),
+              }
             ),
           }));
         }
@@ -1229,7 +1243,7 @@ mod tests {
     let entry = fixture.packages.get_mut(&id("foo")).unwrap();
     entry.manifest.releases[0].yanked = Some("broken".into());
     let state = installed(&[("foo", "1.0.0", &[])]);
-    let frozen = frozen(&fixture, &state, &linux(), &BTreeSet::new());
+    let frozen = frozen(&fixture, &state, &linux(), &BTreeSet::new(), &[]);
     assert_eq!(frozen.get(&id("foo")), Some(&Frozen::NoReleaseForTarget));
     assert!(newest_installable(&fixture.packages[&id("foo")].manifest, &linux()).is_none());
   }
@@ -1297,5 +1311,46 @@ mod tests {
     )
     .unwrap();
     assert_eq!(version_of(&resolution, "lib"), "2.0.0");
+  }
+
+  #[test]
+  fn a_gone_package_named_in_this_command_holds_what_it_needs() {
+    // `gone` is an orphan, so on its own it holds nothing; named here, it is
+    // about to be recorded as asked for, and `lib` stays for it.
+    let fixture = Fixture::new()
+      .add("lib", &[("2.0.0", &[])])
+      .add("plugin", &[("1.0.0", &["lib"])]);
+    let mut state = installed(&[("gone", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    for name in ["gone", "lib"] {
+      state.packages.get_mut(&id(name)).unwrap().reason = InstallReason::Dependency;
+    }
+    let resolution = resolve_in(&fixture, &state, &["gone", "plugin"]).unwrap();
+    assert_eq!(version_of(&resolution, "lib"), "1.0.0");
+  }
+
+  #[test]
+  fn reinstalling_a_held_version_no_longer_published_says_so() {
+    let fixture = Fixture::new().add("lib", &[("2.0.0", &[])]);
+    let state = installed(&[("old", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    let roots = [id("lib")];
+    let err = resolve(
+      &fixture,
+      &ResolveRequest {
+        roots: &roots,
+        target: &linux(),
+        state: &state,
+        detected_externals: &BTreeSet::new(),
+        force: true,
+        required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
+      },
+    )
+    .unwrap_err();
+    assert!(
+      err
+        .to_string()
+        .contains("that version is no longer published"),
+      "{err}"
+    );
   }
 }

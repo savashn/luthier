@@ -178,11 +178,6 @@ pub enum RegistryError {
 
   #[error("registry {registry} sent something this build cannot read: {reason}")]
   Malformed { registry: String, reason: String },
-
-  /// `import --prune` with a source unread: a package that source carries
-  /// would look like one the file does not need, and be removed.
-  #[error("not pruning while a source cannot be read: {0}")]
-  PruneWithoutSource(String),
 }
 
 impl RegistryError {
@@ -194,9 +189,6 @@ impl RegistryError {
           .into(),
       ),
       RegistryError::NotFetched(_) => Some("Run `luthier update` first.".into()),
-      RegistryError::PruneWithoutSource(_) => Some(
-        "Run `luthier update`, then import again. Without `--prune` nothing is removed.".into(),
-      ),
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }

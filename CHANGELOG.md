@@ -42,10 +42,14 @@ about.
   longer records it as a dependency. `import` records what its file asked
   for by name as requested too; with `--prune`, what the file lists as a
   dependency becomes one. `import --prune` never removes a package the
-  file names because no source carries it any more, and refuses to prune
-  at all while a source cannot be read, since what that source carries
-  would look unneeded. `install --force` of a package no source can
-  supply says it cannot be reinstalled rather than that it is installed.
+  file names because no source carries it any more, nor what such a
+  package needs, and while a source cannot be read it installs what the
+  file asks for and removes nothing, saying why, since what that source
+  carries would look unneeded. A file made before an upgrade, still
+  listing a package the new release dropped, imports cleanly.
+  `install --force` reinstalls a yanked release that is still published,
+  and of a package nothing can supply says it cannot be reinstalled
+  rather than that it is installed.
 - **`luthier outdated` names what nothing can upgrade any more**: a
   package neither source carries now (or, while a source cannot be read,
   one that source may still carry), one with no release built for this

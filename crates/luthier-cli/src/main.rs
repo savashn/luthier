@@ -321,11 +321,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       let env_file = luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
 
       let plan = session.plan_import(&env_file, *prune)?;
-      let prunable = if *prune {
-        session.prune_candidates(&env_file)?
-      } else {
-        Vec::new()
-      };
+      // The plan says what the prune removes, and why it removes nothing
+      // when a source could not be read.
+      reporter.prune_withheld(plan.prune_withheld.as_deref());
+      let prunable = plan.prune.clone();
       if plan.is_blocked() || (plan.actionable().next().is_none() && prunable.is_empty()) {
         reporter.install_plan(&plan);
         if let Some(error) = plan.refusal() {

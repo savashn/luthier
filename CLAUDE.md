@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 467 tests, fully offline
+cargo test --workspace                     # 472 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -265,18 +265,31 @@ the crate map keeps that out of `luthier-manifest`.
   `ResolveError::KeptConflict`, naming what holds it, whichever was
   reached first. Computed up front because a hold must not depend on
   whether its holder was reached: it stays installed either way. Only a
-  gone package an explicit one reaches holds anything (an orphan is
-  `autoremove`'s), and none in `ResolveRequest::leaving`, what an
-  `import --prune` is about to remove — or a file that drops the holder
-  and moves what it held could never be imported. "No build here" uses
-  `newest_installable`, the resolver's own choice, so yanked releases
-  and uninstallable artifacts do not count, and `outdated` uses it too.
-  `--force` on a kept root is `NotReinstallable`, never a silent no-op.
-  A kept package is in the plan (`InstallPlan::kept`): `prune_candidates`
-  counts it as wanted, and asking for one by name marks it requested.
-  `import --prune` is refused while any source failed to load
-  (`PruneWithoutSource`): what that source carries would read as
-  unwanted, and the module runs it unattended.
+  gone package an explicit one or the command's roots reach holds
+  anything (an orphan is `autoremove`'s), and none in
+  `ResolveRequest::leaving`, what an `import --prune` is about to remove
+  — or a file that drops the holder and moves what it held could never
+  be imported. "No build here" uses `newest_installable`, the resolver's
+  own choice, so yanked releases and uninstallable artifacts do not
+  count, and `outdated` uses it too; a kept package whose installed
+  release is still published (yanked included) resolves through its
+  source, so `--force` reinstalls it, and one with nothing to fetch is
+  `NotReinstallable`, never a silent no-op. A kept package is in the
+  plan (`InstallPlan::kept`), and asking for one by name marks it
+  requested.
+- **What `import --prune` removes is a fixed point.** `import_leaving`
+  starts from everything installed but the file's roots, resolves with
+  that as `leaving`, and takes what the resolution neither reaches nor
+  keeps (nor reaches through what it keeps) as the next set, until it
+  stops changing; that set is both what is removed (`InstallPlan::prune`)
+  and what holds nothing. It starts optimistic on purpose: the installed
+  graph is the one before the upgrade, and a gone package the new
+  release dropped would otherwise hold, and refuse, the very import that
+  removes it. Worked out inside `install_for` from the locked state, and
+  again after the install. While any source failed to load nothing is
+  removed (`prune_withheld`, in the plan and the outcome): what that
+  source carries would read as unwanted, and the module runs it
+  unattended. The install still goes ahead.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
   `Session::survey` reads `resolver::frozen` rather than predicting it.
   `upgrade` with nothing named resolves every explicit package; what the

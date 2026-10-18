@@ -353,6 +353,17 @@ impl Reporter {
     }
   }
 
+  /// Said with the plan, since an unattended `import --prune` should not
+  /// look as though it converged; under `--json` the outcome carries it.
+  pub fn prune_withheld(&self, reason: Option<&str>) {
+    if let Some(reason) = reason {
+      self.warn(format!(
+        "not removing anything the file does not name: a source could not be read ({reason}). \
+         `luthier update`, then import again."
+      ));
+    }
+  }
+
   pub fn removal_plan(&self, plan: &RemovalPlan) {
     if self.json {
       return self.emit(plan);
