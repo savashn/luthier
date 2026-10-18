@@ -8,11 +8,9 @@
 //! a command refreshes it first, and how to ask the server whether it changed
 //! since: the `ETag` and `Last-Modified` it sent with what arrived.
 //!
-//! 0.1 also pinned each source's origin and signing key here on first use,
-//! because users could add sources of their own. They no longer can, so a
-//! pin would only protect a URL the binary already fixes — and would lock
-//! every user out the day a release moved one. A `signed_by` field 0.1 wrote
-//! is ignored on reading.
+//! Nothing is pinned here. Users cannot add sources, so a pin would only
+//! protect a URL the binary already fixes — and would lock every user out
+//! the day a release moved one.
 
 use crate::download::Validators;
 use crate::fsutil;
@@ -147,21 +145,6 @@ mod tests {
       origin_of(&url("https://example.com/a")),
       origin_of(&url("http://example.com/a"))
     );
-  }
-
-  #[test]
-  fn a_record_0_1_wrote_still_parses() {
-    // 0.1 recorded the key that signed extras; that field is ignored now.
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(
-      record_path(dir.path(), "luthier-extras"),
-      br#"{"url":"https://example.com/p.tar.gz","origin":"https://example.com:443",
-          "sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-          "bytes":10,"fetched_at":"2026-01-01T00:00:00Z",
-          "signed_by":"e3796d9892f200f145a5befbb421a66fb9d6ba5a68afe6246044dfba716a99aa"}"#,
-    )
-    .unwrap();
-    assert_eq!(load(dir.path(), "luthier-extras").unwrap().bytes, 10);
   }
 
   #[test]

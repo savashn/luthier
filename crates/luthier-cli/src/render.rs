@@ -6,9 +6,9 @@
 //! piping `--json` into a tool stays clean.
 
 use luthier_core::api::{
-  AvailableUpdate, CacheCleaned, CacheEntry, ImportOutcome, InstallOutcome, InstallPlan,
-  InstalledSummary, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult, SourceSummary,
-  StrandedContent, VerifyResult,
+  CacheCleaned, CacheEntry, ImportOutcome, InstallOutcome, InstallPlan, InstalledSummary,
+  KeptEngine, Outdated, PackageInfo, RemovalPlan, RemoveOutcome, SearchResult, SourceSummary,
+  StrandedContent, UnavailableReason, VerifyResult,
 };
 use luthier_core::registry::RefreshOutcome;
 use luthier_core::scan::{DetectedPlugin, PluginStatus};
@@ -499,12 +499,13 @@ impl Reporter {
     self.plan_body(plan);
   }
 
-  /// What `upgrade` leaves alone because a pin is holding it.
+  /// What `upgrade` leaves alone: updates a pin is holding, and packages
+  /// nothing can upgrade any more.
   ///
-  /// A note rather than a document: the plan is the answer this command
+  /// Notes rather than a document: the plan is the answer this command
   /// already emitted, and under `--json` the pin is in it.
-  pub fn held_back(&self, updates: &[AvailableUpdate]) {
-    for update in updates {
+  pub fn held_back(&self, held: &Outdated) {
+    for update in &held.updates {
       let Some(pin) = &update.pinned else {
         continue;
       };
@@ -513,48 +514,98 @@ impl Reporter {
         update.name, update.available, update.id, update.id
       ));
     }
+    for package in &held.unavailable {
+      self.note(format!(
+        "{} stays at {}: {}.",
+        package.name,
+        package.installed,
+        unavailable_reason(package.reason)
+      ));
+    }
   }
 
-  pub fn updates(&self, updates: &[AvailableUpdate]) {
+  pub fn updates(&self, outdated: &Outdated) {
     if self.json {
-      return self.emit(&updates);
+      return self.emit(outdated);
     }
-    if updates.is_empty() {
+    let Outdated {
+      updates,
+      unavailable,
+    } = outdated;
+    if updates.is_empty() && unavailable.is_empty() {
       self.note("Everything is up to date.");
       return;
     }
-    println!("Updates available:\n");
-    let width = updates.iter().map(|u| u.name.len()).max().unwrap_or(0);
-    for update in updates {
-      let pinned = update
-        .pinned
-        .as_ref()
-        .map(|p| format!("  (pinned to {p}; skipped)"))
-        .unwrap_or_default();
-      println!(
-        "{:<width$}  {} -> {}{pinned}",
-        update.name,
-        update.installed,
-        update.available,
-        width = width
-      );
+    if !updates.is_empty() {
+      println!("Updates available:\n");
+      let width = updates.iter().map(|u| u.name.len()).max().unwrap_or(0);
+      for update in updates {
+        let pinned = update
+          .pinned
+          .as_ref()
+          .map(|p| format!("  (pinned to {p}; skipped)"))
+          .unwrap_or_default();
+        println!(
+          "{:<width$}  {} -> {}{pinned}",
+          update.name,
+          update.installed,
+          update.available,
+          width = width
+        );
+      }
+      if updates.iter().any(|u| u.pinned.is_none()) {
+        println!(
+          "\nRun `luthier upgrade` to upgrade them, or `luthier upgrade <package>` for one."
+        );
+      }
     }
-    if updates.iter().any(|u| u.pinned.is_none()) {
-      println!("\nRun `luthier upgrade` to upgrade them, or `luthier upgrade <package>` for one.");
+    if !unavailable.is_empty() {
+      if !updates.is_empty() {
+        println!();
+      }
+      println!("Staying at the version installed:\n");
+      let width = unavailable.iter().map(|u| u.name.len()).max().unwrap_or(0);
+      for package in unavailable {
+        println!(
+          "{:<width$}  {}  {}",
+          package.name,
+          package.installed,
+          unavailable_reason(package.reason),
+          width = width
+        );
+      }
     }
   }
 
   /// The line after `update`, as apt prints one after its own: how many of
-  /// the installed packages the lists just fetched have something newer for.
-  pub fn upgradable(&self, updates: &[AvailableUpdate]) {
-    let count = updates.iter().filter(|u| u.pinned.is_none()).count();
+  /// the installed packages the lists just fetched have something newer
+  /// for, and how many nothing can upgrade any more.
+  pub fn upgradable(&self, outdated: &Outdated) {
+    let count = outdated
+      .updates
+      .iter()
+      .filter(|u| u.pinned.is_none())
+      .count();
+    let stuck = outdated.unavailable.len();
+    let mut said = Vec::new();
     match count {
-      0 => self.note("\nEverything is up to date."),
-      1 => self.note("\n1 package can be upgraded. Run `luthier outdated` to see it."),
-      n => self.note(format!(
-        "\n{n} packages can be upgraded. Run `luthier outdated` to see them."
-      )),
+      0 => {}
+      1 => said.push("1 package can be upgraded.".to_string()),
+      n => said.push(format!("{n} packages can be upgraded.")),
     }
+    match stuck {
+      0 => {}
+      1 => said.push("1 installed package can no longer be upgraded.".to_string()),
+      n => said.push(format!("{n} installed packages can no longer be upgraded.")),
+    }
+    if said.is_empty() {
+      return self.note("\nEverything is up to date.");
+    }
+    let them = if count + stuck == 1 { "it" } else { "them" };
+    self.note(format!(
+      "\n{} Run `luthier outdated` to see {them}.",
+      said.join(" ")
+    ));
   }
 
   // ---------------------------------------------------------------- verify --
@@ -602,6 +653,21 @@ impl Reporter {
       return;
     }
     self.autoremove_body(plan);
+  }
+
+  /// Orphans `autoremove` leaves, because content still installed needs
+  /// them. A note: nothing is wrong, and `remove` takes one if the user
+  /// wants it gone.
+  pub fn kept_engines(&self, kept: &[KeptEngine]) {
+    for engine in kept {
+      self.note(format!(
+        "Keeping {}: it plays the {} content in {}. `luthier remove {}` removes it anyway.",
+        engine.id, engine.plays, engine.for_package, engine.id
+      ));
+    }
+    if !kept.is_empty() {
+      self.note("");
+    }
   }
 
   fn autoremove_body(&self, plan: &RemovalPlan) {
@@ -851,6 +917,13 @@ impl Reporter {
       Some(version) => println!("{} is pinned to {version}", package.id),
       None => println!("{} is no longer pinned", package.id),
     }
+  }
+}
+
+fn unavailable_reason(reason: UnavailableReason) -> &'static str {
+  match reason {
+    UnavailableReason::NotCarried => "no source carries it any more",
+    UnavailableReason::NoReleaseForTarget => "no release is built for this machine any more",
   }
 }
 

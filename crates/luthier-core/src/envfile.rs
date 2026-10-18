@@ -41,11 +41,6 @@ pub struct Meta {
   pub luthier: String,
   #[serde(with = "timestamp_string")]
   pub exported: Timestamp,
-  /// The environment a file from 0.2 or earlier was exported from, when
-  /// there were environments. Read so such a file still imports; never
-  /// written, and never acted on.
-  #[serde(default, skip_serializing)]
-  pub environment: Option<String>,
   /// Whether `version` fields are authoritative.
   ///
   /// `true` for a normal export: the import must land on exactly these
@@ -113,7 +108,6 @@ impl EnvFile {
         schema: ENV_FILE_VERSION,
         luthier: env!("CARGO_PKG_VERSION").to_string(),
         exported: Timestamp::now(),
-        environment: None,
         pinned,
       },
       packages,
@@ -238,17 +232,6 @@ mod tests {
     let text = file.to_toml().unwrap();
     let back = EnvFile::from_toml(&text, "env.toml").unwrap();
     assert_eq!(back, file);
-  }
-
-  #[test]
-  fn a_file_from_when_there_were_environments_still_reads() {
-    // 0.2 wrote the environment it exported from. That is read and ignored,
-    // so an old file still imports, and never written again.
-    let text = "[meta]\nschema = 1\nluthier = \"0.2.0\"\n\
-                exported = \"2026-09-27T00:00:00Z\"\nenvironment = \"mixing\"\n\
-                pinned = false\n";
-    let file = EnvFile::from_toml(text, "old.toml").unwrap();
-    assert!(!file.to_toml().unwrap().contains("environment"));
   }
 
   #[test]

@@ -229,16 +229,6 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         .map_err(|e| Error::io("write", "stdout", e))?;
       return Ok(());
     }
-    // 0.4's `update <package>` upgraded it. Said before anything is read,
-    // and as a usage error: an `update` that quietly fetched the lists
-    // instead would leave a script believing it had upgraded something.
-    Command::Update { packages } if !packages.is_empty() => {
-      return Err(Error::InvalidArgument(format!(
-        "`update` fetches the package lists and takes no packages; \
-         to upgrade them, run `luthier upgrade {}`",
-        packages.join(" ")
-      )));
-    }
     _ => {}
   }
 
@@ -355,21 +345,21 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.import_outcome(&outcome);
     }
 
-    Command::Update { .. } => {
+    Command::Update => {
       let outcomes = session.refresh().await?;
       reporter.refresh(&outcomes);
       // What the lists just fetched mean for this installation, as apt
       // says after its own `update`. The fetch already warned about any
       // source it could not read, so an index that will not load adds
       // nothing worth a second warning.
-      if let Ok(updates) = session.available_updates() {
-        reporter.upgradable(&updates);
+      if let Ok(outdated) = session.outdated() {
+        reporter.upgradable(&outdated);
       }
       tell_of_a_newer_luthier(&session, global, reporter).await;
     }
 
     Command::Outdated => {
-      reporter.updates(&session.available_updates()?);
+      reporter.updates(&session.outdated()?);
       tell_of_a_newer_luthier(&session, global, reporter).await;
     }
 
@@ -441,8 +431,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       // one; which those are is the session's call. Upgrading everything
       // asks first, as every upgrade does, so it is never silent (§26).
       let named = ids(&session, packages)?;
-      let roots = session.upgrade_roots(&named)?;
-      let plan = session.plan_install(&roots, false)?;
+      let plan = session.plan_upgrade(&named)?;
       // §27: a pin is a decision to stay put and is reported, not silently
       // obeyed. Without this, `upgrade <pinned>` says "up to date" while
       // `outdated` says a newer release is being held back — the same
@@ -463,7 +452,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
       let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
       let mut bar = BarProgress::new(show_progress);
-      reporter.install_outcome(&session.install(&roots, false, &mut bar).await?);
+      reporter.install_outcome(&session.upgrade(&named, &mut bar).await?);
     }
 
     Command::Verify { packages } => {
@@ -484,9 +473,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       // if one of them became needed in between, rather than this
       // recomputing it after the confirmation and removing something
       // nobody was shown.
-      let ids = session.autoremove_candidates()?;
-      let plan = session.plan_remove(&ids)?;
-      if *dry_run || ids.is_empty() {
+      let found = session.autoremove_candidates()?;
+      let plan = session.plan_remove(&found.remove)?;
+      reporter.kept_engines(&found.kept);
+      if *dry_run || found.remove.is_empty() {
         reporter.autoremove_plan(&plan);
         return Ok(());
       }
@@ -494,7 +484,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       if !confirm(global, "Proceed?")? {
         return Err(Error::Cancelled);
       }
-      reporter.remove_outcome(&session.remove(&ids, false)?);
+      reporter.remove_outcome(&session.remove(&found.remove, false)?);
     }
 
     Command::Sources => {

@@ -19,12 +19,19 @@ about.
 
 - **`luthier upgrade` with no package upgrades everything installed**,
   after showing the plan and asking, as every upgrade does. Dependencies
-  come along to their newest compatible release and stay recorded as
-  dependencies; a pinned package stays put and is named.
+  come along to their newest compatible release; a pinned package stays
+  put and is named. An upgrade never changes why a package is installed:
+  a dependency upgraded by name is still a dependency.
 - **`luthier autoremove`** removes the packages installed as dependencies
   that nothing needs any more, after showing what it will delete and
   asking; `--dry-run` only shows it. A whole chain goes in one pass: a
-  dependency needed only by another orphan is one too.
+  dependency needed only by another orphan is one too. An engine that is
+  the last thing able to play a library still installed is kept, and said
+  to be.
+- **`luthier outdated` names what nothing can upgrade any more**: a
+  package neither source carries now, or one with no release built for
+  this machine. It keeps working where it is; `update` counts these, and
+  `upgrade` says it left them. They used to be skipped without a word.
 - **`luthier upgrade --self`.** Luthier upgrades itself the way it was
   installed: a binary from the install script or the tarball is run once
   where it will live, then replaces the old one, with the man page and
@@ -56,19 +63,18 @@ about.
   `luthier update <package>` is `luthier upgrade <package>`, and upgrading
   something not installed is refused rather than installed; `luthier
   cleanup`, which only listed orphans, is `luthier autoremove`, which
-  removes them. There are no aliases. `luthier update <package>` is a usage
-  error naming `upgrade`, so a script written for 0.4 stops rather than
-  believing it upgraded something; `refresh` and `cleanup` are unknown
-  commands. The Home Manager module runs `luthier update` (its option is
-  still `refresh`).
+  removes them. There are no aliases: the 0.4 spellings are usage errors.
+  `outdated --json` is an object, `{"updates": [...], "unavailable": [...]}`,
+  where `update --json` printed the list of updates alone.
+  The Home Manager module's `refresh` option is `update`, and runs
+  `luthier update`.
 - **Luthier's own manifests are built into it, and are called `extras`.**
   The handful of manifests Luthier corrects or adds to the Open Audio Stack
   registry with were fetched as `luthier-extras` from the latest release;
   they are now part of the binary, so they are there from the first command,
   offline too, and a binary only ever reads the ones it was released with.
   They change with Luthier itself (`luthier upgrade --self`). `luthier update` no
-  longer lists them. Packages already installed from them keep
-  `luthier-extras` as their recorded source, which is only informational.
+  longer lists them.
 - **`luthier bench list` is now `luthier sources`.** It lists the two
   sources, extras (`built-in`, located in `luthier <version>`) and the Open
   Audio Stack registry; its `--json` document is unchanged. There is no
@@ -87,10 +93,11 @@ about.
 ### Removed
 
 - **The `bench.tar.gz` release asset.** Nothing reads it any more, so
-  releases no longer publish it: 0.2–0.4, which fetched it on `refresh`,
-  will find it missing from the next release on and warn that
-  `luthier-extras` was not refreshed, keeping the copy they have. Updating
-  past 0.4 ends that.
+  releases no longer publish it.
+- **What 0.1–0.4 left behind is no longer read or kept for them**: the
+  environment a 0.2 export named, the signer a 0.1 provenance record
+  named, and the `luthier-extras` snapshot 0.4 fetched. Unknown fields
+  in an export or a record are still ignored, so the files read.
 
 ### Fixed
 

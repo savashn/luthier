@@ -136,14 +136,11 @@ two, and both are fixed in the binary:
 
 1. **Extras**, Luthier's own list, built from `extras/` in this repository
    into the binary itself, so it is exactly as trustworthy as the binary,
-   under the same provenance attestation, and nothing is fetched for it. (0.4
-   and earlier fetched it as a `bench.tar.gz` asset of the latest release,
-   which releases no longer carry.) It is consulted first, so it wins
-   any package ID both sources carry — which is how it corrects the other one.
+   under the same provenance attestation, and nothing is fetched for it. It is
+   consulted first, so it wins any package ID both sources carry — which is how it corrects the other one.
 2. **The Open Audio Stack registry**, which carries almost every package.
 
-There is no command to add a source, and `config.json` cannot name one: a
-`registries` list written there by 0.1 is ignored. `--registry-path` replaces
+There is no command to add a source, and `config.json` cannot name one. `--registry-path` replaces
 both with a local directory for one command; it is hidden, and exists for
 developing extras.
 
@@ -155,9 +152,8 @@ the server sent, which a refresh sends back so that an unchanged index is not
 downloaded again. They are sent only while the snapshot on disk hashes to what
 the record says arrived, from the same URL. So a change to that index reaches
 every user within a day without a `luthier update`, exactly as it would with one.
-(0.1 also pinned each source's origin on first use, because users could add
-sources; with the URLs fixed in the binary a pin protects nothing and would
-lock everyone out the day a release moved one.)
+Nothing pins a source's origin: with the URLs fixed in the binary a pin
+protects nothing, and would lock everyone out the day a release moved one.
 
 ## Trusting GitHub
 
@@ -169,15 +165,11 @@ publish a release of this repository can publish a binary whose copy of extras p
 at any file with a matching checksum, and every user who updates installs it
 on their next `install`.** That means a compromised GitHub account, a leaked
 token with write access, or a compromised release workflow. Homebrew and Scoop
-make the same trade; apt and pacman do not. Clients from 0.2 to 0.4 still ask
-the latest release for a `bench.tar.gz` on every `refresh`. Releases no longer
-carry one, but the same access could attach one, and it would reach every
-such client whether it updates or not.
+make the same trade; apt and pacman do not.
 
 0.1 signed extras with a key kept off CI and compiled into the manager,
 which closed that gap. It was removed to keep releases a single tag with no
-key to guard; 0.1 clients still require that signature and refuse extras
-from any later release until they are upgraded.
+key to guard.
 
 What still holds whatever extras says: a manifest cannot name a
 destination or run a command, every artifact is checked against the checksum

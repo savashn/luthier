@@ -302,8 +302,7 @@ That only made sense while users could add sources. Once the sources became
 fixed in the binary (see 3.2), an origin pin protected nothing a compiled-in
 URL did not already fix, and would have locked every user out the day a
 release moved a URL — so it was removed. What remains is an audit record of
-each fetch: URL, digest, size and time. The key that signed it was recorded
-too while 0.1 signed extras; that field is now ignored.
+each fetch: URL, digest, size and time.
 
 ### 2.2 Signature verification — withdrawn
 
@@ -319,9 +318,7 @@ binary is, and a release is a tag with no key to guard and no step on the
 maintainer's machine. Homebrew and Scoop make the same trade. What the
 manager still guarantees whatever extras says — no destination in a
 manifest, no scripts, checksums, one extraction policy — is in `SECURITY.md`
-under *Trusting GitHub*, together with the risk this leaves. 0.1 clients
-still require the signature and refuse extras from later releases until
-they are upgraded.
+under *Trusting GitHub*, together with the risk this leaves.
 
 If it comes back, the history of `registry/signature.rs` has a minisign
 implementation tested against minisign's own output.
@@ -510,13 +507,38 @@ Things without an answer yet, recorded so they are not mistaken for oversights.
 
 **How does an exported file handle a package that has left the registry?**
 Import currently fails, which is right for reproducibility and unhelpful when a
-project simply moved. A `--skip-missing` flag is the obvious answer; whether it
+project simply moved. (`outdated` names such a package, and `upgrade` leaves
+it where it is and says so.) A `--skip-missing` flag is the obvious answer; whether it
 should also record what it skipped is not settled.
 
 **What is the update story for a `pack`?** A pack resolves to dependencies, so
 updating one means updating its members — but a pack's own version bump and its
 members' bumps are different events, and `upgrade` does not currently
 distinguish them.
+
+### Command verbs — decided: apt's and Homebrew's
+
+The spec's §26 said never to update everything silently, and 0.4 read that
+as `update` with no package only reporting, with `refresh` fetching the
+lists and `cleanup` only listing orphans. The verbs now follow what apt and
+Homebrew users already type: `update` fetches the lists and counts what can
+be upgraded, `outdated` lists it, `upgrade` with no package upgrades
+everything and `autoremove` removes orphans. §26 still holds in the sense
+that matters — every upgrade and every removal shows its plan and asks,
+and `--json` is not consent — but `--yes` now upgrades everything in one
+command, which is a choice the user makes by typing it.
+
+`upgrade --self` stays a flag rather than part of `upgrade`, as rustup and
+Scoop keep it: upgrading packages never needs root, and upgrading a .deb or
+.rpm Luthier goes through sudo.
+
+### Compatibility with 0.1–0.4 — decided: none kept
+
+Nobody used Luthier before 0.5, so nothing reads, migrates or aliases what
+an earlier version spelled or left on disk: not 0.4's command names, not
+0.2's `envs` directory or the environment an export named, not 0.4's
+`luthier-extras` snapshot, not the signer 0.1 recorded. The state, config
+and export formats did not change, so a file 0.4 wrote still reads.
 
 ### Third-party registries — decided: none
 

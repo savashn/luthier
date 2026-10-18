@@ -124,12 +124,7 @@ pub enum Command {
   ///
   /// Installs nothing; `luthier upgrade` does. Commands that read the
   /// package lists already fetch them once a day on their own.
-  Update {
-    /// Not accepted: here only to point 0.4's `update <package>` at
-    /// `upgrade`, rather than leave it to a bare usage error.
-    #[arg(hide = true)]
-    packages: Vec<String>,
-  },
+  Update,
 
   /// List installed packages that have a newer release. Changes nothing.
   Outdated,

@@ -51,10 +51,9 @@ pub struct Config {
   ///
   /// Never read from or written to `config.json`. Luthier reads the Open
   /// Audio Stack registry and the one source that corrects it, and nothing
-  /// else; a `registries` list that 0.1 wrote into the file is ignored. The
-  /// field exists so a front end or a test can hand a session a different
-  /// list — `--registry-path`, for developing extras, is the one way the
-  /// command line does.
+  /// else, so the file cannot name a source. The field exists so a front
+  /// end or a test can hand a session a different list — `--registry-path`,
+  /// for developing extras, is the one way the command line does.
   #[serde(skip, default = "default_registries")]
   pub registries: Vec<RegistryConfig>,
   /// Directories chosen in place of the defaults. Left out of the file
@@ -78,7 +77,7 @@ pub const DEFAULT_OAS_URL: &str = "https://open-audio-stack.github.io/open-audio
 /// This is the whole list. Users do not add sources: anything downloadable
 /// belongs in the Open Audio Stack registry, and extras holds only what
 /// cannot be expressed there. It is built into the binary (`extras`), so it
-/// is never fetched; 0.4 and earlier fetched it as `luthier-extras`.
+/// is never fetched.
 ///
 /// That order is the whole mechanism behind correcting a broader source: where
 /// a derived entry would install the wrong thing, the manifest in extras is the
@@ -215,15 +214,15 @@ mod tests {
 
   #[test]
   fn registries_in_the_file_are_neither_read_nor_written() {
-    // 0.1 wrote the registry list into `config.json` and let users add to
-    // it. An upgrade reads the built-in list whatever the file says, and a
-    // save stops carrying one.
+    // A source named in `config.json` would be a way to add one. A load
+    // reads the built-in list whatever the file says, and a save never
+    // writes a list.
     let dir = tempfile::tempdir().unwrap();
     let layout = Layout::rooted_at(dir.path());
     std::fs::create_dir_all(layout.config_dir()).unwrap();
     std::fs::write(
       layout.config_file(),
-      br#"{"registries":[{"name":"luthier-extras","type":"snapshot","url":"https://example.com/p.tar.gz"}]}"#,
+      br#"{"registries":[{"name":"second","type":"snapshot","url":"https://example.com/p.tar.gz"}]}"#,
     )
     .unwrap();
 

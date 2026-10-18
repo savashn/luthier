@@ -45,14 +45,12 @@ pin = "1.2.3"
 |---|---|
 | `meta.schema` | Format revision. A file from a newer revision is refused rather than half-understood. |
 | `meta.pinned` | Whether every package names a version. A `version` is a hard requirement wherever one is given, so a hand-written file with `pinned = false` can hold some packages at a version and let the rest follow the registry. |
-| `package.registry` | Where the manifest came from. Informational, and may be left out. A package installed by 0.4 or earlier from extras says `luthier-extras`, its name then; it is `extras` now. |
+| `package.registry` | Where the manifest came from. Informational, and may be left out. |
 | `package.reason` | `explicit` packages are what import asks for by name; `dependency` entries are recorded so their versions reproduce, but stay dependencies. |
 | `package.pin` | A pin the user had applied, reapplied after the install. |
 
 Packages are sorted by ID, so two exports of the same installation are
-byte-identical and the file diffs cleanly in version control. A file written
-by 0.2, which also named the environment it came from, still imports; that
-field is ignored.
+byte-identical and the file diffs cleanly in version control.
 
 ## What it deliberately does not record
 
@@ -120,10 +118,7 @@ Luthier 0.2 had named environments — `luthier env create`, `--env`,
 
 What they were for — a set of plugins that stays put for a project, and the
 same set on another machine — is what `export`, `import`, `luthier pin` and a
-version in the Home Manager module do. Environment directories a 0.2
-installation created are left where they were, under
-`~/.local/share/luthier/envs`; nothing reads them, and deleting them is up to
-you.
+version in the Home Manager module do.
 
 ## Cross-machine and cross-OS notes
 

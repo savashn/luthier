@@ -58,8 +58,6 @@ exactly the manifests it was released with, never ones written for a manifest
 format it does not know, and a change here reaches users with the release that
 carries it — through `luthier upgrade --self`, or however they installed.
 
-0.4 and earlier fetched it on `refresh`, as `luthier-extras`, from a
-`bench.tar.gz` asset of the latest release; releases no longer carry one.
 Extras is not signed; see *Trusting GitHub* in [SECURITY.md](../SECURITY.md).
 
 Extras and the Open Audio Stack registry are the only sources the manager

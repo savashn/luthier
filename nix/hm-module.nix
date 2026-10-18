@@ -11,7 +11,7 @@
 #   packages   a file in the format `luthier export` writes, applied with
 #              `luthier import [--prune]`
 #   locations  `luthier location set`
-#   refresh    `luthier update` first, so a newly declared package can be
+#   update     `luthier update` first, so a newly declared package can be
 #              found
 #
 # A failure — no network, a disk that is not mounted — is reported as a
@@ -136,7 +136,7 @@ in
       '';
     };
 
-    refresh = mkOption {
+    update = mkOption {
       type = types.bool;
       default = true;
       description = ''
@@ -214,7 +214,7 @@ in
           || warnEcho "luthier $*: failed; the rest of the switch goes ahead"
       }
 
-      ${optionalString cfg.refresh "luthier update"}
+      ${optionalString cfg.update "luthier update"}
 
       ${concatMapStrings
         (kind: ''

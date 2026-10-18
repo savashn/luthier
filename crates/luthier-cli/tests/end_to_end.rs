@@ -670,20 +670,110 @@ fn upgrade_with_nothing_named_upgrades_everything_but_a_pin() {
 }
 
 #[test]
+fn outdated_names_what_nothing_can_upgrade_any_more() {
+  let fixture = Fixture::new();
+  for id in ["current", "gone", "foreign"] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, &[]);
+  }
+  fixture
+    .luthier()
+    .args(["install", "current", "gone", "foreign"])
+    .assert()
+    .success();
+  let artifact = fixture.make_artifact("Current");
+  fixture.add_plugin("current", "1.1.0", &artifact, &[]);
+  std::fs::remove_file(fixture.registry().join("plugins/gone.toml")).unwrap();
+  // Still carried, with nothing built for this machine.
+  let other = if ARCH == "x86_64" {
+    "aarch64"
+  } else {
+    "x86_64"
+  };
+  let foreign = fixture.registry().join("plugins/foreign.toml");
+  let text = std::fs::read_to_string(&foreign).unwrap();
+  std::fs::write(
+    &foreign,
+    text.replace(
+      &format!("arch = \"{ARCH}\""),
+      &format!("arch = \"{other}\""),
+    ),
+  )
+  .unwrap();
+
+  let updated = stdout_of(&fixture.luthier().arg("update").output().unwrap());
+  assert!(
+    updated.contains(
+      "1 package can be upgraded. 2 installed packages can no longer be upgraded. \
+       Run `luthier outdated` to see them."
+    ),
+    "{updated}"
+  );
+
+  let outdated = stdout_of(&fixture.luthier().arg("outdated").output().unwrap());
+  assert!(outdated.contains("1.0.0 -> 1.1.0"), "{outdated}");
+  assert!(
+    outdated.contains("Staying at the version installed"),
+    "{outdated}"
+  );
+  assert!(
+    outdated.contains("no source carries it any more"),
+    "{outdated}"
+  );
+  assert!(
+    outdated.contains("no release is built for this machine any more"),
+    "{outdated}"
+  );
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  assert_eq!(found["updates"][0]["id"], "current");
+  let reasons: Vec<(&str, &str)> = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|p| (p["id"].as_str().unwrap(), p["reason"].as_str().unwrap()))
+    .collect();
+  assert_eq!(
+    reasons,
+    [
+      ("foreign", "no-release-for-target"),
+      ("gone", "not-carried")
+    ]
+  );
+
+  // Upgrading everything upgrades what it can, and says what it left.
+  let upgraded = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&upgraded);
+  assert!(upgraded.status.success(), "{stdout}");
+  assert!(
+    stdout.contains("Gone stays at 1.0.0: no source carries it any more."),
+    "{stdout}"
+  );
+  let listed = stdout_of(&fixture.luthier().arg("list").output().unwrap());
+  assert!(listed.contains("1.1.0"), "{listed}");
+  assert!(listed.contains("Gone"), "{listed}");
+}
+
+#[test]
 fn update_takes_no_packages_and_upgrade_only_installed_ones() {
   let fixture = Fixture::new();
   let artifact = fixture.make_artifact("Testsynth");
   fixture.add_plugin("testsynth", "1.2.3", &artifact, &[]);
 
-  // 0.4's `update <package>` is pointed at `upgrade`, as a usage error.
+  // `update` fetches lists; it never installs or upgrades anything.
   let output = fixture
     .luthier()
     .args(["update", "testsynth"])
     .output()
     .unwrap();
   assert_eq!(output.status.code(), Some(2));
-  let stderr = String::from_utf8_lossy(&output.stderr);
-  assert!(stderr.contains("luthier upgrade testsynth"), "{stderr}");
 
   // Upgrading something not installed is an install, and is not done unasked.
   let output = fixture
@@ -693,12 +783,49 @@ fn update_takes_no_packages_and_upgrade_only_installed_ones() {
     .unwrap();
   assert!(!output.status.success());
   assert!(!fixture.clap_dir().join("Testsynth.clap").exists());
+}
 
-  // The 0.4 spellings of these are gone.
-  for command in ["refresh", "cleanup"] {
-    let output = fixture.luthier().arg(command).output().unwrap();
-    assert_eq!(output.status.code(), Some(2), "{command}");
-  }
+#[test]
+fn a_dependency_upgraded_by_name_is_still_a_dependency() {
+  // Naming it is asking for a newer release, not asking to keep it after
+  // nothing needs it: `autoremove` must still collect it (§24).
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+  fixture
+    .luthier()
+    .args(["install", "library"])
+    .assert()
+    .success();
+  fixture.add_plugin("engine", "1.1.0", &engine, &[]);
+
+  let upgraded = fixture
+    .luthier()
+    .args(["upgrade", "engine"])
+    .output()
+    .unwrap();
+  assert!(upgraded.status.success(), "{}", stdout_of(&upgraded));
+
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let engine_row = listed
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|p| p["id"] == "engine")
+    .unwrap();
+  assert_eq!(engine_row["version"], "1.1.0", "{json}");
+  assert_eq!(engine_row["reason"], "dependency", "{json}");
+
+  fixture
+    .luthier()
+    .args(["remove", "library"])
+    .assert()
+    .success();
+  fixture.luthier().arg("autoremove").assert().success();
+  assert!(!fixture.clap_dir().join("Engine.clap").exists());
 }
 
 #[test]
@@ -1204,31 +1331,6 @@ fn a_library_with_no_rules_installs_under_its_package_id() {
   assert!(!libraries.join("avl-percussions").exists());
 }
 
-#[test]
-fn there_are_no_environments_any_more() {
-  // 0.2 had `env create`, `--env` and LUTHIER_ENV. A plugin set is not
-  // isolated by a search path hosts only half honour, and a setup is
-  // reproduced by `export` and `import`, so they went.
-  let fixture = Fixture::new();
-  for command in [
-    vec!["env", "create", "mixing"],
-    vec!["env", "export"],
-    vec!["--env", "mixing", "list"],
-  ] {
-    let output = fixture.luthier().args(&command).output().unwrap();
-    assert!(!output.status.success(), "{command:?}");
-  }
-  // An environment selected in the shell is not honoured either.
-  let output = fixture
-    .luthier()
-    .env("LUTHIER_ENV", "mixing")
-    .arg("list")
-    .output()
-    .unwrap();
-  assert!(output.status.success());
-  assert!(stdout_of(&output).contains("No packages installed"));
-}
-
 /// §51: an export reproduces an installation somewhere else,
 /// which is the whole reason the file records versions rather than names.
 #[test]
@@ -1678,6 +1780,74 @@ fn removing_the_last_engine_warns_about_the_content_it_leaves_silent() {
 }
 
 #[test]
+fn autoremove_keeps_the_last_engine_for_content_still_installed() {
+  // A kit does not depend on its player, so the player a pack brought in
+  // is an orphan once the pack goes. Collecting it would leave the kit
+  // silent; it stays, and so does what it needs in turn.
+  let fixture = Fixture::new();
+  let kit = fixture.make_library_artifact("Kit");
+  fixture.add_library("kit", "1.0.0", "Kit", &kit);
+  let path = fixture.registry().join("plugins/kit.toml");
+  let text = std::fs::read_to_string(&path).unwrap().replace(
+    "kind = \"library\"",
+    "kind = \"library\"\ncontent = [\"drumgizmo\"]",
+  );
+  std::fs::write(&path, text).unwrap();
+  let runtime = fixture.make_artifact("Runtime");
+  fixture.add_plugin("runtime", "1.0.0", &runtime, &[]);
+  let drumcraker = fixture.make_artifact("Drumcraker");
+  fixture.add_plugin("drumcraker", "1.3.4", &drumcraker, &["runtime"]);
+  let stray = fixture.make_artifact("Stray");
+  fixture.add_plugin("stray", "1.0.0", &stray, &[]);
+  std::fs::write(
+    fixture.registry().join("engines.toml"),
+    "schema = 1\n\n[[engine]]\npackage = \"drumcraker\"\nplays = [\"drumgizmo\"]\n",
+  )
+  .unwrap();
+  std::fs::write(
+    fixture.registry().join("packs/bundle.toml"),
+    concat!(
+      "schema = 1\n",
+      "id = \"bundle\"\n",
+      "name = \"Bundle\"\n",
+      "kind = \"pack\"\n",
+      "category = \"pack\"\n",
+      "license = { kind = \"open-source\", spdx = \"CC0-1.0\" }\n",
+      "description = \"A player and something else.\"\n",
+      "\n[[releases]]\n",
+      "version = \"1.0.0\"\n",
+      "dependencies = [\"drumcraker\", \"stray\"]\n",
+    ),
+  )
+  .unwrap();
+
+  fixture
+    .luthier()
+    .args(["install", "kit", "bundle"])
+    .assert()
+    .success();
+  fixture
+    .luthier()
+    .args(["remove", "bundle"])
+    .assert()
+    .success();
+
+  let output = fixture.luthier().arg("autoremove").output().unwrap();
+  let stdout = stdout_of(&output);
+  assert!(output.status.success(), "{stdout}");
+  assert!(
+    stdout.contains("Keeping drumcraker: it plays the DrumGizmo content in kit"),
+    "{stdout}"
+  );
+  assert!(!fixture.clap_dir().join("Stray.clap").exists(), "{stdout}");
+  assert!(fixture.clap_dir().join("Drumcraker.clap").is_file());
+  assert!(
+    fixture.clap_dir().join("Runtime.clap").is_file(),
+    "what the kept engine needs stays with it"
+  );
+}
+
+#[test]
 fn the_sources_are_built_in_and_cannot_be_added_to() {
   // Luthier reads extras, its own list, then the Open Audio Stack registry,
   // in that precedence, and nothing else.
@@ -1689,15 +1859,10 @@ fn the_sources_are_built_in_and_cannot_be_added_to() {
   assert!(extras < oas, "{listed}");
   assert!(listed.contains("built-in"), "{listed}");
 
-  // The 0.1 spellings are gone, `bench list` with them, and `sources` takes
-  // nothing to add one with.
+  // `sources` takes nothing to add one with, or to take one away.
   for command in [
-    vec!["bench", "list"],
-    vec!["bench", "add", "second", "/tmp"],
-    vec!["bench", "remove", "extras"],
-    vec!["bench", "trust", "extras", "RWS"],
     vec!["sources", "add", "second", "/tmp"],
-    vec!["refresh", "--allow-unsigned"],
+    vec!["sources", "remove", "oas"],
   ] {
     let output = fixture.luthier().args(&command).output().unwrap();
     assert!(!output.status.success(), "{command:?}");

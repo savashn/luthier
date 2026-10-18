@@ -159,11 +159,7 @@ the crate map keeps that out of `luthier-manifest`.
   `RegistrySource::BuiltIn`, named `extras`), so a binary reads exactly the
   extras it was released with and nothing is fetched for it; `refresh` skips
   it (`is_built_in`), so it can never make a refresh that reached nothing
-  look partial. 0.4 and earlier fetched it as `luthier-extras`, from a
-  `bench.tar.gz` release asset releases no longer carry. A copy one fetched
-  is left on disk for a 0.4 still installed or rolled back to, which reads it
-  and can no longer fetch it again. A command that reads
-  a registry calls `Session::refresh_due` before anything reads the index:
+  look partial. A command that reads a registry calls `Session::refresh_due` before anything reads the index:
   the OAS index is fetched if it is missing or was last asked more than
   `AUTOMATIC_REFRESH_AFTER` (a day) ago, with the `ETag`/`Last-Modified` the
   provenance record kept, so an unchanged index costs a 304 and no bytes. Those
@@ -198,8 +194,8 @@ the crate map keeps that out of `luthier-manifest`.
   root.
 - **The sources are fixed, and `config.json` cannot name one.** Luthier
   reads OAS and extras, its own list, nothing else — the user's decision, not a
-  missing feature. `Config::registries` is `#[serde(skip)]`, so a list 0.1
-  wrote there is ignored; it stays a field only so a test or a front end can
+  missing feature. `Config::registries` is `#[serde(skip)]`, so the file
+  cannot name one; it stays a field only so a test or a front end can
   hand a `Session` different sources. Do not bring back 0.1's `bench add`, or any way to add a source, and do not
   add pinning of an origin: with the URL compiled in, a pin protects nothing
   and locks everyone out the day a release moves it.
@@ -217,8 +213,7 @@ the crate map keeps that out of `luthier-manifest`.
   `VST3_PATH` only extend the standard locations (no real isolation), the
   variables reach only hosts started from that shell, and every environment
   duplicated its sample libraries. Reproducibility is `export`/`import
-  --prune`, pins and the Home Manager module. Do not bring environments back;
-  `~/.local/share/luthier/envs` from 0.2 is left alone and never read.
+  --prune`, pins and the Home Manager module. Do not bring environments back.
 - **Build nothing that needs the network or a CA store eagerly.** The HTTP
   client is built on the first request (`Downloader::client`): the Nix
   sandbox has no CA store, and building it up front panicked every test that
@@ -250,17 +245,26 @@ the crate map keeps that out of `luthier-manifest`.
   truncated download as in use and keeps `cache clean` from ever collecting it.
 - **The commands follow apt and Homebrew, by decision.** `update` fetches the
   package lists (`Session::refresh`; the method kept its name) and counts
-  what can be upgraded; `outdated` lists it; `upgrade` upgrades the named
-  packages, or with none named everything, after a confirmation;
-  `autoremove` removes orphans. 0.4's `refresh`, `cleanup` and
-  `update <package>` are gone with no alias, and `update <package>` is a
-  usage error that names `upgrade`, because a quiet fetch would let a script
-  think it upgraded something. `upgrade --self` stays apart from `upgrade`:
-  packages never need root, and a .deb or .rpm Luthier goes through sudo.
-  `Session::upgrade_roots` resolves the *explicit* packages only — a
-  dependency named as a root is recorded as explicit and `autoremove` never
-  collects it again — and `State::orphans` is reachability from explicit
-  packages, so a chain or a cycle goes in one pass.
+  what can be upgraded; `outdated` lists it, and what nothing can upgrade
+  any more (`Unavailable`: no source carries it, or no release is built
+  for this machine); `upgrade` upgrades the named packages, or with none
+  named everything, after a confirmation, and names what it leaves
+  (`held_back`); `autoremove` removes orphans. 0.4's `refresh`, `cleanup`
+  and `update <package>` are gone with no alias: nobody used Luthier yet.
+  `upgrade --self` stays apart from `upgrade`: packages never need root,
+  and a .deb or .rpm Luthier goes through sudo. `Session::upgrade` resolves
+  the *explicit* packages when none is named, and records every package
+  with the reason it already had (`Purpose::Upgrade`) — the resolver marks
+  roots explicit, and a dependency upgraded by name would otherwise never
+  be collected again. `State::orphans` is reachability from explicit
+  packages, so a chain or a cycle goes in one pass; `autoremove_candidates`
+  then keeps any orphan engine that is the last player of content still
+  installed, since content never depends on an engine.
+- **Nothing is kept for 0.1–0.4.** Nobody used Luthier before 0.5, so no
+  alias, shim or migration exists for what an earlier version spelled or
+  left on disk — 0.2's `envs` directory, 0.4's `luthier-extras` snapshot,
+  0.1's `registries` in `config.json` — and none should be added. The
+  state, config and export formats did not change, so those still read.
 - **One source failing does not fail `refresh`.** Each provider reports for
   itself (`RefreshOutcome::failure`), the snapshot already on disk survives a
   failed fetch, and only *every* source failing is an error. The default

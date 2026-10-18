@@ -153,21 +153,13 @@ impl State {
   /// dependents alone left the rest of a chain behind for a second
   /// `autoremove`, and a cycle behind for good.
   pub fn orphans(&self) -> Vec<PackageId> {
-    let mut needed: BTreeSet<&PackageId> = BTreeSet::new();
-    let mut pending: Vec<&PackageId> = self
-      .packages
-      .values()
-      .filter(|p| p.reason == InstallReason::Explicit)
-      .map(|p| &p.id)
-      .collect();
-    while let Some(id) = pending.pop() {
-      if !needed.insert(id) {
-        continue;
-      }
-      if let Some(package) = self.packages.get(id) {
-        pending.extend(package.dependencies.iter());
-      }
-    }
+    let needed = self.reachable_from(
+      self
+        .packages
+        .values()
+        .filter(|p| p.reason == InstallReason::Explicit)
+        .map(|p| &p.id),
+    );
     // `packages` is a `BTreeMap`, so this comes out sorted.
     self
       .packages
@@ -175,6 +167,24 @@ impl State {
       .filter(|id| !needed.contains(id))
       .cloned()
       .collect()
+  }
+
+  /// `roots` and every installed package they depend on, at any depth.
+  pub fn reachable_from<'a>(
+    &'a self,
+    roots: impl IntoIterator<Item = &'a PackageId>,
+  ) -> BTreeSet<&'a PackageId> {
+    let mut reached: BTreeSet<&PackageId> = BTreeSet::new();
+    let mut pending: Vec<&PackageId> = roots.into_iter().collect();
+    while let Some(id) = pending.pop() {
+      if !reached.insert(id) {
+        continue;
+      }
+      if let Some(package) = self.packages.get(id) {
+        pending.extend(package.dependencies.iter());
+      }
+    }
+    reached
   }
 
   /// Every path the manager owns, for duplicate and conflict detection.

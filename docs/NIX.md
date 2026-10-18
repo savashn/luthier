@@ -99,7 +99,7 @@ from the list does **not** uninstall it until you turn on `prune`; see below.
 | `package` | built from the flake | The luthier package to use. |
 | `packages` | `[ ]` | Packages to install in your home directory. |
 | `prune` | `false` | Remove installed packages the declaration does not list. |
-| `refresh` | `true` | Ask for the package list before applying. |
+| `update` | `true` | Ask for the package list before applying. |
 | `systemPlugins` | `true` | Count plugins from nixpkgs or your distribution as engines. |
 | `locations.cache` | `null` | Where downloaded archives go. |
 | `locations.libraries` | `null` | Where sample libraries go. |
@@ -147,7 +147,7 @@ With `prune` on and `packages = [ ]`, a switch removes every package from your
 home directory. Removal never deletes a file you changed after it was
 installed; Luthier reports it and leaves it where it is.
 
-### `refresh`
+### `update`
 
 On, every switch asks for the Open Audio Stack package list first, so a package
 published there since the last switch can be found; a list that has not
@@ -177,7 +177,7 @@ programs.luthier.packages = [ "salamander-drumkit" ];     # the samples
 During activation, after Home Manager has written your files, the module runs
 `luthier` with `--yes`:
 
-1. `luthier update`, unless `refresh = false`.
+1. `luthier update`, unless `update = false`.
 2. `luthier location set <kind> <dir>` for each location that is set.
 3. `luthier import <file>`, with `--prune` if `prune` is on. The file is
    generated from `packages`, in the same format `luthier export` writes.
