@@ -178,6 +178,11 @@ pub enum RegistryError {
 
   #[error("registry {registry} sent something this build cannot read: {reason}")]
   Malformed { registry: String, reason: String },
+
+  /// `import --prune` with a source unread: a package that source carries
+  /// would look like one the file does not need, and be removed.
+  #[error("not pruning while a source cannot be read: {0}")]
+  PruneWithoutSource(String),
 }
 
 impl RegistryError {
@@ -189,6 +194,9 @@ impl RegistryError {
           .into(),
       ),
       RegistryError::NotFetched(_) => Some("Run `luthier update` first.".into()),
+      RegistryError::PruneWithoutSource(_) => Some(
+        "Run `luthier update`, then import again. Without `--prune` nothing is removed.".into(),
+      ),
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }
@@ -640,6 +648,10 @@ pub enum ResolveError {
     /// Who needs what, and why it stays.
     detail: String,
   },
+
+  /// A reinstall was asked of a package no published release can replace.
+  #[error("{detail}")]
+  NotReinstallable { id: PackageId, detail: String },
 }
 
 impl ResolveError {
@@ -690,10 +702,14 @@ impl ResolveError {
         Some(format!("Use `luthier unpin {id}` to lift the pin."))
       }
       ResolveError::KeptConflict { .. } => Some(
-        "`luthier outdated` says what holds it. Removing that lets it move; naming \
-         the other packages upgrades them without it."
+        "`luthier outdated` says what holds it, and removing that lets it move. If a \
+         source could not be read, `luthier update` may be all it needs."
           .into(),
       ),
+      ResolveError::NotReinstallable { id, .. } => Some(format!(
+        "Its files stay as they are; `luthier verify {id}` says which differ. If a \
+         source could not be read, `luthier update` may bring it back."
+      )),
       ResolveError::RequiredVersionMissing { .. } => Some(
         "Run `luthier update`; if the version is genuinely gone, re-export from a \
                  machine that still has it, or import with a `--loose` file."

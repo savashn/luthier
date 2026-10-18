@@ -1121,6 +1121,133 @@ fn an_import_records_what_its_file_asked_for() {
 }
 
 #[test]
+fn import_prune_keeps_what_the_file_names_when_no_source_carries_it() {
+  // The Home Manager module runs `import --prune --yes` on every switch.
+  // A package the file names, which its source then dropped, still works
+  // where it is; removing it would delete what cannot be installed again.
+  let fixture = Fixture::new();
+  for id in ["keep", "stray"] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, &[]);
+  }
+  fixture
+    .luthier()
+    .args(["install", "keep", "stray"])
+    .assert()
+    .success();
+  std::fs::remove_file(fixture.registry().join("plugins/keep.toml")).unwrap();
+
+  let file = loose_env_file(&fixture, &["keep"]);
+  let output = fixture
+    .luthier()
+    .args(["import", "--prune"])
+    .arg(&file)
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "{}{}",
+    stdout_of(&output),
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert_eq!(installed(&fixture), ["keep"]);
+  assert!(fixture.clap_dir().join("Keep.clap").is_file());
+}
+
+#[test]
+fn import_prune_converges_when_the_file_drops_what_held_a_dependency() {
+  // `old` left every source and holds `lib` at 1.0.0. The file drops it
+  // and asks for `plugin`, which needs lib >=2: the hold goes with `old`,
+  // so the import upgrades `lib` and removes `old` rather than refusing.
+  let fixture = Fixture::new();
+  for (id, deps) in [("lib", &[][..]), ("old", &["lib"][..])] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "old"])
+    .assert()
+    .success();
+  std::fs::remove_file(fixture.registry().join("plugins/old.toml")).unwrap();
+  let artifact = fixture.make_artifact("Lib");
+  fixture.add_plugin("lib", "2.0.0", &artifact, &[]);
+  let artifact = fixture.make_artifact("Plugin");
+  fixture.add_plugin("plugin", "1.0.0", &artifact, &["lib"]);
+  let manifest = fixture.registry().join("plugins/plugin.toml");
+  let text = std::fs::read_to_string(&manifest).unwrap().replace(
+    "dependencies = [\"lib\"]",
+    "dependencies = [{ id = \"lib\", version = \">=2\" }]",
+  );
+  std::fs::write(&manifest, text).unwrap();
+
+  let file = loose_env_file(&fixture, &["plugin"]);
+  let output = fixture
+    .luthier()
+    .args(["import", "--prune"])
+    .arg(&file)
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "{}{}",
+    stdout_of(&output),
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert_eq!(installed(&fixture), ["lib", "plugin"]);
+}
+
+#[test]
+fn asking_for_a_kept_dependency_by_name_records_it_as_requested() {
+  // `engine` came in with `library` and then left every source. Asked for
+  // by name, it is kept from the state — and is still the user's now.
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+  fixture
+    .luthier()
+    .args(["install", "library"])
+    .assert()
+    .success();
+  std::fs::remove_file(fixture.registry().join("plugins/engine.toml")).unwrap();
+
+  let output = fixture
+    .luthier()
+    .args(["install", "engine"])
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{}", stdout_of(&output));
+  assert_eq!(reason_of(&fixture, "engine"), "explicit");
+}
+
+#[test]
+fn a_dependency_asked_for_by_name_stays_requested_when_a_later_download_fails() {
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+  fixture
+    .luthier()
+    .args(["install", "library"])
+    .assert()
+    .success();
+  let broken = fixture.make_artifact("Broken");
+  fixture.add_plugin("broken", "1.0.0", &broken, &[]);
+  std::fs::remove_file(&broken.path).unwrap();
+
+  let output = fixture
+    .luthier()
+    .args(["install", "engine", "broken"])
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  assert_eq!(reason_of(&fixture, "engine"), "explicit");
+}
+
+#[test]
 fn json_is_not_consent_and_shows_no_plan_to_confirm() {
   let fixture = Fixture::new();
   let artifact = fixture.make_artifact("Testsynth");

@@ -11,7 +11,7 @@ use crate::config::{Config, RegistrySource};
 use crate::download::{Downloader, Progress};
 use crate::engine;
 use crate::envfile::EnvFile;
-use crate::error::{Error, InstallError, ResolveError, Result, StateError};
+use crate::error::{Error, InstallError, RegistryError, ResolveError, Result, StateError};
 use crate::fsutil;
 use crate::install::{self, EntryStatus, InstallTransaction};
 use crate::layout::{Layout, LocationKind};
@@ -72,6 +72,41 @@ impl Purpose {
   }
 }
 
+/// Installed dependencies this resolution records as asked for by name:
+/// an install's roots that are there already, whether resolved through a
+/// source or kept from the state (see [`resolver::frozen`]).
+fn requested_marks(
+  resolution: &Resolution<'_>,
+  state: &State,
+  purpose: Purpose,
+  roots: &[PackageId],
+) -> Vec<PackageId> {
+  let was_dependency = |id: &PackageId| {
+    state
+      .get(id)
+      .is_some_and(|installed| installed.reason == InstallReason::Dependency)
+  };
+  let mut marks: Vec<PackageId> = resolution
+    .order
+    .iter()
+    .filter(|package| {
+      package.disposition == Disposition::Satisfied
+        && package.reason == InstallReason::Explicit
+        && was_dependency(package.id())
+    })
+    .map(|package| package.id().clone())
+    .collect();
+  if purpose == Purpose::Install {
+    marks.extend(
+      resolution
+        .kept
+        .iter()
+        .filter(|kept| roots.contains(&kept.id) && was_dependency(&kept.id))
+        .map(|kept| kept.id.clone()),
+    );
+  }
+  marks
+}
 /// A configured manager.
 pub struct Session {
   layout: Layout,
@@ -407,7 +442,14 @@ impl Session {
   ) -> Result<InstallPlan> {
     self.require_locations(&LocationKind::ALL)?;
     let state = crate::state::load(&self.layout)?;
-    self.plan_for(ids, force, required_versions, Purpose::Install, &state)
+    self.plan_for(
+      ids,
+      force,
+      required_versions,
+      &BTreeSet::new(),
+      Purpose::Install,
+      &state,
+    )
   }
 
   /// What [`Session::upgrade`] would do with `ids`: the named packages, or
@@ -417,7 +459,14 @@ impl Session {
     self.require_locations(&LocationKind::ALL)?;
     let state = crate::state::load(&self.layout)?;
     let (roots, held_back) = self.upgrade_roots(ids, &state)?;
-    let mut plan = self.plan_for(&roots, false, &BTreeMap::new(), Purpose::Upgrade, &state)?;
+    let mut plan = self.plan_for(
+      &roots,
+      false,
+      &BTreeMap::new(),
+      &BTreeSet::new(),
+      Purpose::Upgrade,
+      &state,
+    )?;
     plan.held_back = held_back;
     Ok(plan)
   }
@@ -427,6 +476,7 @@ impl Session {
     ids: &[PackageId],
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
+    leaving: &BTreeSet<PackageId>,
     purpose: Purpose,
     state: &State,
   ) -> Result<InstallPlan> {
@@ -441,6 +491,7 @@ impl Session {
         detected_externals: detected,
         force,
         required_versions,
+        leaving,
       },
     )?;
     purpose.record_reasons(&mut resolution, state);
@@ -513,18 +564,8 @@ impl Session {
         .map(|found| self.describe_unplayable(found, index))
         .collect(),
       space,
-      marked_requested: resolution
-        .order
-        .iter()
-        .filter(|package| {
-          package.disposition == Disposition::Satisfied
-            && package.reason == InstallReason::Explicit
-            && state
-              .get(package.id())
-              .is_some_and(|installed| installed.reason == InstallReason::Dependency)
-        })
-        .map(|package| package.id().clone())
-        .collect(),
+      marked_requested: requested_marks(&resolution, state, purpose, ids),
+      kept: resolution.kept.iter().map(|kept| kept.id.clone()).collect(),
       marked_dependency: Vec::new(),
       roots: ids.to_vec(),
       held_back: Outdated::default(),
@@ -699,7 +740,14 @@ impl Session {
     progress: &mut dyn Progress,
   ) -> Result<InstallOutcome> {
     self
-      .install_for(ids, force, required_versions, Purpose::Install, progress)
+      .install_for(
+        ids,
+        force,
+        required_versions,
+        &BTreeSet::new(),
+        Purpose::Install,
+        progress,
+      )
       .await
   }
 
@@ -723,6 +771,7 @@ impl Session {
         &plan.roots,
         false,
         &BTreeMap::new(),
+        &BTreeSet::new(),
         Purpose::Upgrade,
         progress,
       )
@@ -774,6 +823,7 @@ impl Session {
     ids: &[PackageId],
     force: bool,
     required_versions: &BTreeMap<PackageId, Version>,
+    leaving: &BTreeSet<PackageId>,
     purpose: Purpose,
     progress: &mut dyn Progress,
   ) -> Result<InstallOutcome> {
@@ -800,6 +850,7 @@ impl Session {
         detected_externals: detected,
         force,
         required_versions,
+        leaving,
       },
     )?;
     purpose.record_reasons(&mut resolution, guard.state());
@@ -840,17 +891,27 @@ impl Session {
     let mut warnings = Vec::new();
     let mut unsaved = false;
 
+    // Before anything is fetched, and in one write: a dependency asked for
+    // by name is one the user wants, whether or not a later download in
+    // this command fails, and whether it resolved through a source or
+    // was kept from the state.
+    let requested = requested_marks(&resolution, guard.state(), purpose, ids);
+    if !requested.is_empty() {
+      for id in &requested {
+        if let Some(record) = guard.state_mut().packages.get_mut(id) {
+          record.reason = InstallReason::Explicit;
+        }
+      }
+      guard.commit()?;
+    }
+
     for package in &resolution.order {
       if package.disposition == Disposition::Satisfied {
-        // Nothing to place, but a dependency asked for by name is now
-        // one the user wants, and that is worth a state write.
         let record = guard
           .state_mut()
           .packages
           .get_mut(package.id())
           .expect("satisfied means installed");
-        let promoted = record.reason != package.reason;
-        record.reason = package.reason;
         // A record from before content was recorded learns it here, while
         // the manifest is at hand.
         let learned = record.content.is_empty() && !package.entry.manifest.content.is_empty();
@@ -859,8 +920,9 @@ impl Session {
         }
         let summary = InstalledSummary::from(&*record);
         // Written with the next package, or once after the last: a state
-        // write per record would rewrite the whole file for each.
-        unsaved |= promoted || learned;
+        // write per record would rewrite the whole file for each, and
+        // losing this to a later failure only means learning it again.
+        unsaved |= learned;
         skipped.push(summary);
         continue;
       }
@@ -1274,7 +1336,7 @@ impl Session {
     let index = self.index()?;
     // A source that could not be read may well carry what is missing.
     let complete = index.problems.is_empty();
-    let frozen = resolver::frozen(index, state, &self.target);
+    let frozen = resolver::frozen(index, state, &self.target, &BTreeSet::new());
     let mut survey = Survey::default();
 
     let explicit: Vec<&PackageId> = state
@@ -1298,16 +1360,14 @@ impl Session {
           .outdated
           .unavailable
           .push(Unavailable::of(package, reason, None, None));
-        survey.held.insert(package.id.clone(), reason);
+        survey.held.insert(package.id.clone());
         continue;
       }
       let Some(available) = self.newest_release(index, package) else {
         continue;
       };
       if let Some(resolver::Frozen::NeededBy(by)) = frozen.get(&package.id) {
-        survey
-          .held
-          .insert(package.id.clone(), UnavailableReason::NeededByUnavailable);
+        survey.held.insert(package.id.clone());
         survey.outdated.unavailable.push(Unavailable::of(
           package,
           UnavailableReason::NeededByUnavailable,
@@ -1341,11 +1401,9 @@ impl Session {
     if entry.manifest.kind == PackageKind::Pack {
       return None;
     }
-    entry
-      .manifest
-      .releases_newest_first()
-      .into_iter()
-      .find(|release| release.artifacts_for(&self.target).next().is_some())
+    // The resolver's own choice, so this never names a release it would
+    // pass over.
+    resolver::newest_installable(&entry.manifest, &self.target)
       .map(|release| release.version.clone())
       .filter(|version| version > &package.version)
   }
@@ -1367,7 +1425,7 @@ impl Session {
     // silently obeyed; so is what the resolver will keep where it is. An
     // orphan's update is only left behind when nothing is named, since
     // naming it is what upgrades it.
-    let held = Outdated {
+    let mut held = Outdated {
       updates: survey
         .outdated
         .updates
@@ -1385,13 +1443,12 @@ impl Session {
         .cloned()
         .collect(),
     };
-    let mut held = held;
     // A named orphan that is pinned is held by its pin, which `updates`
     // does not list, since nothing explicit reaches it.
     for id in ids {
       let package = state.get(id).expect("checked above");
       if package.is_pinned()
-        && !survey.held.contains_key(id)
+        && !survey.held.contains(id)
         && !held.updates.iter().any(|update| update.id == id.as_str())
         && let Some(available) = survey.newest.get(id)
       {
@@ -1741,10 +1798,21 @@ impl Session {
       ));
     }
     let required = file.required_versions();
+    let state = crate::state::load(&self.layout)?;
+    let leaving = Self::leaving(file, prune, &state);
     let outcome = if roots.is_empty() {
       InstallOutcome::default()
     } else {
-      self.install_at(&roots, false, &required, progress).await?
+      self
+        .install_for(
+          &roots,
+          false,
+          &required,
+          &leaving,
+          Purpose::Install,
+          progress,
+        )
+        .await?
     };
 
     // Pins are reapplied afterwards: a pin is state about the user's
@@ -1805,16 +1873,49 @@ impl Session {
     (requested, dependency)
   }
 
+  /// What an `import --prune` of `file` is about to remove, as far as can
+  /// be told before resolving: installed packages the file neither names
+  /// nor reaches through what it names. They hold nothing at the version
+  /// installed ([`ResolveRequest::leaving`](resolver::ResolveRequest)), or
+  /// a file that drops a package no source carries, and moves what it
+  /// needed, could never be imported: the install would refuse on a hold
+  /// the prune was about to remove.
+  fn leaving(file: &EnvFile, prune: bool, state: &State) -> BTreeSet<PackageId> {
+    if !prune {
+      return BTreeSet::new();
+    }
+    let named = file
+      .packages
+      .iter()
+      .map(|entry| &entry.id)
+      .filter(|id| state.is_installed(id));
+    let staying = state.reachable_from(named);
+    state
+      .packages
+      .keys()
+      .filter(|id| !staying.contains(id))
+      .cloned()
+      .collect()
+  }
+
   /// Reports what importing `file` would do, without changing anything:
   /// what it installs, and what it marks.
   pub fn plan_import(&self, file: &EnvFile, prune: bool) -> Result<InstallPlan> {
     let roots = file.roots();
+    let state = crate::state::load(&self.layout)?;
     let mut plan = if roots.is_empty() {
       InstallPlan::default()
     } else {
-      self.plan_install_at(&roots, false, &file.required_versions())?
+      self.require_locations(&LocationKind::ALL)?;
+      self.plan_for(
+        &roots,
+        false,
+        &file.required_versions(),
+        &Self::leaving(file, prune, &state),
+        Purpose::Install,
+        &state,
+      )?
     };
-    let state = crate::state::load(&self.layout)?;
     let (requested, dependency) = Self::import_marks(file, prune, &state);
     plan.marked_requested = requested;
     plan.marked_dependency = dependency;
@@ -1829,12 +1930,24 @@ impl Session {
   /// file lists only as a dependency survives exactly as long as something
   /// named still needs it. The rest of the state goes, explicit or not,
   /// which also collects dependencies that only a pruned package needed.
+  /// What the resolution keeps from the state is wanted too: a package the
+  /// file names stays when no source carries it any more.
+  ///
+  /// Refused while a source cannot be read. A package that source carries
+  /// would be missing from the resolution, which is how a package the file
+  /// does not need looks, and `import --prune` runs unattended.
   pub fn prune_candidates(&self, file: &EnvFile) -> Result<Vec<PackageId>> {
-    let wanted: BTreeSet<String> = self
-      .plan_import(file, false)?
+    if let Some(problem) = self.index()?.problems.first() {
+      return Err(Error::Registry(RegistryError::PruneWithoutSource(
+        problem.clone(),
+      )));
+    }
+    let plan = self.plan_import(file, true)?;
+    let wanted: BTreeSet<String> = plan
       .steps
       .into_iter()
       .map(|step| step.id)
+      .chain(plan.kept.iter().map(ToString::to_string))
       .collect();
     let state = crate::state::load(&self.layout)?;
     Ok(
@@ -2470,6 +2583,11 @@ pub struct InstallPlan {
   /// recorded as dependencies.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub marked_dependency: Vec<PackageId>,
+  /// Installed packages it leaves exactly as they are, resolved from the
+  /// state because no source can supply them, or because one of those
+  /// needs them at the version installed.
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub kept: Vec<PackageId>,
   /// What the plan resolved, which is what carrying it out resolves again:
   /// for an upgrade with nothing named, the explicit packages as they were
   /// when the plan was made, not as they are once the user has answered.
@@ -2756,8 +2874,8 @@ struct Survey {
   roots: Vec<PackageId>,
   /// The newest release built for this machine, where it is newer.
   newest: BTreeMap<PackageId, Version>,
-  /// What the resolver keeps where it is, and why.
-  held: BTreeMap<PackageId, UnavailableReason>,
+  /// What the resolver keeps where it is.
+  held: BTreeSet<PackageId>,
 }
 
 #[cfg(test)]
@@ -2841,5 +2959,34 @@ mod tests {
       )],
     );
     assert_eq!(reason_for_gone(&session), UnavailableReason::NotCarried);
+  }
+
+  #[test]
+  fn import_prune_is_refused_while_a_source_cannot_be_read() {
+    // A package that source carries would look like one the file does not
+    // need, and `import --prune` runs unattended.
+    let dir = tempfile::tempdir().unwrap();
+    let readable = dir.path().join("readable");
+    std::fs::create_dir_all(&readable).unwrap();
+    let session = session_with(
+      dir.path(),
+      vec![
+        RegistryConfig::new("first", RegistrySource::Path { path: readable }),
+        RegistryConfig::new(
+          "second",
+          RegistrySource::Path {
+            path: dir.path().join("never-fetched"),
+          },
+        ),
+      ],
+    );
+    let file = EnvFile::from_toml(
+      "[meta]\nschema = 1\nluthier = \"0.4.0\"\nexported = \"2026-09-27T00:00:00Z\"\n\
+       pinned = false\n",
+      "empty.toml",
+    )
+    .unwrap();
+    let err = session.prune_candidates(&file).unwrap_err();
+    assert!(err.to_string().contains("not pruning"), "{err}");
   }
 }

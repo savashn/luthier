@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 458 tests, fully offline
+cargo test --workspace                     # 467 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -264,7 +264,19 @@ the crate map keeps that out of `luthier-manifest`.
   supports, is gone. A requirement it cannot meet is
   `ResolveError::KeptConflict`, naming what holds it, whichever was
   reached first. Computed up front because a hold must not depend on
-  whether its holder was reached: it stays installed either way.
+  whether its holder was reached: it stays installed either way. Only a
+  gone package an explicit one reaches holds anything (an orphan is
+  `autoremove`'s), and none in `ResolveRequest::leaving`, what an
+  `import --prune` is about to remove — or a file that drops the holder
+  and moves what it held could never be imported. "No build here" uses
+  `newest_installable`, the resolver's own choice, so yanked releases
+  and uninstallable artifacts do not count, and `outdated` uses it too.
+  `--force` on a kept root is `NotReinstallable`, never a silent no-op.
+  A kept package is in the plan (`InstallPlan::kept`): `prune_candidates`
+  counts it as wanted, and asking for one by name marks it requested.
+  `import --prune` is refused while any source failed to load
+  (`PruneWithoutSource`): what that source carries would read as
+  unwanted, and the module runs it unattended.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
   `Session::survey` reads `resolver::frozen` rather than predicting it.
   `upgrade` with nothing named resolves every explicit package; what the

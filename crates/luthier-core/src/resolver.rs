@@ -118,6 +118,9 @@ pub struct ResolveRequest<'a> {
   /// than silently overriding a conflicting dependency requirement — but
   /// applies only to this resolution and is not written to state.
   pub required_versions: &'a BTreeMap<PackageId, Version>,
+  /// Installed packages this command is about to remove (`import --prune`):
+  /// they hold nothing at the version installed, since they are going.
+  pub leaving: &'a BTreeSet<PackageId>,
 }
 
 /// Why an installed package is resolved from the state rather than a source.
@@ -145,6 +148,7 @@ pub fn frozen<S: PackageSource>(
   source: &S,
   state: &State,
   target: &Target,
+  leaving: &BTreeSet<PackageId>,
 ) -> BTreeMap<PackageId, Frozen> {
   let mut frozen = BTreeMap::new();
   for package in state.packages.values() {
@@ -152,20 +156,28 @@ pub fn frozen<S: PackageSource>(
       None => Frozen::NotCarried,
       // A pack has no artifacts to be built for anything.
       Some(manifest) if manifest.kind == PackageKind::Pack => continue,
-      Some(manifest)
-        if !manifest
-          .releases
-          .iter()
-          .any(|release| select_artifact(release, target).is_some()) =>
-      {
+      Some(manifest) if newest_installable(manifest, target).is_none() => {
         Frozen::NoReleaseForTarget
       }
       Some(_) => continue,
     };
     frozen.insert(package.id.clone(), why);
   }
-  let unavailable: Vec<PackageId> = frozen.keys().cloned().collect();
-  for id in &unavailable {
+  // Only what stays needs what it was built against: a package nothing
+  // explicit reaches is `autoremove`'s, and one about to be removed holds
+  // nothing either.
+  let explicit = state
+    .packages
+    .values()
+    .filter(|package| package.reason == InstallReason::Explicit && !leaving.contains(&package.id))
+    .map(|package| &package.id);
+  let staying = state.reachable_from(explicit);
+  let holders: Vec<PackageId> = frozen
+    .keys()
+    .filter(|id| staying.contains(id))
+    .cloned()
+    .collect();
+  for id in &holders {
     for reached in state.reachable_from([id]) {
       if !frozen.contains_key(reached) {
         frozen.insert(reached.clone(), Frozen::NeededBy(id.clone()));
@@ -175,17 +187,36 @@ pub fn frozen<S: PackageSource>(
   frozen
 }
 
+/// The newest release of `manifest` with something this build installs
+/// for `target`: what an unconstrained resolution picks. Yanked releases
+/// are never picked, so they do not count.
+pub fn newest_installable<'a>(manifest: &'a Manifest, target: &Target) -> Option<&'a Release> {
+  manifest
+    .releases_newest_first()
+    .into_iter()
+    .find(|release| select_artifact(release, target).is_some())
+}
+
 /// The conflict a requirement makes with a package held where it is.
 fn kept_conflict(id: &PackageId, version: &Version, requirement: String, why: &Frozen) -> Error {
-  let because = match why {
-    Frozen::NotCarried => "no source carries it any more".to_string(),
-    Frozen::NoReleaseForTarget => "no release of it is built for this machine any more".to_string(),
-    Frozen::NeededBy(by) => format!("{by} needs it, and can no longer be upgraded"),
-  };
   Error::Resolve(ResolveError::KeptConflict {
     id: id.clone(),
-    detail: format!("{requirement}, but {id} stays at {version}: {because}"),
+    detail: format!(
+      "{requirement}, but {id} stays at {version}: {}",
+      held_because(why)
+    ),
   })
+}
+
+/// Why a package stays where it is, as a clause. "No source that could be
+/// read": the resolver cannot tell a package gone from every source from
+/// one whose source failed to load.
+fn held_because(why: &Frozen) -> String {
+  match why {
+    Frozen::NotCarried => "no source that could be read carries it".to_string(),
+    Frozen::NoReleaseForTarget => "no release of it is built for this machine any more".to_string(),
+    Frozen::NeededBy(by) => format!("{by} needs it, and can no longer be upgraded"),
+  }
 }
 
 /// Resolves `request` against `source`.
@@ -202,7 +233,7 @@ pub fn resolve<'a, S: PackageSource>(
   // Worked out before the walk, not as it goes: whether a dependency is
   // held must not depend on whether the package holding it was reached
   // first. It stays installed either way.
-  let frozen = frozen(source, request.state, request.target);
+  let frozen = frozen(source, request.state, request.target, request.leaving);
 
   let mut pending: BTreeSet<PackageId> = request.roots.iter().cloned().collect();
   for root in request.roots {
@@ -249,6 +280,19 @@ pub fn resolve<'a, S: PackageSource>(
           })
         });
       if !published {
+        // Asked to reinstall it, which is what `verify` says repairs a
+        // package: there is nothing to fetch, and saying "already
+        // installed" would leave it broken without a word.
+        if request.force && request.roots.contains(&id) {
+          return Err(Error::Resolve(ResolveError::NotReinstallable {
+            id: id.clone(),
+            detail: format!(
+              "{id} {} cannot be reinstalled: {}",
+              installed.version,
+              held_because(why)
+            ),
+          }));
+        }
         kept.insert(id.clone(), installed.version.clone());
         continue;
       }
@@ -781,6 +825,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )?;
     Ok(
@@ -866,6 +911,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -903,6 +949,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -938,6 +985,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -961,6 +1009,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1006,6 +1055,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1037,6 +1087,7 @@ mod tests {
         detected_externals: &detected,
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
     .unwrap_err();
@@ -1081,6 +1132,7 @@ mod tests {
         detected_externals: &BTreeSet::new(),
         force: false,
         required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
       },
     )
   }
@@ -1167,5 +1219,83 @@ mod tests {
       message.contains("zeta needs lib >=2, but lib stays at 1.0.0: old needs it"),
       "{message}"
     );
+  }
+
+  #[test]
+  fn a_package_whose_only_build_here_is_yanked_is_frozen() {
+    // Resolution never picks a yanked release, so it is no build at all.
+    let fixture = Fixture::new().add("foo", &[("1.0.0", &[])]);
+    let mut fixture = fixture;
+    let entry = fixture.packages.get_mut(&id("foo")).unwrap();
+    entry.manifest.releases[0].yanked = Some("broken".into());
+    let state = installed(&[("foo", "1.0.0", &[])]);
+    let frozen = frozen(&fixture, &state, &linux(), &BTreeSet::new());
+    assert_eq!(frozen.get(&id("foo")), Some(&Frozen::NoReleaseForTarget));
+    assert!(newest_installable(&fixture.packages[&id("foo")].manifest, &linux()).is_none());
+  }
+
+  #[test]
+  fn reinstalling_a_package_no_source_carries_is_refused_and_says_why() {
+    // `install --force` is what `verify` says repairs a package; with
+    // nothing to fetch, "already installed" would hide that it cannot.
+    let fixture = Fixture::new();
+    let state = installed(&[("gone", "1.0.0", &[])]);
+    let roots = [id("gone")];
+    let err = resolve(
+      &fixture,
+      &ResolveRequest {
+        roots: &roots,
+        target: &linux(),
+        state: &state,
+        detected_externals: &BTreeSet::new(),
+        force: true,
+        required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
+      },
+    )
+    .unwrap_err();
+    assert!(
+      err.to_string().contains("gone 1.0.0 cannot be reinstalled"),
+      "{err}"
+    );
+  }
+
+  #[test]
+  fn an_orphan_no_source_carries_holds_nothing() {
+    // Nothing explicit needs `gone`: it is `autoremove`'s, and must not keep
+    // `lib` from moving for what stays.
+    let fixture = Fixture::new()
+      .add("lib", &[("2.0.0", &[])])
+      .add("plugin", &[("1.0.0", &["lib"])]);
+    let mut state = installed(&[("gone", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    for name in ["gone", "lib"] {
+      state.packages.get_mut(&id(name)).unwrap().reason = InstallReason::Dependency;
+    }
+    let resolution = resolve_in(&fixture, &state, &["plugin"]).unwrap();
+    assert_eq!(version_of(&resolution, "lib"), "2.0.0");
+  }
+
+  #[test]
+  fn a_package_about_to_be_removed_holds_nothing() {
+    let fixture = Fixture::new()
+      .add("lib", &[("2.0.0", &[])])
+      .add("plugin", &[("1.0.0", &["lib"])]);
+    let state = installed(&[("old", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    let roots = [id("plugin")];
+    let leaving = BTreeSet::from([id("old"), id("lib")]);
+    let resolution = resolve(
+      &fixture,
+      &ResolveRequest {
+        roots: &roots,
+        target: &linux(),
+        state: &state,
+        detected_externals: &BTreeSet::new(),
+        force: false,
+        required_versions: &BTreeMap::new(),
+        leaving: &leaving,
+      },
+    )
+    .unwrap();
+    assert_eq!(version_of(&resolution, "lib"), "2.0.0");
   }
 }
