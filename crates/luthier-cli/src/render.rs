@@ -487,7 +487,19 @@ impl Reporter {
 
   // ---------------------------------------------------------------- update --
 
-  /// Why a targeted `update` did nothing: a pin is holding it.
+  /// An `upgrade` with nothing to do, or refused: the plan is the answer.
+  pub fn upgrade_plan(&self, plan: &InstallPlan) {
+    if self.json {
+      return self.emit(plan);
+    }
+    if !plan.is_blocked() && plan.actionable().next().is_none() {
+      self.note("Everything is up to date.");
+      return;
+    }
+    self.plan_body(plan);
+  }
+
+  /// What `upgrade` leaves alone because a pin is holding it.
   ///
   /// A note rather than a document: the plan is the answer this command
   /// already emitted, and under `--json` the pin is in it.
@@ -527,13 +539,21 @@ impl Reporter {
         width = width
       );
     }
-    let updatable: Vec<&str> = updates
-      .iter()
-      .filter(|u| u.pinned.is_none())
-      .map(|u| u.id.as_str())
-      .collect();
-    if let Some(first) = updatable.first() {
-      println!("\nRun:\naudio update {first}");
+    if updates.iter().any(|u| u.pinned.is_none()) {
+      println!("\nRun `luthier upgrade` to upgrade them, or `luthier upgrade <package>` for one.");
+    }
+  }
+
+  /// The line after `update`, as apt prints one after its own: how many of
+  /// the installed packages the lists just fetched have something newer for.
+  pub fn upgradable(&self, updates: &[AvailableUpdate]) {
+    let count = updates.iter().filter(|u| u.pinned.is_none()).count();
+    match count {
+      0 => self.note("\nEverything is up to date."),
+      1 => self.note("\n1 package can be upgraded. Run `luthier outdated` to see it."),
+      n => self.note(format!(
+        "\n{n} packages can be upgraded. Run `luthier outdated` to see them."
+      )),
     }
   }
 
@@ -564,21 +584,33 @@ impl Reporter {
     }
   }
 
-  // --------------------------------------------------------------- cleanup --
+  // ------------------------------------------------------------ autoremove --
 
-  pub fn cleanup(&self, orphans: &[InstalledSummary]) {
+  /// `autoremove --dry-run`, or one with nothing to remove: the plan is
+  /// the answer.
+  pub fn autoremove_plan(&self, plan: &RemovalPlan) {
     if self.json {
-      return self.emit(&orphans);
+      return self.emit(plan);
     }
-    if orphans.is_empty() {
-      self.note("No unused packages.");
+    self.autoremove_body(plan);
+  }
+
+  /// What `autoremove` is about to remove; silent under `--json` for the
+  /// same reason as [`Reporter::install_preview`].
+  pub fn autoremove_preview(&self, plan: &RemovalPlan) {
+    if self.json {
       return;
     }
-    println!("Unused packages:\n");
-    for package in orphans {
-      println!("{}", package.id);
+    self.autoremove_body(plan);
+  }
+
+  fn autoremove_body(&self, plan: &RemovalPlan) {
+    if plan.packages.is_empty() {
+      self.note("Nothing to remove; every dependency is still needed.");
+      return;
     }
-    println!("\nThese packages are not currently required.\n\nUse:\nluthier remove <package>");
+    println!("Installed as dependencies, and needed by nothing installed now:\n");
+    self.removal_plan(plan);
   }
 
   // -------------------------------------------------------------- location --
@@ -749,11 +781,11 @@ impl Reporter {
 
   // ----------------------------------------------------------- self-update --
 
-  /// After `update` and `refresh`. A status line, so `--json` keeps its one
-  /// document and `--quiet` its silence.
+  /// After `update` and `outdated`. A status line, so `--json` keeps its
+  /// one document and `--quiet` its silence.
   pub fn newer_luthier(&self, newer: &NewerLuthier) {
     let how = if newer.updates_itself {
-      "Run `luthier update --self` to update."
+      "Run `luthier upgrade --self` to upgrade."
     } else {
       "Update it with the package manager that installed it."
     };
@@ -770,7 +802,7 @@ impl Reporter {
     self.note(format!("Luthier {} is the latest release.", plan.current));
   }
 
-  /// What `update --self` will do, before it asks. Under `--json` the one
+  /// What `upgrade --self` will do, before it asks. Under `--json` the one
   /// document is the outcome, written by [`Reporter::self_update_done`].
   pub fn self_update_preview(&self, plan: &SelfUpdatePlan) {
     if self.json {

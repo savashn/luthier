@@ -17,7 +17,15 @@ about.
 
 ### Added
 
-- **`luthier update --self`.** Luthier updates itself the way it was
+- **`luthier upgrade` with no package upgrades everything installed**,
+  after showing the plan and asking, as every upgrade does. Dependencies
+  come along to their newest compatible release and stay recorded as
+  dependencies; a pinned package stays put and is named.
+- **`luthier autoremove`** removes the packages installed as dependencies
+  that nothing needs any more, after showing what it will delete and
+  asking; `--dry-run` only shows it. A whole chain goes in one pass: a
+  dependency needed only by another orphan is one too.
+- **`luthier upgrade --self`.** Luthier upgrades itself the way it was
   installed: a binary from the install script or the tarball is run once
   where it will live, then replaces the old one, with the man page and
   completions beside it; the .deb or .rpm goes through apt, dnf or zypper,
@@ -27,26 +35,38 @@ about.
   to update it there. Every download is checked against the SHA-256 GitHub
   publishes for the release asset. It shows what it will do and asks first,
   as `install` does.
-- **`update` and `refresh` say when a newer Luthier is out.** One request,
+- **`update` and `outdated` say when a newer Luthier is out.** One request,
   given three seconds once the command has done its work; `--json`,
   `--quiet` and `--offline` skip it, and so does a Luthier from Nix, whose
   version is up to whatever installs it.
 - **The Open Audio Stack list keeps itself current.** `search`, `info`,
-  `install`, `update`, `remove` and `import` fetch it when it has never been
-  fetched, and ask for a newer one when it was last asked more than a day
-  ago, so nothing needs `refresh` to see new versions. A failure only warns,
+  `install`, `outdated`, `upgrade`, `remove`, `autoremove` and `import`
+  fetch it when it has never been fetched, and ask for a newer one when it
+  was last asked more than a day ago, so nothing needs `update` to see new
+  versions. A failure only warns,
   and the command goes on with the list it has; `--offline` skips it, and so
   does another Luthier refreshing the list at that moment. It never holds up
   an install in another terminal.
 
 ### Changed
 
+- **The commands are apt's and Homebrew's.** `luthier refresh` is now
+  `luthier update`, which also says how many packages can be upgraded;
+  what `update` with no package reported is `luthier outdated`;
+  `luthier update <package>` is `luthier upgrade <package>`, and upgrading
+  something not installed is refused rather than installed; `luthier
+  cleanup`, which only listed orphans, is `luthier autoremove`, which
+  removes them. There are no aliases. `luthier update <package>` is a usage
+  error naming `upgrade`, so a script written for 0.4 stops rather than
+  believing it upgraded something; `refresh` and `cleanup` are unknown
+  commands. The Home Manager module runs `luthier update` (its option is
+  still `refresh`).
 - **Luthier's own manifests are built into it, and are called `extras`.**
   The handful of manifests Luthier corrects or adds to the Open Audio Stack
   registry with were fetched as `luthier-extras` from the latest release;
   they are now part of the binary, so they are there from the first command,
   offline too, and a binary only ever reads the ones it was released with.
-  They change with Luthier itself (`luthier update --self`). `refresh` no
+  They change with Luthier itself (`luthier upgrade --self`). `luthier update` no
   longer lists them. Packages already installed from them keep
   `luthier-extras` as their recorded source, which is only informational.
 - **`luthier bench list` is now `luthier sources`.** It lists the two
@@ -56,11 +76,11 @@ about.
   "Bench" is no longer a word Luthier uses, and the manifests moved from
   `bench/` to `extras/` in this repository.
 - **The Open Audio Stack list downloads only when it has changed.** Every
-  request for it, `refresh`'s included, sends the `ETag` and `Last-Modified`
+  request for it, `update`'s included, sends the `ETag` and `Last-Modified`
   the last one came with, and an unchanged list costs a 304 and no bytes
-  (`refresh` says "unchanged"). It used to be downloaded whole, and twice, on
-  every `refresh`: the first copy only to learn its SHA-256.
-- **Two `refresh`es, or a `refresh` and an `install`, no longer meet.** Two
+  (`update` says "unchanged"). It used to be downloaded whole, and twice, on
+  every 0.4 `refresh`: the first copy only to learn its SHA-256.
+- **Two `update`s, or an `update` and an `install`, no longer meet.** Two
   refreshes at once could write the same snapshot together; one now waits
   for the other, under a lock of their own, apart from the one installs take.
 
@@ -74,6 +94,11 @@ about.
 
 ### Fixed
 
+- **`remove --json` prints one JSON document.** It printed the plan and
+  then the outcome, which no JSON parser reads as one answer; the outcome
+  is the answer now, as it is for `install`.
+- **The list of available updates names a real command.** It ended with
+  `audio update <package>`, a name Luthier never had.
 - **A download no longer panics on its last attempt.** A resumed download
   that failed its checksum on the fourth try ended in a panic rather than
   the checksum error; it now reports the mismatch, and the next run starts

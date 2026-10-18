@@ -8,7 +8,7 @@ another machine — or on the same one after a reinstall:
 $ luthier export -o studio.toml
 
 # on the new one
-$ luthier refresh
+$ luthier update
 $ luthier import studio.toml
 ```
 
@@ -78,7 +78,7 @@ carries a version the file names, you get:
 
 ```
 error: surge 1.3.4 is not in the registry, so the exported set cannot be reproduced
-hint: Run `luthier refresh`; if the version is genuinely gone, re-export from a
+hint: Run `luthier update`; if the version is genuinely gone, re-export from a
       machine that still has it, or import with a `--loose` file.
 ```
 

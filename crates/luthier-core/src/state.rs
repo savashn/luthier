@@ -12,7 +12,7 @@ use jiff::Timestamp;
 use luthier_manifest::{Format, PackageId, Sha256Hash};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// On-disk revision of the state document.
@@ -146,16 +146,35 @@ impl State {
   }
 
   /// Packages installed only as dependencies that nothing needs any more (§24).
+  ///
+  /// Needed means reachable from an explicitly installed package, not merely
+  /// depended on: a dependency whose only dependent is itself an orphan is
+  /// one too, and so is a cycle nothing explicit reaches. Counting
+  /// dependents alone left the rest of a chain behind for a second
+  /// `autoremove`, and a cycle behind for good.
   pub fn orphans(&self) -> Vec<PackageId> {
-    let mut orphans: Vec<PackageId> = self
+    let mut needed: BTreeSet<&PackageId> = BTreeSet::new();
+    let mut pending: Vec<&PackageId> = self
       .packages
       .values()
-      .filter(|p| p.reason == InstallReason::Dependency)
-      .filter(|p| self.dependents_of(&p.id).is_empty())
-      .map(|p| p.id.clone())
+      .filter(|p| p.reason == InstallReason::Explicit)
+      .map(|p| &p.id)
       .collect();
-    orphans.sort();
-    orphans
+    while let Some(id) = pending.pop() {
+      if !needed.insert(id) {
+        continue;
+      }
+      if let Some(package) = self.packages.get(id) {
+        pending.extend(package.dependencies.iter());
+      }
+    }
+    // `packages` is a `BTreeMap`, so this comes out sorted.
+    self
+      .packages
+      .keys()
+      .filter(|id| !needed.contains(id))
+      .cloned()
+      .collect()
   }
 
   /// Every path the manager owns, for duplicate and conflict detection.
@@ -223,7 +242,7 @@ pub struct StateGuard {
 }
 
 /// The state lock alone, for an operation that changes nothing the state
-/// records: `luthier update --self`. It must work with a state file this build
+/// records: `luthier upgrade --self`. It must work with a state file this build
 /// cannot read — one a newer Luthier wrote is the reason to update.
 pub struct StateLock {
   _lock: fsutil::Lock,
@@ -339,6 +358,25 @@ mod tests {
         PackageId::new("sfizz").unwrap()
       ]
     );
+  }
+
+  #[test]
+  fn a_chain_and_a_cycle_nothing_explicit_reaches_are_orphans_at_once() {
+    // A kit's engine needed only by an orphaned wrapper goes with it in the
+    // same pass, and two dependencies needing each other do not keep each
+    // other alive. What an explicit package still reaches, at any depth,
+    // stays.
+    let state = state_with(vec![
+      package("wrapper", InstallReason::Dependency, &["engine"]),
+      package("engine", InstallReason::Dependency, &[]),
+      package("left", InstallReason::Dependency, &["right"]),
+      package("right", InstallReason::Dependency, &["left"]),
+      package("kit", InstallReason::Explicit, &["player"]),
+      package("player", InstallReason::Dependency, &["runtime"]),
+      package("runtime", InstallReason::Dependency, &[]),
+    ]);
+    let ids: Vec<String> = state.orphans().iter().map(ToString::to_string).collect();
+    assert_eq!(ids, ["engine", "left", "right", "wrapper"]);
   }
 
   #[test]

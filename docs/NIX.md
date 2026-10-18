@@ -119,7 +119,7 @@ programs.luthier.packages = [
 ```
 
 A package without a version is installed at the newest version the registry
-offers, and later upgraded with `luthier update`; a switch does not upgrade
+offers, and later upgraded with `luthier upgrade`; a switch does not upgrade
 it. A package with a version is held there: if you change the version,
 the next switch installs it. If the registry no longer offers that version,
 applying fails with a warning. List only what you want; dependencies come with
@@ -177,7 +177,7 @@ programs.luthier.packages = [ "salamander-drumkit" ];     # the samples
 During activation, after Home Manager has written your files, the module runs
 `luthier` with `--yes`:
 
-1. `luthier refresh`, unless `refresh = false`.
+1. `luthier update`, unless `refresh = false`.
 2. `luthier location set <kind> <dir>` for each location that is set.
 3. `luthier import <file>`, with `--prune` if `prune` is on. The file is
    generated from `packages`, in the same format `luthier export` writes.

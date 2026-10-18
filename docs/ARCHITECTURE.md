@@ -67,7 +67,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 
 | Module | Holds |
 |---|---|
-| `api` | `Session` — refresh, search, info, plan, install, remove, verify, update, cleanup, cache, sources, pins, export/import, and `--prune`'s convergence |
+| `api` | `Session` — refresh, search, info, plan, install, remove, verify, upgrade, autoremove, cache, sources, pins, export/import, and `--prune`'s convergence |
 | `registry` | Merging extras and the Open Audio Stack registry into one `RegistryIndex`, extras first; `builtin`, `local`, `http` and `oas` providers, and refreshing the OAS index once a day, conditionally; `provenance`, a record of each fetch and of when the source was last asked |
 | `resolver` | A request and an index into an ordered, deterministic plan |
 | `download` | Fetching with a streamed SHA-256, resume, per-artifact ceilings, and the rules about when a `.part` survives |
@@ -75,7 +75,7 @@ call; the rest is one pipeline, from a request to a recorded install.
 | `install` | Journalled, atomic placement (`InstallTransaction`), per-format installers, and `derive`, which reads rules out of a verified tree |
 | `state` | What is installed and which files belong to it — the authority on ownership |
 | `scan` | What is present on the system but not installed by Luthier |
-| `selfupdate` | `update --self`: the latest release from GitHub's API, how the running binary was installed, and replacing it or handing the package to apt, dnf or zypper |
+| `selfupdate` | `upgrade --self`: the latest release from GitHub's API, how the running binary was installed, and replacing it or handing the package to apt, dnf or zypper |
 | `layout` | Every path, injected rather than computed from `$HOME`; the search path a relocated plugin root needs |
 | `envfile` | The portable file `export` writes and `import` reads |
 | `engine` | Whether anything on the machine can play the content about to be installed |

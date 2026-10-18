@@ -76,7 +76,7 @@ pub struct GlobalArgs {
   /// Where the latest Luthier release is described, in place of GitHub's API.
   ///
   /// Hidden: for the suite, which serves a release over `file://` so that
-  /// neither `update` nor `update --self` reaches GitHub.
+  /// neither `update` nor `upgrade --self` reaches GitHub.
   #[arg(long, global = true, value_name = "URL", hide = true)]
   pub releases_api: Option<String>,
 }
@@ -120,22 +120,35 @@ pub enum Command {
     unmanaged: bool,
   },
 
-  /// Show available updates, or update the named packages, or Luthier itself.
+  /// Fetch the latest package lists, and say what can be upgraded.
+  ///
+  /// Installs nothing; `luthier upgrade` does. Commands that read the
+  /// package lists already fetch them once a day on their own.
   Update {
-    /// Leave empty to only report what is available, Luthier's own new
-    /// release included.
+    /// Not accepted: here only to point 0.4's `update <package>` at
+    /// `upgrade`, rather than leave it to a bare usage error.
+    #[arg(hide = true)]
+    packages: Vec<String>,
+  },
+
+  /// List installed packages that have a newer release. Changes nothing.
+  Outdated,
+
+  /// Upgrade the named packages, or every installed package.
+  ///
+  /// Dependencies come along to their newest compatible release. A pinned
+  /// package stays where it is, and is reported.
+  Upgrade {
+    /// Leave empty to upgrade everything installed.
     packages: Vec<String>,
 
-    /// Update Luthier itself, the way it was installed: a binary from the
-    /// install script or the tarball is replaced where it is, the .deb or
-    /// .rpm through apt, dnf or zypper, and one from Nix or another package
-    /// manager is left to it.
+    /// Upgrade Luthier itself instead, the way it was installed: a binary
+    /// from the install script or the tarball is replaced where it is, the
+    /// .deb or .rpm through apt, dnf or zypper, and one from Nix or another
+    /// package manager is left to it.
     #[arg(long = "self", conflicts_with = "packages")]
     luthier: bool,
   },
-
-  /// Fetch the latest registry metadata.
-  Refresh,
 
   /// Check installed files still match what was recorded.
   Verify {
@@ -171,8 +184,12 @@ pub enum Command {
     prune: bool,
   },
 
-  /// List packages nothing needs any more. Removes nothing.
-  Cleanup,
+  /// Remove packages installed as dependencies that nothing needs any more.
+  Autoremove {
+    /// Show what would be removed without removing anything.
+    #[arg(long)]
+    dry_run: bool,
+  },
 
   /// Inspect and prune the downloaded-artifact cache.
   Cache {
@@ -196,14 +213,14 @@ pub enum Command {
   /// Open Audio Stack registry.
   Sources,
 
-  /// Hold a package at a version so updates skip it.
+  /// Hold a package at a version so upgrades skip it.
   Pin {
     package: String,
     /// Defaults to the installed version.
     version: Option<String>,
   },
 
-  /// Allow a pinned package to be updated again.
+  /// Allow a pinned package to be upgraded again.
   Unpin { package: String },
 
   /// Print a shell completion script.

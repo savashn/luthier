@@ -426,7 +426,7 @@ impl Layout {
     self.cache.join("artifacts")
   }
 
-  /// Where `luthier update --self` downloads and unpacks a release. Apart
+  /// Where `luthier upgrade --self` downloads and unpacks a release. Apart
   /// from the artifact cache, which holds what installed packages name, and
   /// removed once the update is done.
   pub fn self_update_dir(&self) -> PathBuf {

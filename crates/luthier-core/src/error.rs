@@ -184,11 +184,11 @@ impl RegistryError {
   fn hint(&self) -> Option<String> {
     match self {
       RegistryError::PackageNotFound { .. } => Some(
-        "Run `luthier refresh` to update the registry, or `luthier search <term>` to find \
+        "Run `luthier update` to fetch the latest package lists, or `luthier search <term>` to find \
                  the right package ID."
           .into(),
       ),
-      RegistryError::NotFetched(_) => Some("Run `luthier refresh` first.".into()),
+      RegistryError::NotFetched(_) => Some("Run `luthier update` first.".into()),
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
       }
@@ -276,12 +276,12 @@ impl SelfUpdateError {
       ),
       SelfUpdateError::OutsideRoot { .. } => Some(
         "--root confines everything Luthier writes, and the running binary is not \
-         under it. Run `luthier update --self` without --root."
+         under it. Run `luthier upgrade --self` without --root."
           .into(),
       ),
       SelfUpdateError::NotWritable { .. } => Some(
         "Run it as the user that installed Luthier there; for /usr/local, that is \
-         root: `sudo -H luthier update --self`."
+         root: `sudo -H luthier upgrade --self`."
           .into(),
       ),
       SelfUpdateError::NoAsset { .. } | SelfUpdateError::NoDigest { .. } => Some(
@@ -291,11 +291,11 @@ impl SelfUpdateError {
       ),
       SelfUpdateError::CouldNotRun { program, .. } if program == "sudo" => Some(
         "Installing a package needs root, and sudo is not here. Run \
-         `luthier update --self` as root."
+         `luthier upgrade --self` as root."
           .into(),
       ),
       SelfUpdateError::ChangedBeforeInstall { .. } => Some(
-        "Nothing was installed. Run `luthier update --self` again; if this happens \
+        "Nothing was installed. Run `luthier upgrade --self` again; if this happens \
          again, something on this machine is changing files in Luthier's cache."
           .into(),
       ),
@@ -354,7 +354,7 @@ impl DownloadError {
     match self {
       DownloadError::HttpStatus { status: 404, .. } => Some(
         "The package manifest may reference a release that has been moved or withdrawn. \
-                 Run `luthier refresh`, and report the package if the problem persists."
+                 Run `luthier update`, and report the package if the problem persists."
           .into(),
       ),
       DownloadError::HttpStatus { status, .. } if *status >= 500 => {
@@ -546,7 +546,7 @@ impl InstallError {
         path.display()
       )),
       InstallError::AlreadyInstalled { id, .. } => Some(format!(
-        "Use `luthier remove {id}` first, or `luthier update {id}`."
+        "Use `luthier remove {id}` first, or `luthier upgrade {id}`."
       )),
       InstallError::FailedValidation { .. } => Some(
         "The downloaded artifact does not contain what the manifest promised; the \
@@ -680,7 +680,7 @@ impl ResolveError {
         Some(format!("Use `luthier unpin {id}` to lift the pin."))
       }
       ResolveError::RequiredVersionMissing { .. } => Some(
-        "Run `luthier refresh`; if the version is genuinely gone, re-export from a \
+        "Run `luthier update`; if the version is genuinely gone, re-export from a \
                  machine that still has it, or import with a `--loose` file."
           .into(),
       ),

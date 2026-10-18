@@ -161,7 +161,7 @@ impl Fixture {
       .arg("--registry-path")
       .arg(self.registry())
       .arg("--no-system-plugins")
-      // `update` and `refresh` ask whether a newer Luthier is out; the suite
+      // `update` and `outdated` ask whether a newer Luthier is out; the suite
       // never reaches GitHub, so the question goes nowhere and is dropped.
       .arg("--releases-api")
       .arg("file:///nonexistent/luthier-release.json")
@@ -537,12 +537,168 @@ fn a_still_needed_dependency_is_not_removed() {
     .args(["remove", "library"])
     .assert()
     .success();
-  let cleanup = stdout_of(&fixture.luthier().arg("cleanup").output().unwrap());
-  assert!(cleanup.contains("engine"), "{cleanup}");
+  let dry_run = stdout_of(
+    &fixture
+      .luthier()
+      .args(["autoremove", "--dry-run"])
+      .output()
+      .unwrap(),
+  );
+  assert!(dry_run.contains("Engine.clap"), "{dry_run}");
   assert!(
     fixture.clap_dir().join("Engine.clap").is_file(),
-    "cleanup must report orphans, never delete them (§24)"
+    "a dry run must delete nothing (§24)"
   );
+}
+
+#[test]
+fn autoremove_removes_a_whole_chain_nothing_needs_and_keeps_the_rest() {
+  // §24: a dependency nothing explicit needs goes, and so does the
+  // dependency it alone needed, in one pass: a library over an engine over
+  // a runtime, beside a package whose own dependency must survive.
+  let fixture = Fixture::new();
+  for (id, name, deps) in [
+    ("runtime", "Runtime", &[][..]),
+    ("engine", "Engine", &["runtime"][..]),
+    ("library", "Library", &["engine"][..]),
+    ("shared", "Shared", &[][..]),
+    ("keeper", "Keeper", &["shared"][..]),
+  ] {
+    let artifact = fixture.make_artifact(name);
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "library", "keeper"])
+    .assert()
+    .success();
+  fixture
+    .luthier()
+    .args(["remove", "library"])
+    .assert()
+    .success();
+
+  // One document under `--json`, with the removal in it.
+  let output = fixture
+    .luthier()
+    .args(["autoremove", "--json"])
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{}", stdout_of(&output));
+  let outcome: serde_json::Value = serde_json::from_str(&stdout_of(&output))
+    .unwrap_or_else(|e| panic!("autoremove --json did not emit one document: {e}"));
+  let removed: Vec<&str> = outcome["removed"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|p| p["id"].as_str().unwrap())
+    .collect();
+  // `runtime` was needed only by `engine`, and goes in the same pass;
+  // `shared` is a dependency too, and stays, because `keeper` needs it.
+  assert_eq!(removed, ["engine", "runtime"]);
+  assert!(!fixture.clap_dir().join("Engine.clap").exists());
+  assert!(!fixture.clap_dir().join("Runtime.clap").exists());
+  assert!(fixture.clap_dir().join("Shared.clap").is_file());
+
+  let again = stdout_of(&fixture.luthier().arg("autoremove").output().unwrap());
+  assert!(again.contains("Nothing to remove"), "{again}");
+}
+
+#[test]
+fn upgrade_with_nothing_named_upgrades_everything_but_a_pin() {
+  let fixture = Fixture::new();
+  for (id, name, deps) in [
+    ("engine", "Engine", &[][..]),
+    ("library", "Library", &["engine"][..]),
+    ("held", "Held", &[][..]),
+  ] {
+    let artifact = fixture.make_artifact(name);
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "library", "held"])
+    .assert()
+    .success();
+  fixture.luthier().args(["pin", "held"]).assert().success();
+  // `held` keeps its 1.0.0 release beside the new one: a pin on a version
+  // the registry dropped falls back, which is not what is under test.
+  let held_manifest = fixture.registry().join("plugins/held.toml");
+  let held_before = std::fs::read_to_string(&held_manifest).unwrap();
+  for (id, name, deps) in [
+    ("engine", "Engine", &[][..]),
+    ("library", "Library", &["engine"][..]),
+    ("held", "Held", &[][..]),
+  ] {
+    let artifact = fixture.make_artifact(name);
+    fixture.add_plugin(id, "1.1.0", &artifact, deps);
+  }
+  let first_release = &held_before[held_before.find("\n[[releases]]").unwrap()..];
+  let held_after = std::fs::read_to_string(&held_manifest).unwrap();
+  std::fs::write(&held_manifest, held_after + first_release).unwrap();
+
+  // `update` fetches and counts; it installs nothing.
+  let updated = stdout_of(&fixture.luthier().arg("update").output().unwrap());
+  assert!(updated.contains("2 packages can be upgraded"), "{updated}");
+  let outdated = stdout_of(&fixture.luthier().arg("outdated").output().unwrap());
+  assert!(outdated.contains("pinned to 1.0.0"), "{outdated}");
+
+  let upgraded = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&upgraded);
+  assert!(upgraded.status.success(), "{stdout}");
+  assert!(stdout.contains("held is pinned to 1.0.0"), "{stdout}");
+
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let row = |id: &str| {
+    listed
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|p| p["id"] == id)
+      .unwrap_or_else(|| panic!("{id} is not listed: {json}"))
+      .clone()
+  };
+  assert_eq!(row("library")["version"], "1.1.0");
+  assert_eq!(row("engine")["version"], "1.1.0");
+  assert_eq!(row("held")["version"], "1.0.0");
+  // Upgraded as a dependency, it is still one, so `autoremove` still owns it.
+  assert_eq!(row("engine")["reason"], "dependency");
+
+  let again = stdout_of(&fixture.luthier().arg("upgrade").output().unwrap());
+  assert!(again.contains("Everything is up to date"), "{again}");
+}
+
+#[test]
+fn update_takes_no_packages_and_upgrade_only_installed_ones() {
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Testsynth");
+  fixture.add_plugin("testsynth", "1.2.3", &artifact, &[]);
+
+  // 0.4's `update <package>` is pointed at `upgrade`, as a usage error.
+  let output = fixture
+    .luthier()
+    .args(["update", "testsynth"])
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(2));
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("luthier upgrade testsynth"), "{stderr}");
+
+  // Upgrading something not installed is an install, and is not done unasked.
+  let output = fixture
+    .luthier()
+    .args(["upgrade", "testsynth"])
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  assert!(!fixture.clap_dir().join("Testsynth.clap").exists());
+
+  // The 0.4 spellings of these are gone.
+  for command in ["refresh", "cleanup"] {
+    let output = fixture.luthier().arg(command).output().unwrap();
+    assert_eq!(output.status.code(), Some(2), "{command}");
+  }
 }
 
 #[test]
@@ -863,8 +1019,8 @@ fn json_output_is_valid_for_every_read_only_command() {
     vec!["info", "testsynth"],
     vec!["list"],
     vec!["verify"],
-    vec!["cleanup"],
-    vec!["update"],
+    vec!["autoremove", "--dry-run"],
+    vec!["outdated"],
   ] {
     let mut command = fixture.luthier();
     command.args(&args).arg("--json");
@@ -1113,7 +1269,7 @@ fn an_export_reproduces_the_same_set_elsewhere() {
   assert!(target.clap_dir().join("One.clap").is_file());
   assert!(target.clap_dir().join("Two.clap").is_file());
 
-  // The dependency stays a dependency, so `cleanup` still owns it (§24).
+  // The dependency stays a dependency, so `autoremove` still owns it (§24).
   let json = stdout_of(&target.luthier().args(["list", "--json"]).output().unwrap());
   let packages: serde_json::Value = serde_json::from_str(&json).unwrap();
   let two_entry = packages
@@ -1755,7 +1911,7 @@ fn an_install_under_json_emits_one_document_not_two() {
 #[test]
 fn a_pin_names_a_version_that_exists() {
   // A pin is read back by every later resolution, so an invented version is
-  // not a harmless note: `update` would report a package held above the
+  // not a harmless note: `outdated` would report a package held above the
   // newest release there is.
   let fixture = Fixture::new();
   let artifact = fixture.make_artifact("Testsynth");
@@ -1833,9 +1989,9 @@ fn removal_keeps_what_the_user_changed_in_a_library_and_nothing_else() {
 }
 
 #[test]
-fn an_update_does_not_delete_what_the_user_changed() {
+fn an_upgrade_does_not_delete_what_the_user_changed() {
   // Replacing a package moves the old files aside and deletes them, so an
-  // update used to throw away exactly what `remove` keeps.
+  // upgrade used to throw away exactly what `remove` keeps.
   let fixture = Fixture::new();
   let artifact = fixture.make_library_artifact("VSCO-2-CE");
   fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &artifact);
@@ -1852,7 +2008,7 @@ fn an_update_does_not_delete_what_the_user_changed() {
   fixture.add_library("vsco2", "1.2.0", "VSCO-2-CE", &artifact);
   let output = fixture
     .luthier()
-    .args(["update", "vsco2"])
+    .args(["upgrade", "vsco2"])
     .output()
     .unwrap();
   assert_eq!(output.status.code(), Some(5), "{}", stdout_of(&output));
@@ -2269,7 +2425,7 @@ fn a_closed_pipe_ends_the_process_quietly() {
 
 /// A Luthier release served over `file://`: GitHub's description of it, and
 /// the tarball the install script installs. Its `luthier` is a shell script
-/// that reports `version`, which is all `update --self` asks of it.
+/// that reports `version`, which is all `upgrade --self` asks of it.
 struct PublishedRelease {
   dir: tempfile::TempDir,
 }
@@ -2367,14 +2523,14 @@ fn run_written(command: &mut std::process::Command) -> std::process::Output {
   panic!("{command:?} stayed busy");
 }
 
-/// `binary update --self` under `--root prefix`, which the binary is inside,
+/// `binary upgrade --self` under `--root prefix`, which the binary is inside,
 /// as it has to be.
-fn update_self(binary: &Path, prefix: &Path, api: &str) -> std::process::Output {
+fn upgrade_self(binary: &Path, prefix: &Path, api: &str) -> std::process::Output {
   run_written(
     std::process::Command::new(binary)
       .arg("--root")
       .arg(prefix)
-      .args(["--releases-api", api, "--yes", "update", "--self"]),
+      .args(["--releases-api", api, "--yes", "upgrade", "--self"]),
   )
 }
 
@@ -2384,12 +2540,12 @@ fn version_of(binary: &Path) -> String {
 }
 
 #[test]
-fn update_self_replaces_a_standalone_binary_and_the_files_beside_it() {
+fn upgrade_self_replaces_a_standalone_binary_and_the_files_beside_it() {
   let release = PublishedRelease::new("99.0.0", Digest::Published);
   let prefix = tempfile::tempdir().unwrap();
   let binary = installed_copy(prefix.path());
 
-  let output = update_self(&binary, prefix.path(), &release.api());
+  let output = upgrade_self(&binary, prefix.path(), &release.api());
   let stdout = String::from_utf8_lossy(&output.stdout);
   assert!(
     output.status.success(),
@@ -2414,26 +2570,26 @@ fn update_self_replaces_a_standalone_binary_and_the_files_beside_it() {
 }
 
 #[test]
-fn update_self_on_the_latest_release_changes_nothing() {
+fn upgrade_self_on_the_latest_release_changes_nothing() {
   let release = PublishedRelease::new(env!("CARGO_PKG_VERSION"), Digest::Published);
   let prefix = tempfile::tempdir().unwrap();
   let binary = installed_copy(prefix.path());
   let before = std::fs::read(&binary).unwrap();
 
-  let output = update_self(&binary, prefix.path(), &release.api());
+  let output = upgrade_self(&binary, prefix.path(), &release.api());
   assert!(output.status.success());
   assert!(String::from_utf8_lossy(&output.stdout).contains("is the latest release"));
   assert_eq!(std::fs::read(&binary).unwrap(), before);
 }
 
 #[test]
-fn update_self_refuses_a_download_that_is_not_the_published_one() {
+fn upgrade_self_refuses_a_download_that_is_not_the_published_one() {
   let release = PublishedRelease::new("99.0.0", Digest::Wrong);
   let prefix = tempfile::tempdir().unwrap();
   let binary = installed_copy(prefix.path());
   let before = std::fs::read(&binary).unwrap();
 
-  let output = update_self(&binary, prefix.path(), &release.api());
+  let output = upgrade_self(&binary, prefix.path(), &release.api());
   assert_eq!(
     output.status.code(),
     Some(4),
@@ -2444,13 +2600,13 @@ fn update_self_refuses_a_download_that_is_not_the_published_one() {
 }
 
 #[test]
-fn update_self_refuses_a_download_with_no_published_digest() {
+fn upgrade_self_refuses_a_download_with_no_published_digest() {
   let release = PublishedRelease::new("99.0.0", Digest::Absent);
   let prefix = tempfile::tempdir().unwrap();
   let binary = installed_copy(prefix.path());
   let before = std::fs::read(&binary).unwrap();
 
-  let output = update_self(&binary, prefix.path(), &release.api());
+  let output = upgrade_self(&binary, prefix.path(), &release.api());
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert_eq!(output.status.code(), Some(4), "{stderr}");
   assert!(stderr.contains("publishes no SHA-256"), "{stderr}");
@@ -2458,14 +2614,14 @@ fn update_self_refuses_a_download_with_no_published_digest() {
 }
 
 #[test]
-fn update_self_under_root_leaves_a_binary_outside_it_alone() {
+fn upgrade_self_under_root_leaves_a_binary_outside_it_alone() {
   let release = PublishedRelease::new("99.0.0", Digest::Published);
   let prefix = tempfile::tempdir().unwrap();
   let binary = installed_copy(prefix.path());
   let before = std::fs::read(&binary).unwrap();
   let elsewhere = tempfile::tempdir().unwrap();
 
-  let output = update_self(&binary, elsewhere.path(), &release.api());
+  let output = upgrade_self(&binary, elsewhere.path(), &release.api());
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert_eq!(output.status.code(), Some(2), "{stderr}");
   assert!(stderr.contains("outside --root"), "{stderr}");
@@ -2473,7 +2629,7 @@ fn update_self_under_root_leaves_a_binary_outside_it_alone() {
 }
 
 #[test]
-fn update_self_leaves_nothing_behind_when_the_new_binary_does_not_run() {
+fn upgrade_self_leaves_nothing_behind_when_the_new_binary_does_not_run() {
   // A release whose binary reports another version than its tag.
   let release = PublishedRelease::new("99.0.0", Digest::Published);
   let description = release.dir.path().join("release.json");
@@ -2483,7 +2639,7 @@ fn update_self_leaves_nothing_behind_when_the_new_binary_does_not_run() {
   let binary = installed_copy(prefix.path());
   let before = std::fs::read(&binary).unwrap();
 
-  let output = update_self(&binary, prefix.path(), &release.api());
+  let output = upgrade_self(&binary, prefix.path(), &release.api());
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert_eq!(output.status.code(), Some(5), "{stderr}");
   assert!(stderr.contains("does not run here"), "{stderr}");
@@ -2499,14 +2655,15 @@ fn update_self_leaves_nothing_behind_when_the_new_binary_does_not_run() {
   );
 }
 
-/// `binary update` against the fixture, with the binary inside its root as
+/// `binary <command>` against the fixture, with the binary inside its root as
 /// the newer-Luthier line requires under `--root`, and the core's debug log
 /// on so a test can see whether the check was made.
-fn update_in_root(
+fn run_in_root(
   fixture: &Fixture,
   binary: &Path,
   api: &str,
   extra: &[&str],
+  command: &str,
 ) -> std::process::Output {
   run_written(
     std::process::Command::new(binary)
@@ -2517,27 +2674,35 @@ fn update_in_root(
       .arg(fixture.registry())
       .args(["--no-system-plugins", "--releases-api", api])
       .args(extra)
-      .arg("update"),
+      .arg(command),
   )
 }
 
 #[test]
-fn update_tells_of_a_newer_luthier_but_not_under_json() {
+fn update_and_outdated_tell_of_a_newer_luthier_but_not_under_json() {
   let fixture = Fixture::new();
   let binary = installed_copy(&fixture.root());
   let release = PublishedRelease::new("99.0.0", Digest::Published);
 
-  let text = update_in_root(&fixture, &binary, &release.api(), &[]);
-  assert!(text.status.success());
-  let stdout = String::from_utf8_lossy(&text.stdout);
-  assert!(stdout.contains("Luthier 99.0.0 is out"), "{stdout}");
-  assert!(stdout.contains("luthier update --self"), "{stdout}");
+  for command in ["update", "outdated"] {
+    let text = run_in_root(&fixture, &binary, &release.api(), &[], command);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(text.status.success(), "{command}: {stdout}");
+    assert!(
+      stdout.contains("Luthier 99.0.0 is out"),
+      "{command}: {stdout}"
+    );
+    assert!(
+      stdout.contains("luthier upgrade --self"),
+      "{command}: {stdout}"
+    );
 
-  // One JSON document on stdout, as everywhere else.
-  let json = update_in_root(&fixture, &binary, &release.api(), &["--json"]);
-  let stdout = String::from_utf8_lossy(&json.stdout);
-  assert!(!stdout.contains("is out"), "{stdout}");
-  serde_json::from_str::<serde_json::Value>(&stdout).expect("one JSON document");
+    // One JSON document on stdout, as everywhere else.
+    let json = run_in_root(&fixture, &binary, &release.api(), &["--json"], command);
+    let stdout = String::from_utf8_lossy(&json.stdout);
+    assert!(!stdout.contains("is out"), "{command}: {stdout}");
+    serde_json::from_str::<serde_json::Value>(&stdout).expect("one JSON document");
+  }
 }
 
 #[test]
@@ -2546,7 +2711,13 @@ fn the_newer_luthier_check_is_not_made_when_its_line_would_be_dropped() {
   let binary = installed_copy(&fixture.root());
   // A scheme nothing fetches: a check made fails, and the debug log says so.
   let asked = |extra: &[&str]| {
-    let output = update_in_root(&fixture, &binary, "ftp://example.invalid/r.json", extra);
+    let output = run_in_root(
+      &fixture,
+      &binary,
+      "ftp://example.invalid/r.json",
+      extra,
+      "outdated",
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     stderr.contains("could not check for a newer Luthier")
@@ -2556,18 +2727,19 @@ fn the_newer_luthier_check_is_not_made_when_its_line_would_be_dropped() {
   assert!(!asked(&["--quiet"]));
   assert!(!asked(&["--offline"]));
 
-  // Nor for a binary outside --root, which `update --self` would refuse.
-  let outside = update_in_root(
+  // Nor for a binary outside --root, which `upgrade --self` would refuse.
+  let outside = run_in_root(
     &fixture,
     &assert_cmd::cargo::cargo_bin("luthier"),
     "ftp://example.invalid/r.json",
     &[],
+    "outdated",
   );
   assert!(!String::from_utf8_lossy(&outside.stderr).contains("could not check"));
 }
 
 #[test]
-fn a_release_check_that_gets_no_answer_does_not_hold_up_update() {
+fn a_release_check_that_gets_no_answer_does_not_hold_up_outdated() {
   let fixture = Fixture::new();
   let binary = installed_copy(&fixture.root());
   // Takes connections, into the kernel's backlog, and never answers.
@@ -2575,7 +2747,7 @@ fn a_release_check_that_gets_no_answer_does_not_hold_up_update() {
   let api = format!("http://{}/release.json", silent.local_addr().unwrap());
 
   let started = std::time::Instant::now();
-  let output = update_in_root(&fixture, &binary, &api, &[]);
+  let output = run_in_root(&fixture, &binary, &api, &[], "outdated");
   let elapsed = started.elapsed();
   assert!(
     output.status.success(),

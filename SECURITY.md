@@ -154,7 +154,7 @@ Stack index on its own (once a day), and keeps the `ETag` and `Last-Modified`
 the server sent, which a refresh sends back so that an unchanged index is not
 downloaded again. They are sent only while the snapshot on disk hashes to what
 the record says arrived, from the same URL. So a change to that index reaches
-every user within a day without a `refresh`, exactly as it would with one.
+every user within a day without a `luthier update`, exactly as it would with one.
 (0.1 also pinned each source's origin on first use, because users could add
 sources; with the URLs fixed in the binary a pin protects nothing and would
 lock everyone out the day a release moved one.)
@@ -185,7 +185,7 @@ its manifest gives, and extraction goes through one hardened policy. A
 malicious manifest in extras can make a user install a malicious *plugin*; it cannot make
 the installer write outside the plugin and library directories.
 
-`luthier update --self` trusts GitHub the same way, and more directly: the
+`luthier upgrade --self` trusts GitHub the same way, and more directly: the
 SHA-256 it checks a new Luthier against comes from GitHub's API, for the same
 release. It catches a download that was corrupted or swapped on the way; it
 cannot catch a release published by someone who should not have been able to,
@@ -240,7 +240,7 @@ Anything changed, added or replaced since installation is reported and kept.
 A bundle is decided file by file, so one edited preset keeps one file rather
 than the whole bundle, and no symbolic link is followed: a directory inside a
 bundle that has been replaced by a link is left alone rather than emptied
-through it. Replacing a package — `update`, or an install that upgrades — is
+through it. Replacing a package — `upgrade`, or an install that upgrades — is
 refused before the download when it would delete such changes, until
 `--force` says to go ahead.
 
@@ -251,7 +251,7 @@ refused before the download when it would delete such changes, until
   (§14).
 - **System-wide installation.** Everything is user-local; root is never
   required and system directories are never written. The exception is
-  Luthier itself, where it was installed as root. `luthier update --self` of
+  Luthier itself, where it was installed as root. `luthier upgrade --self` of
   a Luthier from the .deb or .rpm runs apt, dnf or zypper through `sudo`, as
   installing the new package by hand would: root copies the verified
   download into a directory only root can write and checks its SHA-256 again

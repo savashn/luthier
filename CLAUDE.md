@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 443 tests, fully offline
+cargo test --workspace                     # 447 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -185,7 +185,7 @@ the crate map keeps that out of `luthier-manifest`.
   library no command could reach, since the package was already gone from
   state. `install::remove_entry` deletes what still hashes as installed and
   keeps the rest; `remove_dir_all` never followed a symlink, and deleting file
-  by file must not start. `update` refuses up front (`LocalChanges`) rather
+  by file must not start. `upgrade` refuses up front (`LocalChanges`) rather
   than silently discarding the same edits.
 - **A bare file is named by its URL.** The cache knows an artifact only by
   digest, and for `archive = "none"` the published name is what says the file
@@ -248,6 +248,19 @@ the crate map keeps that out of `luthier-manifest`.
 - **A `.part` is never held by a package.** Its digest names what the finished
   file will hash to, so matching it against installed artifacts reports a
   truncated download as in use and keeps `cache clean` from ever collecting it.
+- **The commands follow apt and Homebrew, by decision.** `update` fetches the
+  package lists (`Session::refresh`; the method kept its name) and counts
+  what can be upgraded; `outdated` lists it; `upgrade` upgrades the named
+  packages, or with none named everything, after a confirmation;
+  `autoremove` removes orphans. 0.4's `refresh`, `cleanup` and
+  `update <package>` are gone with no alias, and `update <package>` is a
+  usage error that names `upgrade`, because a quiet fetch would let a script
+  think it upgraded something. `upgrade --self` stays apart from `upgrade`:
+  packages never need root, and a .deb or .rpm Luthier goes through sudo.
+  `Session::upgrade_roots` resolves the *explicit* packages only — a
+  dependency named as a root is recorded as explicit and `autoremove` never
+  collects it again — and `State::orphans` is reachability from explicit
+  packages, so a chain or a cycle goes in one pass.
 - **One source failing does not fail `refresh`.** Each provider reports for
   itself (`RefreshOutcome::failure`), the snapshot already on disk survives a
   failed fetch, and only *every* source failing is an error. The default
@@ -347,8 +360,8 @@ the crate map keeps that out of `luthier-manifest`.
 
 ## Status
 
-Phases 0–6 of the spec are complete: refresh, search, info, install, list,
-verify, update, remove, cleanup, pin/unpin, with dependency resolution and the
+Phases 0–6 of the spec are complete: update, search, info, install, list,
+verify, outdated, upgrade, remove, autoremove, pin/unpin, with dependency resolution and the
 hardened extractor.
 
 LV2 and sample libraries install; 7z extracts; a bare CLAP or SoundFont installs; tar hard links are materialised
@@ -396,7 +409,7 @@ the workspace version through `packaging/version.sh` (the Nix package reads
 `Cargo.toml` itself), and nfpm is pinned by version and SHA-256 in
 `package.sh` alone.
 
-`luthier update --self` (`selfupdate.rs`) reads the latest release from
+`luthier upgrade --self` (`selfupdate.rs`) reads the latest release from
 GitHub's API and checks each download against the SHA-256 GitHub publishes for
 the asset. Every release already out reads the next one that way, so the asset
 names `luthier-<arch>-linux.{tar.gz,deb,rpm}` and the tarball's layout (one

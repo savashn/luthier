@@ -1,4 +1,4 @@
-//! Luthier updating itself: `luthier update --self`.
+//! Luthier updating itself: `luthier upgrade --self`.
 //!
 //! A release publishes, for each architecture, the tarball the install script
 //! and a hand install put in place, and a .deb and an .rpm of the same files.
@@ -114,12 +114,12 @@ pub fn parse_release(json: &[u8]) -> Result<Release> {
 }
 
 /// A release newer than the running build, for the line after `update` and
-/// `refresh`.
+/// `outdated`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NewerLuthier {
   pub current: Version,
   pub latest: Version,
-  /// Whether `luthier update --self` updates this installation. When it
+  /// Whether `luthier upgrade --self` updates this installation. When it
   /// does not, the way it was installed does.
   pub updates_itself: bool,
 }
@@ -162,7 +162,7 @@ impl Installation {
     classify(binary, deb_listed, rpm_owned)
   }
 
-  /// Whether `luthier update --self` updates an installation like this one.
+  /// Whether `luthier upgrade --self` updates an installation like this one.
   pub fn updates_itself(&self) -> bool {
     matches!(
       self,
@@ -270,7 +270,7 @@ impl PackageInstall {
   }
 }
 
-/// What `luthier update --self` will do.
+/// What `luthier upgrade --self` will do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SelfUpdatePlan {
   pub current: Version,

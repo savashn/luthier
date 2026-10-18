@@ -11,7 +11,7 @@
 #   packages   a file in the format `luthier export` writes, applied with
 #              `luthier import [--prune]`
 #   locations  `luthier location set`
-#   refresh    `luthier refresh` first, so a newly declared package can be
+#   refresh    `luthier update` first, so a newly declared package can be
 #              found
 #
 # A failure — no network, a disk that is not mounted — is reported as a
@@ -56,7 +56,7 @@ let
             Hold the package at exactly this version. Applying fails while
             the registry no longer offers it. `null` follows the registry:
             installed at the newest version, and upgraded with
-            `luthier update`.
+            `luthier upgrade`.
           '';
         };
       };
@@ -140,7 +140,7 @@ in
       type = types.bool;
       default = true;
       description = ''
-        Run `luthier refresh` before applying, so a newly declared package can
+        Run `luthier update` before applying, so a newly declared package can
         be found. It asks for the package list on every switch, which
         downloads it only when it changed. Off, the list is asked for only once
         a day has passed, as it is by any command.
@@ -214,7 +214,7 @@ in
           || warnEcho "luthier $*: failed; the rest of the switch goes ahead"
       }
 
-      ${optionalString cfg.refresh "luthier refresh"}
+      ${optionalString cfg.refresh "luthier update"}
 
       ${concatMapStrings
         (kind: ''

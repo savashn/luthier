@@ -123,7 +123,7 @@ impl EnvFile {
   /// The packages an import should ask for by name.
   ///
   /// Dependencies are deliberately excluded: asking for them as roots would
-  /// record them as explicitly installed, and `luthier cleanup` would then
+  /// record them as explicitly installed, and `luthier autoremove` would then
   /// never offer to remove them once nothing needed them (§24).
   pub fn roots(&self) -> Vec<PackageId> {
     self
@@ -254,7 +254,7 @@ mod tests {
   #[test]
   fn only_explicit_packages_become_roots() {
     // A dependency reimported as a root would be recorded as explicitly
-    // installed, and `cleanup` would stop offering to remove it (§24).
+    // installed, and `autoremove` would stop offering to remove it (§24).
     let state = state_with(vec![
       package("surge-xt", "1.3.4", InstallReason::Explicit),
       package("engine", "0.9.0", InstallReason::Dependency),

@@ -55,8 +55,8 @@ fish older than 3.4 wants `(uname -m)` instead. Pick the line for your system:
 | NixOS, or Nix on any distribution | [the flake](#with-nix) |
 | Anything else, or without root | [the install script](#install-script), or [by hand](#by-hand) |
 
-`luthier update` and `luthier refresh` say when a new Luthier is out, and
-`luthier update --self` installs it the way this one came: a binary from the
+`luthier update` and `luthier outdated` say when a new Luthier is out, and
+`luthier upgrade --self` installs it the way this one came: a binary from the
 install script or the tarball is run once where it will live, then replaces
 this one, with its man page and completions; the .deb or .rpm goes through apt,
 dnf or zypper (with `sudo`), so the package manager keeps track of it. A
@@ -189,32 +189,34 @@ luthier list
 
 Plugins land in `~/.clap`, `~/.vst3` and `~/.lv2`, which hosts already scan:
 restart your DAW, or ask it to rescan, and they appear. Anything that installs
-or deletes shows what it will do and asks first. `luthier update` shows what
-can be upgraded.
+or deletes shows what it will do and asks first. The commands follow apt and
+Homebrew: `luthier update` fetches the package lists, `luthier outdated`
+shows what can be upgraded, and `luthier upgrade` upgrades it.
 
 The Open Audio Stack list, which almost every package comes from, keeps
 itself current: once a day, a command that reads it first asks whether there
 is a newer one, which downloads nothing when there is not. `--offline`
 skips that, and so does a network that is not there, with a warning.
-`luthier refresh` asks now. The few packages Luthier corrects or adds itself
-(`extras`) are built into it, and change when Luthier is updated.
+`luthier update` asks now. The few packages Luthier corrects or adds itself
+(`extras`) are built into it, and change when Luthier is upgraded.
 
 ## Use
 
 ```console
-luthier refresh                 # fetch registry metadata
+luthier update                  # fetch the package lists, count upgrades
 luthier search <query>          # find packages
 luthier info <package>          # everything known about one
 luthier install <package>       # resolve, download, verify, install
 luthier list                    # what is installed
 luthier list --unmanaged        # plugins installed outside Luthier
 luthier verify [package]        # check installed files are unchanged
-luthier update [package]        # report updates, or apply named ones
-luthier update --self           # update Luthier itself
+luthier outdated                # what has a newer release
+luthier upgrade [package]       # upgrade the named packages, or everything
+luthier upgrade --self          # upgrade Luthier itself
 luthier remove <package>        # remove, keeping shared dependencies
-luthier cleanup                 # report packages nothing needs
-luthier pin <package> [version] # hold a version back from updates
-luthier unpin <package>         # let it be updated again
+luthier autoremove [--dry-run]  # remove dependencies nothing needs
+luthier pin <package> [version] # hold a version back from upgrades
+luthier unpin <package>         # let it be upgraded again
 
 luthier cache list              # what the download cache holds
 luthier cache clean             # delete archives nothing installed needs

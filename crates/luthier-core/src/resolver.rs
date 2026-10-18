@@ -828,7 +828,7 @@ mod tests {
       .map(|p| (p.id().as_str(), p.reason))
       .collect();
     assert_eq!(reasons["vsco2"], InstallReason::Explicit);
-    // This is what later lets `luthier cleanup` call engine an orphan (§24).
+    // This is what later lets `luthier autoremove` call engine an orphan (§24).
     assert_eq!(reasons["engine"], InstallReason::Dependency);
   }
 

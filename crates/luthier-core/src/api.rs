@@ -23,7 +23,7 @@ use crate::state::{
   ArtifactRecord, InstallReason, InstalledEntry, InstalledPackage, State, StateGuard, StateLock,
 };
 use jiff::Timestamp;
-use luthier_manifest::{Format, PackageId, Target};
+use luthier_manifest::{Format, PackageId, PackageKind, Target};
 use semver::Version;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -168,7 +168,7 @@ impl Session {
 
   // -------------------------------------------------------------- refresh --
 
-  /// Updates every registry (§31 `refresh`).
+  /// Updates every registry (§31; the `update` command).
   pub async fn refresh(&self) -> Result<Vec<RefreshOutcome>> {
     self.require_locations(&[LocationKind::Cache])?;
     // Waits for a refresh another command is making on its own, rather than
@@ -1111,36 +1111,82 @@ impl Session {
     Ok(updates)
   }
 
-  /// Updates the named packages have available but are pinned away from.
+  /// What `upgrade` resolves: the named packages, or with none named, every
+  /// explicitly installed package a source still carries a release of for
+  /// this machine.
   ///
-  /// `update <id>` resolves through the pin and reports the package as
-  /// already installed, which is true and, by itself, silent about why. §27
-  /// says a pin is reported rather than silently obeyed, and `update` with no
-  /// arguments does report it; this is what lets the targeted form say the
-  /// same thing.
+  /// The explicit ones only, because resolving a root is what brings its
+  /// dependencies to their newest compatible release, and naming a
+  /// dependency as a root would record it as explicitly installed (§24) —
+  /// `autoremove` would then never collect it. A package no source carries
+  /// any more is left as it is rather than failing the whole upgrade: there
+  /// is nothing to upgrade it to, and `outdated` says nothing about it
+  /// either.
+  ///
+  /// A named package has to be installed already. Upgrading something that
+  /// is not there is an install, and saying so beats doing one unasked.
+  pub fn upgrade_roots(&self, ids: &[PackageId]) -> Result<Vec<PackageId>> {
+    let state = crate::state::load(&self.layout)?;
+    if !ids.is_empty() {
+      if let Some(missing) = ids.iter().find(|id| !state.is_installed(id)) {
+        return Err(Error::State(StateError::NotInstalled {
+          id: missing.clone(),
+        }));
+      }
+      return Ok(ids.to_vec());
+    }
+    let index = self.index()?;
+    Ok(
+      state
+        .packages
+        .values()
+        .filter(|package| package.reason == InstallReason::Explicit)
+        .filter(|package| {
+          index.packages.get(&package.id).is_some_and(|entry| {
+            entry.manifest.kind == PackageKind::Pack
+              || entry
+                .manifest
+                .releases
+                .iter()
+                .any(|release| release.artifacts_for(&self.target).next().is_some())
+          })
+        })
+        .map(|package| package.id.clone())
+        .collect(),
+    )
+  }
+
+  /// Updates the named packages have available but are pinned away from,
+  /// or every package's with none named.
+  ///
+  /// `upgrade` resolves through the pin and reports the package as already
+  /// installed, which is true and, by itself, silent about why. §27 says a
+  /// pin is reported rather than silently obeyed, and `outdated` does report
+  /// it; this is what lets `upgrade` say the same thing.
   pub fn held_back(&self, ids: &[PackageId]) -> Result<Vec<AvailableUpdate>> {
     Ok(
       self
         .available_updates()?
         .into_iter()
-        .filter(|update| update.pinned.is_some() && ids.iter().any(|id| id.as_str() == update.id))
+        .filter(|update| {
+          update.pinned.is_some()
+            && (ids.is_empty() || ids.iter().any(|id| id.as_str() == update.id))
+        })
         .collect(),
     )
   }
 
-  // -------------------------------------------------------------- cleanup --
+  // ----------------------------------------------------------- autoremove --
 
-  /// Lists packages nothing needs any more. Deletes nothing (§24).
-  pub fn cleanup(&self) -> Result<Vec<InstalledSummary>> {
-    let state = crate::state::load(&self.layout)?;
-    Ok(
-      state
-        .orphans()
-        .iter()
-        .filter_map(|id| state.get(id))
-        .map(InstalledSummary::from)
-        .collect(),
-    )
+  /// Packages installed as dependencies that nothing explicitly installed
+  /// needs any more (§24): what `autoremove` removes. Changes nothing.
+  ///
+  /// A front end shows [`Session::plan_remove`] for these and, once
+  /// confirmed, hands the same list to [`Session::remove`], which refuses if
+  /// one became needed again in between — rather than recomputing the list
+  /// and removing something nobody was shown.
+  pub fn autoremove_candidates(&self) -> Result<Vec<PackageId>> {
+    Ok(crate::state::load(&self.layout)?.orphans())
   }
 
   // -------------------------------------------------------------- sources --
@@ -1323,7 +1369,7 @@ impl Session {
   ///
   /// A named version has to be one the registry actually carries, or the
   /// installed one. A pin is read back by every later resolution, so an
-  /// invented version is not a harmless note: it makes `update` report a
+  /// invented version is not a harmless note: it makes `outdated` report a
   /// package held above the newest release that exists, and hands
   /// `select_version` a requirement nothing can satisfy.
   pub fn pin(&self, id: &PackageId, version: Option<Version>) -> Result<InstalledSummary> {
@@ -1396,7 +1442,7 @@ impl Session {
   ///
   /// Only `explicit` entries become roots; dependency versions are supplied
   /// to the resolver as requirements so the same graph comes back, but they
-  /// stay recorded as dependencies and so remain eligible for `cleanup`.
+  /// stay recorded as dependencies and so remain eligible for `autoremove`.
   ///
   /// With `prune`, the import converges rather than adds: once what the file
   /// names is installed, every package it neither names nor needs is
@@ -1508,7 +1554,7 @@ impl Session {
   }
 
   /// A newer release than this one, if there is one and the answer comes
-  /// quickly; for the line after `update` and `refresh`.
+  /// quickly; for the line after `update` and `outdated`.
   ///
   /// Never an error, and never a wait: the command has done its work by
   /// then, so no answer from GitHub within [`NOTICE_TIMEOUT`], or none at
@@ -1601,7 +1647,7 @@ impl Session {
   ) -> Result<()> {
     self.require_locations(&[LocationKind::Cache])?;
     // Under the state lock, like everything else that writes: a second
-    // `update --self`, or the cache being moved by `location`, would
+    // `upgrade --self`, or the cache being moved by `location`, would
     // otherwise pull the download out from under this one. The lock alone:
     // a state file this build cannot read must not stop the update that
     // would read it.

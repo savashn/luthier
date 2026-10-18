@@ -56,7 +56,7 @@ manifest in `extras/`, found by the same rules as in any registry tree, and
 Luthier reads them as `extras` without fetching anything. So a binary reads
 exactly the manifests it was released with, never ones written for a manifest
 format it does not know, and a change here reaches users with the release that
-carries it — through `luthier update --self`, or however they installed.
+carries it — through `luthier upgrade --self`, or however they installed.
 
 0.4 and earlier fetched it on `refresh`, as `luthier-extras`, from a
 `bench.tar.gz` asset of the latest release; releases no longer carry one.

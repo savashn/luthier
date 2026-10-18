@@ -9,12 +9,14 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 443 tests, fully offline. `refresh`, `search`, `info`, `install`,
-`list`, `verify`, `update`, `remove`, `cleanup`, `pin`/`unpin`, and
-`export`/`import` all work end to end against real packages. Named
+Four crates, 447 tests, fully offline. `update`, `search`, `info`, `install`,
+`list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
+`pin`/`unpin`, and `export`/`import` all work end to end against real
+packages; the verbs are apt's and Homebrew's (unreleased: 0.4 called them
+`refresh`, `update` and `cleanup`). Named
 environments existed until 0.2 and were removed; see *Deliberate ceilings*.
-`update --self` updates Luthier itself the way it was installed, and
-`update` and `refresh` say when a newer one is out (unreleased; 0.4.0 has
+`upgrade --self` upgrades Luthier itself the way it was installed, and
+`update` and `outdated` say when a newer one is out (unreleased; 0.4.0 has
 neither, so its users install the next release once by hand).
 
 CLAP, VST3, LV2 and sample libraries install, from `.tar.gz`, `.tar.xz`,
@@ -336,7 +338,7 @@ who installs software through their distribution. `cargo install` is not a
 distribution channel for this audience.
 
 Every release now also carries a `.deb`, an `.rpm` and an install script
-(since 0.4.0), and `luthier update --self` updates whichever of them, or the
+(since 0.4.0), and `luthier upgrade --self` upgrades whichever of them, or the
 tarball, Luthier came from. The AUR package and a Flatpak would still reach
 people who install through their distribution's own tools.
 
@@ -408,7 +410,7 @@ Then the Nix-facing work, in order of what unblocks what:
 2. **A Home Manager module — done.** `programs.luthier` (`nix/hm-module.nix`,
    documented in `docs/NIX.md`) writes the declared packages to a file in
    the export format and applies it during activation with `import`,
-   `--prune` when asked, after `refresh` and `location set`. It runs luthier rather than
+   `--prune` when asked, after `update` and `location set`. It runs luthier rather than
    building plugins as derivations, so there is one implementation of
    verification and placement; a failure warns rather than failing the
    switch. Tested against real Home Manager: install, a second switch doing
@@ -513,7 +515,7 @@ should also record what it skipped is not settled.
 
 **What is the update story for a `pack`?** A pack resolves to dependencies, so
 updating one means updating its members — but a pack's own version bump and its
-members' bumps are different events, and `update` does not currently
+members' bumps are different events, and `upgrade` does not currently
 distinguish them.
 
 ### Third-party registries — decided: none
