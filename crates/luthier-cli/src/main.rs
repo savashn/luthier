@@ -331,6 +331,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         if let Some(error) = plan.refusal() {
           return Err(error);
         }
+        // Nothing to install, but the file still says which packages were
+        // asked for, and `autoremove` reads that.
+        session.import_reasons(&env_file, *prune)?;
         reporter.note("Nothing to do; the installation already matches.");
         return Ok(());
       }

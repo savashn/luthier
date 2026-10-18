@@ -842,10 +842,7 @@ fn installing_a_dependency_by_name_keeps_it_from_autoremove() {
     .unwrap();
   let stdout = stdout_of(&output);
   assert!(output.status.success(), "{stdout}");
-  assert!(
-    stdout.contains("it is now recorded as requested"),
-    "{stdout}"
-  );
+  assert!(stdout.contains("records it as requested"), "{stdout}");
   assert_eq!(reason_of(&fixture, "engine"), "explicit");
 
   fixture
@@ -858,10 +855,11 @@ fn installing_a_dependency_by_name_keeps_it_from_autoremove() {
 }
 
 #[test]
-fn a_package_held_back_by_its_dependency_is_said_to_be_and_the_rest_upgrades() {
-  // `plugin` needs `dep`, which no source builds for this machine any more:
-  // resolving `plugin` would fail, so `upgrade` leaves it, says why, and
-  // upgrades everything else rather than nothing at all.
+fn an_upgrade_that_needs_what_nothing_can_upgrade_stops_and_says_which() {
+  // `plugin` 1.1.0 still needs `dep`, which no source builds for this
+  // machine any more. Leaving `plugin` out and upgrading the rest could
+  // move what they share past what `plugin` supports; the upgrade stops,
+  // naming both, and naming the others still works.
   let fixture = Fixture::new();
   for (id, deps) in [
     ("dep", &[][..]),
@@ -922,7 +920,7 @@ fn a_package_held_back_by_its_dependency_is_said_to_be_and_the_rest_upgrades() {
     .iter()
     .map(|u| u["id"].as_str().unwrap())
     .collect();
-  assert_eq!(updates, ["other"], "{json}");
+  assert_eq!(updates, ["other", "plugin"], "{json}");
   let held: Vec<(&str, &str)> = found["unavailable"]
     .as_array()
     .unwrap()
@@ -931,23 +929,128 @@ fn a_package_held_back_by_its_dependency_is_said_to_be_and_the_rest_upgrades() {
     .collect();
   assert_eq!(
     held,
-    [
-      ("dep", "no-release-for-target"),
-      ("engine", "orphaned"),
-      ("plugin", "dependency-unavailable"),
-    ],
+    [("dep", "no-release-for-target"), ("engine", "orphaned")],
     "{json}"
+  );
+  let updated = stdout_of(&fixture.luthier().arg("update").output().unwrap());
+  assert!(
+    updated.contains(
+      "2 packages can be upgraded. 1 installed package can no longer be upgraded. \
+       1 update is for a dependency nothing needs now."
+    ),
+    "{updated}"
   );
 
   let output = fixture.luthier().arg("upgrade").output().unwrap();
+  assert!(!output.status.success());
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(
+    stderr.contains("dep can no longer be upgraded, and plugin needs it"),
+    "{stderr}"
+  );
+  let listed = || {
+    let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+    serde_json::from_str::<serde_json::Value>(&json).unwrap()
+  };
+  let version = |listed: &serde_json::Value, id: &str| {
+    listed
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|p| p["id"] == id)
+      .unwrap()["version"]
+      .as_str()
+      .unwrap()
+      .to_owned()
+  };
+  assert_eq!(version(&listed(), "other"), "1.0.0", "nothing moved");
+
+  fixture
+    .luthier()
+    .args(["upgrade", "other"])
+    .assert()
+    .success();
+  assert_eq!(version(&listed(), "other"), "1.1.0");
+
+  // Named, `dep` itself is left and said to be.
+  let output = fixture.luthier().args(["upgrade", "dep"]).output().unwrap();
   let stdout = stdout_of(&output);
   assert!(output.status.success(), "{stdout}");
+  assert!(stdout.contains("Nothing to upgrade."), "{stdout}");
   assert!(
-    stdout.contains("Plugin stays at 1.0.0: it needs dep, which can no longer be upgraded."),
+    stdout.contains("Dep stays at 1.0.0: no release is built for this machine any more."),
     "{stdout}"
   );
-  let listed = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
-  let listed: serde_json::Value = serde_json::from_str(&listed).unwrap();
+}
+
+#[test]
+fn what_a_package_nothing_can_upgrade_needs_stays_where_it_is() {
+  // `old` left every source, and needs `shared`. Upgrading `new`, which
+  // needs `shared` too, must not move `shared` past what `old` was built
+  // against: it is held, and said to be, and the rest upgrades.
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("shared", &[][..]),
+    ("old", &["shared"][..]),
+    ("new", &["shared"][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "old", "new"])
+    .assert()
+    .success();
+  std::fs::remove_file(fixture.registry().join("plugins/old.toml")).unwrap();
+  for (id, deps) in [("shared", &[][..]), ("new", &["shared"][..])] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "2.0.0", &artifact, deps);
+  }
+  // The held version has to still be published to be resolved to.
+  let shared = fixture.registry().join("plugins/shared.toml");
+  let newest = std::fs::read_to_string(&shared).unwrap();
+  let artifact = fixture.make_artifact("Shared");
+  fixture.add_plugin("shared", "1.0.0", &artifact, &[]);
+  let first = std::fs::read_to_string(&shared).unwrap();
+  std::fs::write(
+    &shared,
+    newest + &first[first.find("\n[[releases]]").unwrap()..],
+  )
+  .unwrap();
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  assert_eq!(found["updates"][0]["id"], "new", "{json}");
+  assert_eq!(found["updates"].as_array().unwrap().len(), 1, "{json}");
+  let held = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|u| u["id"] == "shared")
+    .unwrap_or_else(|| panic!("{json}"));
+  assert_eq!(held["reason"], "needed-by-unavailable");
+  assert_eq!(held["because_of"], "old");
+
+  let output = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&output);
+  assert!(
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(
+    stdout.contains("Shared stays at 1.0.0: old needs it, and can no longer be upgraded."),
+    "{stdout}"
+  );
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
   let version = |id: &str| {
     listed
       .as_array()
@@ -959,20 +1062,52 @@ fn a_package_held_back_by_its_dependency_is_said_to_be_and_the_rest_upgrades() {
       .unwrap()
       .to_owned()
   };
-  assert_eq!(version("other"), "1.1.0");
-  assert_eq!(version("plugin"), "1.0.0");
-  assert_eq!(version("engine"), "1.0.0");
+  assert_eq!(version("new"), "2.0.0");
+  assert_eq!(version("shared"), "1.0.0");
+}
 
-  // Named, the same answer rather than a resolution error.
-  let output = fixture
+#[test]
+fn an_import_records_what_its_file_asked_for() {
+  let fixture = Fixture::new();
+  let engine = fixture.make_artifact("Engine");
+  fixture.add_plugin("engine", "1.0.0", &engine, &[]);
+  let library = fixture.make_artifact("Library");
+  fixture.add_plugin("library", "1.0.0", &library, &["engine"]);
+  fixture
     .luthier()
-    .args(["upgrade", "plugin"])
-    .output()
-    .unwrap();
-  let stdout = stdout_of(&output);
-  assert!(output.status.success(), "{stdout}");
-  assert!(stdout.contains("Nothing to upgrade."), "{stdout}");
-  assert!(stdout.contains("Plugin stays at 1.0.0"), "{stdout}");
+    .args(["install", "library"])
+    .assert()
+    .success();
+  assert_eq!(reason_of(&fixture, "engine"), "dependency");
+
+  // Nothing to install, and still the file's word on what was asked for.
+  let file = loose_env_file(&fixture, &["engine", "library"]);
+  fixture
+    .luthier()
+    .arg("import")
+    .arg(&file)
+    .assert()
+    .success();
+  assert_eq!(reason_of(&fixture, "engine"), "explicit");
+
+  // With `--prune` the file describes the installation, so what it lists
+  // as a dependency is one.
+  let file = fixture.dir.path().join("declared.toml");
+  std::fs::write(
+    &file,
+    "[meta]\nschema = 1\nluthier = \"0.4.0\"\nexported = \"2026-09-27T00:00:00Z\"\n\
+     pinned = false\n\n[[package]]\nid = \"library\"\nreason = \"explicit\"\n\n\
+     [[package]]\nid = \"engine\"\nreason = \"dependency\"\n",
+  )
+  .unwrap();
+  fixture
+    .luthier()
+    .args(["import", "--prune"])
+    .arg(&file)
+    .assert()
+    .success();
+  assert_eq!(reason_of(&fixture, "engine"), "dependency");
+  assert_eq!(reason_of(&fixture, "library"), "explicit");
 }
 
 #[test]

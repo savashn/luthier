@@ -198,8 +198,8 @@ impl Reporter {
     let actionable: Vec<&_> = plan.actionable().collect();
     for id in &plan.marked_requested {
       self.note(format!(
-        "{id} is already installed, as a dependency; it is now recorded as requested, \
-         so `autoremove` keeps it."
+        "{id} is already installed, as a dependency; asking for it by name records it as \
+         requested, so `autoremove` keeps it."
       ));
     }
     if actionable.is_empty() {
@@ -610,31 +610,59 @@ impl Reporter {
       .filter(|u| u.pinned.is_some())
       .count();
     let count = outdated.updates.len() - pinned;
-    let stuck = outdated.unavailable.len();
-    let mut said = Vec::new();
-    match count {
-      0 => {}
-      1 => said.push("1 package can be upgraded.".to_string()),
-      n => said.push(format!("{n} packages can be upgraded.")),
-    }
-    match pinned {
-      0 => {}
-      1 => said.push("1 update is held back by a pin.".to_string()),
-      n => said.push(format!("{n} updates are held back by a pin.")),
-    }
-    match stuck {
-      0 => {}
-      1 => said.push("1 installed package can no longer be upgraded.".to_string()),
-      n => said.push(format!("{n} installed packages can no longer be upgraded.")),
-    }
+    let reasons = |wanted: &[UnavailableReason]| {
+      outdated
+        .unavailable
+        .iter()
+        .filter(|u| wanted.contains(&u.reason))
+        .count()
+    };
+    // Each said as what it is: an orphan can be upgraded by name, and a
+    // package from a source that could not be read may be fine after the
+    // next `update`.
+    let stuck = reasons(&[
+      UnavailableReason::NotCarried,
+      UnavailableReason::NoReleaseForTarget,
+      UnavailableReason::NeededByUnavailable,
+    ]);
+    let unread = reasons(&[UnavailableReason::SourceUnreadable]);
+    let orphaned = reasons(&[UnavailableReason::Orphaned]);
+    let said: Vec<String> = [
+      (
+        count,
+        "package can be upgraded.",
+        "packages can be upgraded.",
+      ),
+      (
+        pinned,
+        "update is held back by a pin.",
+        "updates are held back by a pin.",
+      ),
+      (
+        stuck,
+        "installed package can no longer be upgraded.",
+        "installed packages can no longer be upgraded.",
+      ),
+      (
+        unread,
+        "package could not be checked, as its source could not be read.",
+        "packages could not be checked, as their source could not be read.",
+      ),
+      (
+        orphaned,
+        "update is for a dependency nothing needs now.",
+        "updates are for dependencies nothing needs now.",
+      ),
+    ]
+    .into_iter()
+    .filter(|(n, _, _)| *n > 0)
+    .map(|(n, one, many)| format!("{n} {}", if n == 1 { one } else { many }))
+    .collect();
     if said.is_empty() {
       return self.note("\nEverything is up to date.");
     }
-    let them = if count + pinned + stuck == 1 {
-      "it"
-    } else {
-      "them"
-    };
+    let total = count + pinned + stuck + unread + orphaned;
+    let them = if total == 1 { "it" } else { "them" };
     self.note(format!(
       "\n{} Run `luthier outdated` to see {them}.",
       said.join(" ")
@@ -960,8 +988,8 @@ fn unavailable_reason(package: &Unavailable) -> String {
       "its source could not be read; `luthier update` fetches it again".into()
     }
     UnavailableReason::NoReleaseForTarget => "no release is built for this machine any more".into(),
-    UnavailableReason::DependencyUnavailable => format!(
-      "it needs {}, which can no longer be upgraded",
+    UnavailableReason::NeededByUnavailable => format!(
+      "{} needs it, and can no longer be upgraded",
       package.because_of.as_deref().unwrap_or("a package")
     ),
     UnavailableReason::Orphaned => {

@@ -46,7 +46,7 @@ pin = "1.2.3"
 | `meta.schema` | Format revision. A file from a newer revision is refused rather than half-understood. |
 | `meta.pinned` | Whether every package names a version. A `version` is a hard requirement wherever one is given, so a hand-written file with `pinned = false` can hold some packages at a version and let the rest follow the registry. |
 | `package.registry` | Where the manifest came from. Informational, and may be left out. |
-| `package.reason` | `explicit` packages are what import asks for by name; `dependency` entries are recorded so their versions reproduce, but stay dependencies. |
+| `package.reason` | `explicit` packages are what import asks for by name, and are recorded as explicitly installed even if they were dependencies here; `dependency` entries are recorded so their versions reproduce, and are not roots. With `--prune` a `dependency` entry is recorded as one even if it was installed by name here, since the file then describes the installation. |
 | `package.pin` | A pin the user had applied, reapplied after the install. |
 
 Packages are sorted by ID, so two exports of the same installation are

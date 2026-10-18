@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 453 tests, fully offline
+cargo test --workspace                     # 455 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -254,22 +254,30 @@ the crate map keeps that out of `luthier-manifest`.
   `upgrade --self` stays apart from `upgrade`: packages never need root,
   and a .deb or .rpm Luthier goes through sudo.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
-  `Session::survey` decides both: an update is listed only where an
-  explicit root `upgrade` will resolve reaches it, and everything else
-  with a newer release is an `Unavailable` with its reason — no source
-  carries it (`SourceUnreadable` instead while a source failed to load:
-  the index cannot tell the two apart), no release for this machine, it
-  needs such a package (`DependencyUnavailable`; resolving it would fail,
-  so its root is left and the rest upgrades), or nothing explicit needs
-  it (`Orphaned`). The plan carries `held_back` and the `roots` it
-  resolved, and `Session::upgrade` executes those roots, not ones worked
-  out again after the user answered.
+  `Session::survey` decides both. `upgrade` with nothing named resolves
+  every explicit package except one nothing can upgrade any more (no
+  source carries it — `SourceUnreadable` instead while a source failed
+  to load, since the index cannot tell the two apart — or no release for
+  this machine). What such a package reaches is held at the installed
+  version (`NeededByUnavailable`, passed as required versions), because
+  the resolver reads only the requirements of what it resolves: leaving
+  the package out and letting the rest move a shared dependency would
+  break it silently. Whether a newer release of a root still needs such
+  a package is not predicted from the installed graph; the resolution
+  fails, and `plan_upgrade` reports it as `Unupgradable` (or
+  `HeldVersionMissing`/`HeldConflict`). An update is listed only where
+  a resolved root reaches it; an orphan's is `Orphaned`. The plan
+  carries `held_back`, the `roots` it resolved and the `held` versions,
+  and `Session::upgrade` executes those, not ones worked out again after
+  the user answered.
 - **An explicit package is never demoted.** `Purpose::record_reasons`
   overrides the resolver, which knows roots and dependencies only: every
   installed package keeps its recorded reason, except a root of an
   install, which becomes explicit (`marked_requested`, applied by
   `install_for` or, with nothing else to do, `Session::mark_requested`,
-  as apt marks a package manual). Demoting one is a deletion waiting for
+  as apt marks a package manual). `import` applies its file's reasons
+  (`Session::import_reasons`): explicit always, dependency only with
+  `--prune`, where the file describes the installation. Demoting one is a deletion waiting for
   the next `autoremove`. `State::orphans` is reachability from explicit
   packages, so a chain or a cycle goes in one pass; `autoremove` then
   keeps any orphan engine that is the last player of content still

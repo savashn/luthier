@@ -630,6 +630,45 @@ pub enum ResolveError {
     requirer: PackageId,
     req: VersionReq,
   },
+
+  /// An upgrade needs a package nothing can upgrade any more: no source
+  /// carries it, or none builds it for this machine. Raised rather than
+  /// leaving whatever needs it out of the upgrade, which would let the rest
+  /// move a dependency past what that package supports.
+  #[error(
+    "{id} can no longer be upgraded, and {} {} it",
+    .needed_by.iter().map(PackageId::as_str).collect::<Vec<_>>().join(", "),
+    if .needed_by.len() == 1 { "needs" } else { "need" }
+  )]
+  Unupgradable {
+    id: PackageId,
+    needed_by: Vec<PackageId>,
+  },
+
+  /// A package an upgrade keeps where it is, for one nothing can upgrade
+  /// any more, is gone from the registry at that version.
+  #[error(
+    "{id} {version} is no longer in the registry, and {needed_by}, which can no longer be \
+     upgraded, needs it at that version"
+  )]
+  HeldVersionMissing {
+    id: PackageId,
+    version: Version,
+    needed_by: PackageId,
+  },
+
+  /// A package an upgrade keeps where it is, for one nothing can upgrade
+  /// any more, is needed at another version by something being upgraded.
+  #[error(
+    "{requirement}, and {needed_by}, which can no longer be upgraded, keeps {id} at the \
+     version installed"
+  )]
+  HeldConflict {
+    id: PackageId,
+    needed_by: PackageId,
+    /// Who needs what, as `plugin needs dep >=2`.
+    requirement: String,
+  },
 }
 
 impl ResolveError {
@@ -679,6 +718,14 @@ impl ResolveError {
       ResolveError::PinConflict { id, .. } => {
         Some(format!("Use `luthier unpin {id}` to lift the pin."))
       }
+      ResolveError::Unupgradable { id, .. } => Some(format!(
+        "`luthier outdated` says why. Name the packages to upgrade the others, or \
+         remove what needs {id}."
+      )),
+      ResolveError::HeldVersionMissing { needed_by, .. }
+      | ResolveError::HeldConflict { needed_by, .. } => Some(format!(
+        "Name the packages to upgrade the others, or remove {needed_by}."
+      )),
       ResolveError::RequiredVersionMissing { .. } => Some(
         "Run `luthier update`; if the version is genuinely gone, re-export from a \
                  machine that still has it, or import with a `--loose` file."

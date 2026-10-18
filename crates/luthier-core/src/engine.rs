@@ -103,9 +103,11 @@ pub struct Stranded {
 /// want the kit any more. What they should not get is silence with no
 /// explanation, so this warns and removal proceeds.
 ///
-/// A package whose manifest has left the registry is skipped rather than
-/// guessed at: what it holds is not recorded in state, and an advisory warning
-/// is not worth inventing.
+/// What a package holds is read from its state record
+/// ([`InstalledPackage::content`](crate::state::InstalledPackage::content)),
+/// so it counts after its manifest has left every source; the index is asked
+/// only for a record that carries none, and a package in neither is skipped
+/// rather than guessed at.
 pub fn stranded_by_removal(
   index: &RegistryIndex,
   state: &State,
