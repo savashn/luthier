@@ -154,6 +154,10 @@ pub struct ZipEntry {
   pub mode: Option<u32>,
   pub symlink_target: Option<String>,
   pub directory: bool,
+  /// The system an entry is marked as made on, and its external attributes,
+  /// written as they are rather than through `unix_permissions`, which
+  /// drops the file type and the setuid, setgid and sticky bits.
+  pub attributes: Option<(zip::System, u32)>,
 }
 
 impl ZipEntry {
@@ -164,6 +168,7 @@ impl ZipEntry {
       mode: Some(0o644),
       symlink_target: None,
       directory: false,
+      attributes: None,
     }
   }
 
@@ -174,6 +179,7 @@ impl ZipEntry {
       mode: Some(0o755),
       symlink_target: None,
       directory: true,
+      attributes: None,
     }
   }
 
@@ -184,12 +190,32 @@ impl ZipEntry {
       mode: Some(0o120_777),
       symlink_target: Some(target.into()),
       directory: false,
+      attributes: None,
     }
   }
 
   pub fn with_mode(mut self, mode: u32) -> Self {
     self.mode = Some(mode);
     self
+  }
+
+  /// A file marked as made on MS-DOS, with `attributes` as its external
+  /// attributes: whatever their upper half says, readers that trust the
+  /// marking take it for a DOS file.
+  pub fn made_on_dos(name: &str, data: &[u8], attributes: u32) -> Self {
+    Self {
+      attributes: Some((zip::System::Dos, attributes)),
+      ..Self::file(name, data)
+    }
+  }
+
+  /// A file marked as made on Unix, with `attributes` as its external
+  /// attributes, whatever bits they carry.
+  pub fn made_on_unix(name: &str, data: &[u8], attributes: u32) -> Self {
+    Self {
+      attributes: Some((zip::System::Unix, attributes)),
+      ..Self::file(name, data)
+    }
   }
 }
 
@@ -204,6 +230,9 @@ pub fn build_zip(entries: &[ZipEntry]) -> Vec<u8> {
       SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     if let Some(mode) = entry.mode {
       options = options.unix_permissions(mode);
+    }
+    if let Some((system, attributes)) = entry.attributes {
+      options = options.system(system).external_attributes(attributes);
     }
     if let Some(target) = &entry.symlink_target {
       writer

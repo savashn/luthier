@@ -143,6 +143,22 @@ about.
   the checksum error; it now reports the mismatch, and the next run starts
   the file over.
 
+### Security
+
+- **rustls 0.23.46** (RUSTSEC-2026-0346 to 0349): `Debug` output of a
+  client session could show TLS secrets, data could reach the outer server
+  after an ECH rejection, a compressed certificate could take up to 1 GiB
+  before authentication, and an unauthenticated ServerHello could make
+  later connections fall back to classical key exchange.
+- **zip 9** (RUSTSEC-2026-0367 to 0369). None of the three reaches Luthier:
+  they are in the crate's own `extract`, which Luthier never calls, and in
+  keeping setuid and setgid bits, which its extractor always drops. Moved
+  anyway, since 9 is where they are fixed. A zip that lists a name twice,
+  or whose local headers disagree with its central directory, is now
+  refused: what a review of it shows and what lands on disk could differ.
+  An entry marked as made on DOS keeps the Unix mode it carries, link and
+  executable bit alike, as it did with zip 8.
+
 ## [0.4.0] — 2026-10-06
 
 ### Added

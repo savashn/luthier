@@ -336,6 +336,112 @@ fn zip_symlink_is_refused() {
   sandbox.assert_nothing_escaped();
 }
 
+#[test]
+fn zip_link_or_device_marked_as_made_on_dos_is_refused() {
+  // The upper half of the external attributes holds a Unix file type. zip
+  // 9 reads it only from an entry marked as made on Unix, so a link marked
+  // as made on DOS would pass for a plain file. Refused as zip 8 refused
+  // it, whatever the marking says.
+  for (mode, refusal) in [
+    (0o120_777, UnsafeEntry::Symlink),
+    (0o020_644, UnsafeEntry::SpecialFile),
+  ] {
+    let sandbox = Sandbox::new();
+    let result = sandbox.extract_zip(&[ZipEntry::made_on_dos("link", b"/etc/passwd", mode << 16)]);
+    assert_unsafe(result, refusal);
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+#[test]
+fn zip_executable_marked_as_made_on_dos_stays_executable() {
+  // A release zip made by a tool that marks every entry as made on DOS can
+  // still carry a Unix mode. zip 9 would build 0o664 from the DOS
+  // attributes and the binary would install unrunnable.
+  use std::os::unix::fs::PermissionsExt;
+
+  let sandbox = Sandbox::new();
+  sandbox
+    .extract_zip(&[ZipEntry::made_on_dos("engine", b"\x7fELF", 0o100_755 << 16)])
+    .expect("an executable file is a legal entry");
+  let mode = std::fs::metadata(sandbox.dest.join("engine"))
+    .unwrap()
+    .permissions()
+    .mode();
+  assert_eq!(mode & 0o777, 0o755, "{mode:o}");
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn zip_setuid_and_sticky_bits_never_reach_the_disk() {
+  // Read from the attributes here, not through the crate, so dropping them
+  // is the extractor's own doing and has to be checked as such.
+  use std::os::unix::fs::PermissionsExt;
+
+  let sandbox = Sandbox::new();
+  sandbox
+    .extract_zip(&[
+      ZipEntry::made_on_unix("setuid.bin", b"x", 0o104_755 << 16),
+      ZipEntry::made_on_unix("setgid.bin", b"x", 0o102_755 << 16),
+      ZipEntry::made_on_unix("sticky.bin", b"x", 0o101_777 << 16),
+    ])
+    .expect("these are legal entries, just with hostile modes");
+  for name in ["setuid.bin", "setgid.bin", "sticky.bin"] {
+    let mode = std::fs::metadata(sandbox.dest.join(name))
+      .unwrap()
+      .permissions()
+      .mode();
+    assert_eq!(mode & 0o7000, 0, "{name} kept a special bit: {mode:o}");
+    assert_eq!(mode & 0o777, 0o755, "{name} should be a plain executable");
+  }
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn zip_whose_headers_disagree_is_refused() {
+  // The writer will not repeat a name, so the archive is patched: once with
+  // the second name repeated everywhere, which leaves the central directory
+  // listing `a.clap` twice, and once only in the local header, which leaves
+  // it naming a file the central directory does not. A reader would keep
+  // the last copy of the first without a word, and one streaming the local
+  // headers would install the second under another name.
+  let original = build_zip(&[
+    ZipEntry::file("a.clap", b"reviewed"),
+    ZipEntry::file("b.clap", b"swapped in"),
+  ]);
+  let everywhere = replace(&original, b"b.clap", b"a.clap", usize::MAX);
+  let local_only = replace(&original, b"b.clap", b"c.clap", 1);
+  for bytes in [everywhere, local_only] {
+    let sandbox = Sandbox::new();
+    let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+    match sandbox.run(&archive, ArchiveFormat::Zip) {
+      Err(ArchiveError::Corrupt(reason)) => assert!(reason.contains("disagree"), "{reason}"),
+      other => panic!("expected the headers to be refused, got {other:?}"),
+    }
+    assert_eq!(list_tree(&sandbox.dest), Vec::<String>::new());
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+/// `bytes` with the first `count` occurrences of `from` replaced by `to`,
+/// which is as long.
+fn replace(bytes: &[u8], from: &[u8], to: &[u8], count: usize) -> Vec<u8> {
+  assert_eq!(from.len(), to.len());
+  let mut out = bytes.to_vec();
+  let mut done = 0;
+  let mut at = 0;
+  while done < count
+    && let Some(found) = out[at..].windows(from.len()).position(|w| w == from)
+  {
+    let start = at + found;
+    out[start..start + to.len()].copy_from_slice(to);
+    at = start + to.len();
+    done += 1;
+  }
+  assert!(done > 0, "nothing to replace");
+  out
+}
+
 // --------------------------------------------------------- special entries --
 
 #[test]

@@ -127,7 +127,19 @@ the crate map keeps that out of `luthier-manifest`.
   built; the reachable collision is `name/` plus `name`.
 - **`spdx` rejects deprecated ids at parse time**, so `GPL-3.0` surfaces as
   `InvalidExpression`, not our `Deprecated` variant.
-- **Pin `zip` to 8.x** — `cargo search` reports a 9.0.0 prerelease.
+- **zip 9 reads less than it is told.** It decodes a name by its bytes,
+  ignoring the UTF-8 flag: valid UTF-8 is read as UTF-8, anything else as
+  CP437, which never fails. zip 8 went by the flag, so a name that is
+  UTF-8 without the flag, or flagged and not UTF-8, comes out differently
+  than it did, and a `source` that `inspect` derived from such an entry
+  under zip 8 may no longer match. It also builds an entry's Unix mode
+  from its DOS attributes when the entry says it was made on DOS, which
+  would pass a link for a file and drop an executable bit, so
+  `zip_archive.rs` reads the mode from the upper half of the external
+  attributes itself, as zip 8 did. `validate_header_consistency` refuses
+  a name listed twice and a local header that disagrees with the central
+  directory. 8.x was pinned while 9 was a prerelease; RUSTSEC-2026-0367 to
+  0369 are fixed only in 9.
 - **`sevenz-rust2` takes no default features.** The dev-dependency adds
   `compress` because only the test fixtures write archives. It is in its own
   Dependabot group so that a release raising the MSRV again holds back only

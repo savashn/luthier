@@ -10,13 +10,10 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
-        # It sets the MSRV, and its last floor raise would have failed the
-        # whole group, security fixes included. Alone, it holds back only itself.
-        exclude-patterns: ["sevenz-rust2"]
-    ignore:
-      # Deliberate pin; see the comments in Cargo.toml and CLAUDE.md.
-      - dependency-name: zip
-        versions: [">=9"]
+        # sevenz-rust2 sets the MSRV, and its last floor raise would have
+        # failed the whole group, security fixes included; zip's majors change
+        # its API, as 9 did. Alone, each holds back only itself.
+        exclude-patterns: ["sevenz-rust2", "zip"]
 
   - package-ecosystem: github-actions
     directory: /
