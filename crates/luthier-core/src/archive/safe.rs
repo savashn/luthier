@@ -13,6 +13,25 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
+/// The file-type bits of a Unix mode, and the types an archive may hold,
+/// from `<sys/stat.h>`.
+const S_IFMT: u32 = 0o170_000;
+const S_IFLNK: u32 = 0o120_000;
+const S_IFREG: u32 = 0o100_000;
+const S_IFDIR: u32 = 0o040_000;
+
+/// The Unix mode a zip or 7z entry claims in the upper half of its
+/// attributes, where both containers keep one, and where a link or a device
+/// says what it is.
+///
+/// Read whatever system the entry says made it and whatever flag it sets:
+/// an entry that claims to be a link is refused for claiming it, not let
+/// through for claiming it in a field the reader was told to ignore.
+pub fn claimed_mode(attributes: u32) -> Option<u32> {
+  let mode = attributes >> 16;
+  (mode != 0).then_some(mode)
+}
+
 /// Ceilings that make a decompression bomb fail fast instead of filling the disk.
 #[derive(Debug, Clone, Copy)]
 pub struct ExtractLimits {
@@ -358,6 +377,18 @@ impl SafeExtractor {
       source: source_err,
     })?;
     self.file(name, mode, &mut input)
+  }
+
+  /// Refuses an entry whose mode says it is anything but a file or a
+  /// directory: a link is the classic archive escape, in any container,
+  /// and a device, FIFO or socket has no business in a plugin. One check
+  /// for every container whose entries carry a mode, so they cannot drift.
+  pub fn check_type(&self, name: &str, mode: Option<u32>) -> Result<(), ArchiveError> {
+    match mode.map_or(0, |mode| mode & S_IFMT) {
+      S_IFLNK => Err(self.reject(name, UnsafeEntry::Symlink)),
+      0 | S_IFREG | S_IFDIR => Ok(()),
+      _ => Err(self.reject(name, UnsafeEntry::SpecialFile)),
+    }
   }
 
   /// Rejects an entry type we will not handle, naming why.

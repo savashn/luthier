@@ -3,69 +3,65 @@
 //! As with tar, this does not call the crate's own `extract`; entries are
 //! inspected and then handed to [`SafeExtractor`].
 
-use super::safe::SafeExtractor;
+use super::safe::{SafeExtractor, claimed_mode};
 use crate::error::{ArchiveError, UnsafeEntry};
-use std::io::{Read, Seek};
+use std::collections::HashSet;
+use std::io::{self, Read, Seek, SeekFrom};
+use zip::{ZipArchive, ZipReadOptions};
 
-/// `S_IFMT` and `S_IFLNK` from `<sys/stat.h>`: zip stores a Unix mode in the
-/// external attributes, and a symlink is encoded there rather than as a
-/// distinct entry type.
-const S_IFMT: u32 = 0o170_000;
-const S_IFLNK: u32 = 0o120_000;
-const S_IFREG: u32 = 0o100_000;
-const S_IFDIR: u32 = 0o040_000;
+/// The signature that opens each record of a zip's central directory.
+const CENTRAL_RECORD: u32 = 0x0201_4b50;
 
 pub fn extract<R: Read + Seek>(
   reader: R,
   extractor: &mut SafeExtractor,
 ) -> Result<(), ArchiveError> {
-  let mut archive = zip::ZipArchive::new(reader)
-    .map_err(|e| ArchiveError::Corrupt(format!("cannot open zip: {e}")))?;
-
-  // A name listed twice in the central directory would be read once, the
-  // last copy winning without a word, and a local header that says
-  // something else than the central directory is what a reader streaming
-  // the local headers — bsdtar does — would install instead. Either way
-  // a review of the archive would not tell what lands on disk, so both
-  // are refused, as tar refuses a duplicate. Every Linux zip sampled from
-  // the Open Audio Stack registry passes.
-  archive
-    .validate_header_consistency()
-    .map_err(|e| ArchiveError::Corrupt(format!("zip headers disagree: {e}")))?;
+  // A name listed twice in the central directory is read once, the last
+  // copy winning without a word, so a review of the archive would not
+  // tell which lands on disk. Refused, as tar refuses a duplicate. The
+  // crate keeps one entry per name, so the records are read here.
+  let archive = open(reader)?;
+  let start = archive.central_directory_start();
+  let mut reader = archive.into_inner();
+  if let Some(name) = repeated_name(&mut reader, start)? {
+    return Err(extractor.reject(&name, UnsafeEntry::Duplicate));
+  }
+  let mut archive = open(reader)?;
 
   for index in 0..archive.len() {
-    let mut file = archive
-      .by_index(index)
-      .map_err(|e| ArchiveError::Corrupt(format!("cannot read zip entry {index}: {e}")))?;
-
     // A name that is valid UTF-8 is read as such, and any other as CP437,
     // which maps every byte: this does not fail today. Refused rather than
     // unwrapped should a later release start failing it.
-    let name = file
-      .name()
+    let name = archive
+      .name_for_index(index)
+      .ok_or_else(|| ArchiveError::Corrupt(format!("zip entry {index} is missing")))?
       .map_err(|e| {
         ArchiveError::Corrupt(format!("cannot read the name of zip entry {index}: {e}"))
       })?
       .into_owned();
 
-    // The Unix mode is read here, from the upper half of the external
-    // attributes, whatever system the entry says it was made on — as zip 8
-    // read it, and as `sevenz_archive` reads its own. zip 9 trusts the
-    // marking: for an entry marked as made on DOS it builds a mode from the
-    // DOS attributes, which would let a link through as a plain file and
-    // drop an executable bit. Only with nothing there is the crate asked.
-    let mode = match file.external_attributes() >> 16 {
-      0 => file.unix_mode(),
-      marked => Some(marked),
-    };
-
-    if let Some(mode) = mode {
-      match mode & S_IFMT {
-        S_IFLNK => return Err(extractor.reject(&name, UnsafeEntry::Symlink)),
-        0 | S_IFREG | S_IFDIR => {}
-        _ => return Err(extractor.reject(&name, UnsafeEntry::SpecialFile)),
-      }
+    // A local header that says something else than the central directory
+    // is what a reader streaming the local headers — bsdtar does — would
+    // install instead. Told apart from an entry that cannot be read at
+    // all by reading it again without the check.
+    let checked = ZipReadOptions::new().enforce_header_consistency(true);
+    if let Err(e) = archive.by_index_with_options(index, checked).map(drop) {
+      return Err(match archive.by_index(index) {
+        Ok(_) => extractor.reject(&name, UnsafeEntry::HeadersDisagree),
+        Err(_) => ArchiveError::Corrupt(format!("cannot read zip entry {index}: {e}")),
+      });
     }
+    let mut file = archive
+      .by_index(index)
+      .map_err(|e| ArchiveError::Corrupt(format!("cannot read zip entry {index}: {e}")))?;
+
+    // The mode from the upper half of the external attributes, whatever
+    // system the entry says made it, as zip 8 read it: zip 9 builds one
+    // from the DOS attributes for an entry marked as made on DOS, which
+    // would pass a link for a file and drop an executable bit. Only with
+    // nothing there is the crate asked.
+    let mode = claimed_mode(file.external_attributes()).or_else(|| file.unix_mode());
+    extractor.check_type(&name, mode)?;
 
     if file.is_dir() {
       extractor.directory(&name)?;
@@ -74,4 +70,47 @@ pub fn extract<R: Read + Seek>(
     }
   }
   Ok(())
+}
+
+fn open<R: Read + Seek>(reader: R) -> Result<ZipArchive<R>, ArchiveError> {
+  ZipArchive::new(reader).map_err(|e| ArchiveError::Corrupt(format!("cannot open zip: {e}")))
+}
+
+/// The first name the central directory at `start` lists twice, if any.
+fn repeated_name<R: Read + Seek>(
+  reader: &mut R,
+  start: u64,
+) -> Result<Option<String>, ArchiveError> {
+  let corrupt =
+    |e: io::Error| ArchiveError::Corrupt(format!("cannot read the zip's central directory: {e}"));
+  reader.seek(SeekFrom::Start(start)).map_err(corrupt)?;
+  let mut reader = io::BufReader::new(reader);
+  let mut seen = HashSet::new();
+  // The fixed part of a record: its signature first, and the lengths of
+  // its name, extra field and comment at 28, 30 and 32.
+  let mut record = [0u8; 46];
+  loop {
+    match reader.read_exact(&mut record) {
+      Ok(()) => {}
+      Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+      Err(e) => return Err(corrupt(e)),
+    }
+    if u32::from_le_bytes([record[0], record[1], record[2], record[3]]) != CENTRAL_RECORD {
+      return Ok(None);
+    }
+    let length = |at: usize| u64::from(u16::from_le_bytes([record[at], record[at + 1]]));
+    let mut name = Vec::new();
+    (&mut reader)
+      .take(length(28))
+      .read_to_end(&mut name)
+      .map_err(corrupt)?;
+    io::copy(
+      &mut (&mut reader).take(length(30) + length(32)),
+      &mut io::sink(),
+    )
+    .map_err(corrupt)?;
+    if !seen.insert(name.clone()) {
+      return Ok(Some(String::from_utf8_lossy(&name).into_owned()));
+    }
+  }
 }

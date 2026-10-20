@@ -219,7 +219,8 @@ impl ZipEntry {
   }
 }
 
-/// Builds a zip containing exactly `entries`, allowing duplicate names.
+/// Builds a zip containing exactly `entries`. The writer refuses a repeated
+/// name, so a test that needs one patches the bytes it returns.
 pub fn build_zip(entries: &[ZipEntry]) -> Vec<u8> {
   use zip::write::SimpleFileOptions;
 
@@ -298,6 +299,12 @@ impl SevenZEntry {
 
   pub fn with_unix_mode(mut self, mode: u32) -> Self {
     self.attributes = Some(0x8000 | (mode << 16));
+    self
+  }
+
+  /// Windows attributes written as they are, bit 15 included or not.
+  pub fn with_attributes(mut self, attributes: u32) -> Self {
+    self.attributes = Some(attributes);
     self
   }
 }

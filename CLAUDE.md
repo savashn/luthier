@@ -123,8 +123,10 @@ the crate map keeps that out of `luthier-manifest`.
 - **Packs have no artifacts.** `kind: pack` (and `external`) must skip the
   artifact requirement in `resolver::select_version`, or they fail with
   "no release for <target>".
-- **The `zip` crate refuses to write duplicate names**, so that fixture can't be
-  built; the reachable collision is `name/` plus `name`.
+- **The `zip` crate refuses to write duplicate names**, so a fixture with
+  one is the written archive patched afterwards
+  (`zip_whose_headers_disagree_is_refused`); `name/` plus `name` is the
+  collision it writes as it is.
 - **`spdx` rejects deprecated ids at parse time**, so `GPL-3.0` surfaces as
   `InvalidExpression`, not our `Deprecated` variant.
 - **zip 9 reads less than it is told.** It decodes a name by its bytes,
@@ -136,9 +138,15 @@ the crate map keeps that out of `luthier-manifest`.
   from its DOS attributes when the entry says it was made on DOS, which
   would pass a link for a file and drop an executable bit, so
   `zip_archive.rs` reads the mode from the upper half of the external
-  attributes itself, as zip 8 did. `validate_header_consistency` refuses
-  a name listed twice and a local header that disagrees with the central
-  directory. 8.x was pinned while 9 was a prerelease; RUSTSEC-2026-0367 to
+  attributes itself, as zip 8 did, and 7z reads the type there whether or
+  not bit 15 is set (`safe::claimed_mode`; one type check for both,
+  `SafeExtractor::check_type`). A name the central directory lists twice
+  is `Duplicate`, found by reading the records, since the crate keeps one
+  entry per name; a local header that disagrees with the central
+  directory is `HeadersDisagree`, checked entry by entry
+  (`enforce_header_consistency`), which also compares timestamps, sizes
+  and CRCs: every Linux zip sampled from OAS, and every zip in extras,
+  passes it. 8.x was pinned while 9 was a prerelease; RUSTSEC-2026-0367 to
   0369 are fixed only in 9.
 - **`sevenz-rust2` takes no default features.** The dev-dependency adds
   `compress` because only the test fixtures write archives. It is in its own

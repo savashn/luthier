@@ -157,7 +157,8 @@ about.
   or whose local headers disagree with its central directory, is now
   refused: what a review of it shows and what lands on disk could differ.
   An entry marked as made on DOS keeps the Unix mode it carries, link and
-  executable bit alike, as it did with zip 8.
+  executable bit alike, as it did with zip 8, and a 7z entry that claims
+  to be a link is refused whether or not it marks its mode as Unix.
 
 ## [0.4.0] — 2026-10-06
 

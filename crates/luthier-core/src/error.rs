@@ -408,6 +408,10 @@ pub enum UnsafeEntry {
   Duplicate,
   /// A parent component already exists as a symlink.
   SymlinkedParent,
+  /// Its local header says something else than the archive's central
+  /// directory: a reader going by one would install another archive than a
+  /// reader going by the other.
+  HeadersDisagree,
 }
 
 impl std::fmt::Display for UnsafeEntry {
@@ -420,6 +424,9 @@ impl std::fmt::Display for UnsafeEntry {
       UnsafeEntry::SpecialFile => "it is not a regular file or directory",
       UnsafeEntry::Duplicate => "the archive contains that name more than once",
       UnsafeEntry::SymlinkedParent => "one of its parent directories is a symbolic link",
+      UnsafeEntry::HeadersDisagree => {
+        "its local header disagrees with the archive's central directory"
+      }
     })
   }
 }

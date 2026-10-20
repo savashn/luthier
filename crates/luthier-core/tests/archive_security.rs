@@ -411,14 +411,21 @@ fn zip_whose_headers_disagree_is_refused() {
   ]);
   let everywhere = replace(&original, b"b.clap", b"a.clap", usize::MAX);
   let local_only = replace(&original, b"b.clap", b"c.clap", 1);
-  for bytes in [everywhere, local_only] {
+  for (bytes, name, reason) in [
+    (everywhere, "a.clap", UnsafeEntry::Duplicate),
+    (local_only, "b.clap", UnsafeEntry::HeadersDisagree),
+  ] {
     let sandbox = Sandbox::new();
     let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
     match sandbox.run(&archive, ArchiveFormat::Zip) {
-      Err(ArchiveError::Corrupt(reason)) => assert!(reason.contains("disagree"), "{reason}"),
-      other => panic!("expected the headers to be refused, got {other:?}"),
+      Err(ArchiveError::Unsafe {
+        name: refused,
+        reason: why,
+      }) => {
+        assert_eq!((refused.as_str(), why), (name, reason));
+      }
+      other => panic!("expected {name} to be refused for {reason:?}, got {other:?}"),
     }
-    assert_eq!(list_tree(&sandbox.dest), Vec::<String>::new());
     sandbox.assert_nothing_escaped();
   }
 }
@@ -727,6 +734,17 @@ fn sevenz_symlink_is_refused() {
   // A unix-built 7z stores the symlink flag in the packed Unix mode.
   let sandbox = Sandbox::new();
   let result = sandbox.extract_7z(&[SevenZEntry::symlink("link", "/etc/passwd")]);
+  assert_unsafe(result, UnsafeEntry::Symlink);
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn sevenz_link_without_the_unix_flag_is_refused() {
+  // Bit 15 says the high half holds a Unix mode. A link that leaves it
+  // unset is still a link, as it is in a zip marked as made on DOS.
+  let sandbox = Sandbox::new();
+  let result = sandbox
+    .extract_7z(&[SevenZEntry::file("link", b"/etc/passwd").with_attributes(0o120_777 << 16)]);
   assert_unsafe(result, UnsafeEntry::Symlink);
   sandbox.assert_nothing_escaped();
 }
