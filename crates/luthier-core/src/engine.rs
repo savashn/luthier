@@ -257,6 +257,7 @@ plays = ["drumgizmo"]
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();

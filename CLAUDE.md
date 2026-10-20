@@ -285,9 +285,14 @@ the crate map keeps that out of `luthier-manifest`.
   and what holds nothing. It starts optimistic on purpose: the installed
   graph is the one before the upgrade, and a gone package the new
   release dropped would otherwise hold, and refuse, the very import that
-  removes it. Worked out inside `install_for` from the locked state, and
-  again after the install. While any source failed to load nothing is
-  removed (`prune_withheld`, in the plan and the outcome): what that
+  removes it. Worked out for the plan, and once more by `import` under
+  the lock it installs and removes under; what it removes is the plan's
+  list where that second answer agrees, less anything a package installed
+  since needs (`shown_and_unneeded`, and `still_unneeded` again after the
+  install), never a package nobody was shown; only that list holds
+  nothing while the install resolves. While any
+  source failed to load nothing is removed (`prune_withheld`, in the
+  plan and the outcome): what that
   source carries would read as unwanted, and the module runs it
   unattended. The install still goes ahead.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
@@ -296,10 +301,22 @@ the crate map keeps that out of `luthier-manifest`.
   resolver keeps is an `Unavailable` (`NotCarried`, or `SourceUnreadable`
   while a source failed to load, since the index cannot tell the two
   apart; `NoReleaseForTarget`; `NeededByUnavailable`), an update is
-  listed where an explicit package reaches it, and an orphan's is
-  `Orphaned`. The plan carries `held_back` and the `roots` it resolved,
-  and `Session::upgrade` executes those, not ones worked out again after
-  the user answered.
+  listed where an explicit package reaches it, at the version that
+  resolution lands on (a requirement holding a dependency back holds it
+  back in both), and an orphan's is `Orphaned`. An explicit package whose
+  upgrade cannot be resolved is held back, as apt keeps one back
+  (`resolve_upgrade`, `Unresolvable`, `ResolveRequest::held`): it and
+  what it needs stay at the version installed, as for a gone package, so
+  the rest upgrades without moving a shared dependency past what it
+  needs (`HeldBy`, reported as `NeededByHeldBack`). Held back is what
+  fails on its own, never what sorts last; roots that resolve alone and
+  clash only with each other are all held back, since which one moves is
+  the user's call. Named, a package is refused rather than held. The plan carries
+  `held_back`, `holding` and the `roots` it resolved, and
+  `Session::upgrade` executes those — minus any removed meanwhile, which
+  the outcome names — not ones worked out again after the user answered.
+  `Session::autoremove` likewise removes the plan's list, refused under
+  the lock if one stopped being an orphan.
 - **An explicit package is never demoted.** `Purpose::record_reasons`
   overrides the resolver, which knows roots and dependencies only: every
   installed package keeps its recorded reason, except a root of an

@@ -114,7 +114,9 @@ impl Error {
       Error::Archive(_) | Error::Install(_) => ExitCode::InstallationFailed,
       // Refusing to break another package's dependency is a dependency
       // failure, not a generic one, so scripts can tell them apart.
-      Error::State(StateError::StillRequired { .. }) => ExitCode::DependencyResolutionFailed,
+      Error::State(StateError::StillRequired { .. } | StateError::NoLongerUnneeded { .. }) => {
+        ExitCode::DependencyResolutionFailed
+      }
       Error::InvalidArgument(_) => ExitCode::InvalidArguments,
       _ => ExitCode::Generic,
     }
@@ -738,6 +740,11 @@ pub enum StateError {
     dependents: Vec<PackageId>,
   },
 
+  /// `autoremove` listed it, and by the time the user answered it was
+  /// needed again, or had been asked for by name.
+  #[error("{id} is no longer unneeded: it changed after `autoremove` listed it")]
+  NoLongerUnneeded { id: PackageId },
+
   #[error("{operation} failed for {path}: {source}")]
   Io {
     operation: &'static str,
@@ -768,6 +775,9 @@ impl StateError {
       StateError::NotInstalled { .. } => {
         Some("Run `luthier list` to see what is installed.".into())
       }
+      StateError::NoLongerUnneeded { .. } => Some(
+        "Nothing was removed. Run `luthier autoremove` again to see what it removes now.".into(),
+      ),
       StateError::EnvFile { .. } => Some(
         "Environment files are written by `luthier env export`; see docs/ENVIRONMENTS.md \
                  for the format."

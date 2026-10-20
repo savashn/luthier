@@ -973,7 +973,8 @@ fn a_package_nothing_can_upgrade_stays_and_everything_else_upgrades() {
   assert_eq!(version(&now, "engine"), "1.0.0", "an orphan is not reached");
 
   // A release that needs more than the copy installed is a conflict, said
-  // with what holds it, and nothing moves.
+  // with what holds it. With nothing named, that package is held back and
+  // the rest still upgrades; `outdated` says the same.
   let artifact = fixture.make_artifact("Plugin");
   fixture.add_plugin("plugin", "1.2.0", &artifact, &["dep"]);
   let manifest = fixture.registry().join("plugins/plugin.toml");
@@ -982,16 +983,62 @@ fn a_package_nothing_can_upgrade_stays_and_everything_else_upgrades() {
     "dependencies = [{ id = \"dep\", version = \">=2\" }]",
   );
   std::fs::write(&manifest, text).unwrap();
+  let artifact = fixture.make_artifact("Other");
+  fixture.add_plugin("other", "1.2.0", &artifact, &[]);
+  let conflict = "plugin needs dep >=2, but dep stays at 1.0.0: no release of it is built for \
+                  this machine any more";
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let updates: Vec<&str> = found["updates"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| u["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(updates, ["other"], "{json}");
+  let plugin = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|u| u["id"] == "plugin")
+    .unwrap_or_else(|| panic!("{json}"));
+  assert_eq!(plugin["reason"], "unresolvable", "{json}");
+  assert_eq!(plugin["available"], "1.2.0", "{json}");
+  assert_eq!(plugin["detail"], conflict, "{json}");
+
   let output = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&output);
+  assert!(
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(
+    stdout.contains(&format!(
+      "Plugin stays at 1.1.0: its upgrade cannot be resolved: {conflict}."
+    )),
+    "{stdout}"
+  );
+  let now = listed();
+  assert_eq!(version(&now, "plugin"), "1.1.0");
+  assert_eq!(version(&now, "other"), "1.2.0");
+
+  // Named, it is not held back but refused, with the same reason.
+  let output = fixture
+    .luthier()
+    .args(["upgrade", "plugin"])
+    .output()
+    .unwrap();
   assert!(!output.status.success());
   let stderr = String::from_utf8_lossy(&output.stderr);
-  assert!(
-    stderr.contains(
-      "plugin needs dep >=2, but dep stays at 1.0.0: no release of it is built for this \
-       machine any more"
-    ),
-    "{stderr}"
-  );
+  assert!(stderr.contains(conflict), "{stderr}");
   assert_eq!(version(&listed(), "plugin"), "1.1.0");
 
   // Named, `dep` itself is left and said to be.
@@ -1074,6 +1121,290 @@ fn what_a_package_nothing_can_upgrade_needs_stays_where_it_is() {
   };
   assert_eq!(version("new"), "2.0.0");
   assert_eq!(version("shared"), "1.0.0");
+}
+
+/// Adds `version` of `id` beside the release its manifest already has.
+fn add_release(fixture: &Fixture, id: &str, version: &str, dependencies: &[&str]) {
+  let path = fixture.registry().join(format!("plugins/{id}.toml"));
+  let existing = std::fs::read_to_string(&path).unwrap();
+  let artifact = fixture.make_artifact(&capitalise(id));
+  fixture.add_plugin(id, version, &artifact, dependencies);
+  let added = std::fs::read_to_string(&path).unwrap();
+  let release = &added[added.find("\n[[releases]]").unwrap()..];
+  std::fs::write(&path, format!("{existing}{release}")).unwrap();
+}
+
+/// Rewrites a manifest's dependency list.
+fn require(fixture: &Fixture, id: &str, from: &str, to: &str) {
+  let path = fixture.registry().join(format!("plugins/{id}.toml"));
+  let text = std::fs::read_to_string(&path).unwrap();
+  assert!(text.contains(from), "{text}");
+  std::fs::write(&path, text.replace(from, to)).unwrap();
+}
+
+#[test]
+fn a_package_held_back_keeps_what_it_needs_where_it_is() {
+  // `p` 1.1.0 needs a newer `x` than the one no source builds here any
+  // more, so `upgrade` holds `p` back. Its installed release needs `lib <2`,
+  // and `q`, upgrading, needs `lib` too: `lib` stays at 1.0.0 rather than
+  // moving to 2.0.0 underneath the `p` still installed.
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("lib", &[][..]),
+    ("x", &[][..]),
+    ("p", &["x", "lib"][..]),
+    ("q", &["lib"][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  require(
+    &fixture,
+    "p",
+    "dependencies = [\"x\", \"lib\"]",
+    "dependencies = [\"x\", { id = \"lib\", version = \"<2\" }]",
+  );
+  fixture
+    .luthier()
+    .args(["install", "p", "q"])
+    .assert()
+    .success();
+
+  let other_arch = if ARCH == "x86_64" {
+    "aarch64"
+  } else {
+    "x86_64"
+  };
+  let x = fixture.registry().join("plugins/x.toml");
+  let text = std::fs::read_to_string(&x).unwrap();
+  std::fs::write(
+    &x,
+    text.replace(
+      &format!("arch = \"{ARCH}\""),
+      &format!("arch = \"{other_arch}\""),
+    ),
+  )
+  .unwrap();
+  add_release(&fixture, "lib", "2.0.0", &[]);
+  let artifact = fixture.make_artifact("P");
+  fixture.add_plugin("p", "1.1.0", &artifact, &["x", "lib"]);
+  require(
+    &fixture,
+    "p",
+    "dependencies = [\"x\", \"lib\"]",
+    "dependencies = [{ id = \"x\", version = \">=2\" }, { id = \"lib\", version = \"<2\" }]",
+  );
+  let artifact = fixture.make_artifact("Q");
+  fixture.add_plugin("q", "1.1.0", &artifact, &["lib"]);
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let updates: Vec<&str> = found["updates"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| u["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(updates, ["q"], "{json}");
+  let held: Vec<(&str, &str)> = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| (u["id"].as_str().unwrap(), u["reason"].as_str().unwrap()))
+    .collect();
+  assert_eq!(
+    held,
+    [
+      ("lib", "needed-by-held-back"),
+      ("p", "unresolvable"),
+      ("x", "no-release-for-target")
+    ],
+    "{json}"
+  );
+
+  let output = fixture.luthier().arg("upgrade").output().unwrap();
+  let stdout = stdout_of(&output);
+  assert!(
+    output.status.success(),
+    "{stdout}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let version = |id: &str| {
+    listed
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|p| p["id"] == id)
+      .unwrap()["version"]
+      .as_str()
+      .unwrap()
+      .to_owned()
+  };
+  assert_eq!(version("q"), "1.1.0");
+  assert_eq!(version("p"), "1.0.0");
+  assert_eq!(version("lib"), "1.0.0", "{json}");
+}
+
+#[test]
+fn packages_whose_upgrades_clash_with_each_other_are_both_held_back() {
+  // `alpha` 2.0.0 needs `c <2` and `beta` 2.0.0 needs `c >=2`. Each
+  // upgrades alone; together they cannot. Neither is the one to blame, so
+  // both stay, said to be, `outdated` still answers, and `gamma` upgrades.
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("c", &[][..]),
+    ("alpha", &["c"][..]),
+    ("beta", &["c"][..]),
+    ("gamma", &[][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture
+    .luthier()
+    .args(["install", "alpha", "beta", "gamma"])
+    .assert()
+    .success();
+  add_release(&fixture, "c", "2.0.0", &[]);
+  for (id, wanted) in [("alpha", "<2"), ("beta", ">=2")] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "2.0.0", &artifact, &["c"]);
+    require(
+      &fixture,
+      id,
+      "dependencies = [\"c\"]",
+      &format!("dependencies = [{{ id = \"c\", version = \"{wanted}\" }}]"),
+    );
+  }
+  let artifact = fixture.make_artifact("Gamma");
+  fixture.add_plugin("gamma", "1.1.0", &artifact, &[]);
+
+  let output = fixture
+    .luthier()
+    .args(["outdated", "--json"])
+    .output()
+    .unwrap();
+  let json = stdout_of(&output);
+  assert!(
+    output.status.success(),
+    "{json}{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let updates: Vec<&str> = found["updates"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| u["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(updates, ["gamma"], "{json}");
+  let held: Vec<(&str, &str)> = found["unavailable"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| (u["id"].as_str().unwrap(), u["reason"].as_str().unwrap()))
+    .collect();
+  assert_eq!(
+    held,
+    [
+      ("alpha", "unresolvable"),
+      ("beta", "unresolvable"),
+      ("c", "needed-by-held-back")
+    ],
+    "{json}"
+  );
+
+  fixture.luthier().arg("upgrade").assert().success();
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let version = |id: &str| {
+    listed
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|p| p["id"] == id)
+      .unwrap()["version"]
+      .as_str()
+      .unwrap()
+      .to_owned()
+  };
+  assert_eq!(version("gamma"), "1.1.0");
+  assert_eq!(version("alpha"), "1.0.0");
+  assert_eq!(version("beta"), "1.0.0");
+  assert_eq!(version("c"), "1.0.0");
+
+  // Which one moves is the user's call.
+  fixture
+    .luthier()
+    .args(["upgrade", "beta"])
+    .assert()
+    .success();
+}
+
+#[test]
+fn outdated_lists_the_release_upgrade_lands_on() {
+  // `plugin` needs `lib <2`. With 1.5.0 and 2.0.0 of `lib` out, `upgrade`
+  // brings it to 1.5.0, so that is the update `outdated` and `update` count,
+  // not 2.0.0, which nothing would ever install.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Lib");
+  fixture.add_plugin("lib", "1.0.0", &artifact, &[]);
+  let artifact = fixture.make_artifact("Plugin");
+  fixture.add_plugin("plugin", "1.0.0", &artifact, &["lib"]);
+  require(
+    &fixture,
+    "plugin",
+    "dependencies = [\"lib\"]",
+    "dependencies = [{ id = \"lib\", version = \"<2\" }]",
+  );
+  fixture
+    .luthier()
+    .args(["install", "plugin"])
+    .assert()
+    .success();
+
+  let artifact = fixture.make_artifact("Lib");
+  fixture.add_plugin("lib", "1.5.0", &artifact, &[]);
+  add_release(&fixture, "lib", "2.0.0", &[]);
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["outdated", "--json"])
+      .output()
+      .unwrap(),
+  );
+  let found: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let updates: Vec<(&str, &str)> = found["updates"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|u| (u["id"].as_str().unwrap(), u["available"].as_str().unwrap()))
+    .collect();
+  assert_eq!(updates, [("lib", "1.5.0")], "{json}");
+
+  fixture.luthier().arg("upgrade").assert().success();
+  let json = stdout_of(&fixture.luthier().args(["list", "--json"]).output().unwrap());
+  let listed: serde_json::Value = serde_json::from_str(&json).unwrap();
+  let lib = listed
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|p| p["id"] == "lib")
+    .unwrap();
+  assert_eq!(lib["version"], "1.5.0", "{json}");
+
+  // Nothing `upgrade` would do is left, so nothing is counted.
+  let updated = stdout_of(&fixture.luthier().arg("update").output().unwrap());
+  assert!(updated.contains("Everything is up to date."), "{updated}");
 }
 
 #[test]

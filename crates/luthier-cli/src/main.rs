@@ -350,7 +350,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
 
       let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
       let mut bar = BarProgress::new(show_progress);
-      let outcome = session.import(&env_file, *prune, &mut bar).await?;
+      let outcome = session.import(&env_file, *prune, &plan, &mut bar).await?;
       reporter.import_outcome(&outcome);
     }
 
@@ -358,11 +358,11 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       let outcomes = session.refresh().await?;
       reporter.refresh(&outcomes);
       // What the lists just fetched mean for this installation, as apt
-      // says after its own `update`. The fetch already warned about any
-      // source it could not read, so an index that will not load adds
-      // nothing worth a second warning.
-      if let Ok(outdated) = session.outdated() {
-        reporter.upgradable(&outdated);
+      // says after its own `update`. The fetch has succeeded by now, so
+      // what goes wrong here is a warning rather than the command failing.
+      match session.outdated() {
+        Ok(outdated) => reporter.upgradable(&outdated),
+        Err(error) => reporter.warn(format!("could not tell what can be upgraded: {error}")),
       }
       tell_of_a_newer_luthier(&session, global, reporter).await;
     }
@@ -480,8 +480,8 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     }
 
     Command::Autoremove { dry_run } => {
-      // The list the user is shown is the list removed: `remove` refuses
-      // if one of them became needed in between, rather than this
+      // The list the user is shown is the list removed: `autoremove`
+      // refuses if one of them changed in between, rather than this
       // recomputing it after the confirmation and removing something
       // nobody was shown.
       let plan = session.plan_autoremove()?;
@@ -494,7 +494,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       if !confirm(global, "Proceed?")? {
         return Err(Error::Cancelled);
       }
-      reporter.remove_outcome(&session.remove(&plan.ids, false)?);
+      reporter.remove_outcome(&session.autoremove(&plan)?);
     }
 
     Command::Sources => {

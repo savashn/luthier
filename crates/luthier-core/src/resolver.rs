@@ -121,6 +121,11 @@ pub struct ResolveRequest<'a> {
   /// Installed packages this command is about to remove (`import --prune`):
   /// they hold nothing at the version installed, since they are going.
   pub leaving: &'a BTreeSet<PackageId>,
+  /// Installed packages `upgrade` holds back because their own upgrade
+  /// cannot be resolved: each stays at the version installed, and so does
+  /// what it needs, as for a package no source supplies, so nothing else
+  /// moves past what its installed release requires.
+  pub held: &'a BTreeSet<PackageId>,
 }
 
 /// Why an installed package is resolved from the state rather than a source.
@@ -130,9 +135,14 @@ pub enum Frozen {
   NotCarried,
   /// A source carries it, and no release of it is built for this target.
   NoReleaseForTarget,
+  /// `upgrade` holds it back: its own upgrade cannot be resolved.
+  HeldBack,
   /// A package nothing can upgrade any more needs it, so it stays at the
   /// version installed: what that package supports is not known.
   NeededBy(PackageId),
+  /// A package `upgrade` holds back needs it, so it stays at the version
+  /// installed: moving it could break the release that stays.
+  HeldBy(PackageId),
 }
 
 /// The installed packages every resolution leaves where they are.
@@ -143,13 +153,15 @@ pub enum Frozen {
 /// its manifest gone nothing says what it supports. Both are fixed points:
 /// resolved at the installed version, from the state, needing no release
 /// in any registry. A requirement they do not meet is a conflict, said as
-/// one ([`ResolveError::KeptConflict`]).
+/// one ([`ResolveError::KeptConflict`]). A package `upgrade` holds back
+/// (`held`) is fixed the same way, and so is what it needs.
 pub fn frozen<S: PackageSource>(
   source: &S,
   state: &State,
   target: &Target,
   leaving: &BTreeSet<PackageId>,
   roots: &[PackageId],
+  held: &BTreeSet<PackageId>,
 ) -> BTreeMap<PackageId, Frozen> {
   let mut frozen = BTreeMap::new();
   for package in state.packages.values() {
@@ -163,6 +175,11 @@ pub fn frozen<S: PackageSource>(
       Some(_) => continue,
     };
     frozen.insert(package.id.clone(), why);
+  }
+  for id in held {
+    if state.is_installed(id) && !frozen.contains_key(id) {
+      frozen.insert(id.clone(), Frozen::HeldBack);
+    }
   }
   // Only what stays needs what it was built against: a package nothing
   // explicit reaches is `autoremove`'s, and one about to be removed holds
@@ -183,9 +200,14 @@ pub fn frozen<S: PackageSource>(
     .cloned()
     .collect();
   for id in &holders {
+    let why = if frozen.get(id) == Some(&Frozen::HeldBack) {
+      Frozen::HeldBy(id.clone())
+    } else {
+      Frozen::NeededBy(id.clone())
+    };
     for reached in state.reachable_from([id]) {
       if !frozen.contains_key(reached) {
-        frozen.insert(reached.clone(), Frozen::NeededBy(id.clone()));
+        frozen.insert(reached.clone(), why.clone());
       }
     }
   }
@@ -221,6 +243,8 @@ fn held_because(why: &Frozen) -> String {
     Frozen::NotCarried => "no source that could be read carries it".to_string(),
     Frozen::NoReleaseForTarget => "no release of it is built for this machine any more".to_string(),
     Frozen::NeededBy(by) => format!("{by} needs it, and can no longer be upgraded"),
+    Frozen::HeldBack => "its own upgrade is held back".to_string(),
+    Frozen::HeldBy(by) => format!("{by} needs it, and is held back"),
   }
 }
 
@@ -244,6 +268,7 @@ pub fn resolve<'a, S: PackageSource>(
     request.target,
     request.leaving,
     request.roots,
+    request.held,
   );
 
   let mut pending: BTreeSet<PackageId> = request.roots.iter().cloned().collect();
@@ -840,6 +865,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )?;
     Ok(
@@ -926,6 +952,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -964,6 +991,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1000,6 +1028,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1024,6 +1053,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1070,6 +1100,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1102,6 +1133,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap_err();
@@ -1147,6 +1179,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
   }
@@ -1243,7 +1276,14 @@ mod tests {
     let entry = fixture.packages.get_mut(&id("foo")).unwrap();
     entry.manifest.releases[0].yanked = Some("broken".into());
     let state = installed(&[("foo", "1.0.0", &[])]);
-    let frozen = frozen(&fixture, &state, &linux(), &BTreeSet::new(), &[]);
+    let frozen = frozen(
+      &fixture,
+      &state,
+      &linux(),
+      &BTreeSet::new(),
+      &[],
+      &BTreeSet::new(),
+    );
     assert_eq!(frozen.get(&id("foo")), Some(&Frozen::NoReleaseForTarget));
     assert!(newest_installable(&fixture.packages[&id("foo")].manifest, &linux()).is_none());
   }
@@ -1265,6 +1305,7 @@ mod tests {
         force: true,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap_err();
@@ -1307,6 +1348,7 @@ mod tests {
         force: false,
         required_versions: &BTreeMap::new(),
         leaving: &leaving,
+        held: &BTreeSet::new(),
       },
     )
     .unwrap();
@@ -1343,6 +1385,7 @@ mod tests {
         force: true,
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
       },
     )
     .unwrap_err();

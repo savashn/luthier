@@ -24,11 +24,14 @@ about.
   carries it, or none builds it for this machine — stays where it is and
   is named; whatever needs it resolves against the copy installed, and
   what it needs stays at the version installed, so nothing moves a shared
-  dependency past what it was built against. A release that needs more
-  than such a copy is a conflict, named with what holds it. An
+  dependency past what it was built against. A package whose own upgrade
+  cannot be resolved — its new release needs more than such a copy, say —
+  is held back with what it needs, and named with why, and the rest
+  upgrades; named on its own, it is refused with the same reason. An
   upgrade never changes why a package is installed: a dependency upgraded
   by name is still a dependency. What runs is the plan that was shown, even
-  if another terminal installs something while the question is open.
+  if another terminal installs or removes something while the question is
+  open.
 - **`luthier autoremove`** removes the packages installed as dependencies
   that nothing needs any more, after showing what it will delete and
   asking; `--dry-run` only shows it. A whole chain goes in one pass: a
@@ -53,10 +56,12 @@ about.
 - **`luthier outdated` names what nothing can upgrade any more**: a
   package neither source carries now (or, while a source cannot be read,
   one that source may still carry), one with no release built for this
-  machine, one such a package needs and so keeps where it is, and an
-  orphan nothing installed needs. It keeps working where it is; `update` counts these, and
-  `upgrade` says it left them. They used to be skipped without a word, or
-  listed as updates `upgrade` never made.
+  machine, one whose own upgrade cannot be resolved, one such a package
+  needs and so keeps where it is, and an orphan nothing installed needs.
+  It keeps working where it is; `update` counts these, and `upgrade` says
+  it left them. They used to be skipped without a word, or listed as
+  updates `upgrade` never made. An update is listed at the release
+  `upgrade` would install, not the newest one a requirement rules out.
 - **`luthier upgrade --self`.** Luthier upgrades itself the way it was
   installed: a binary from the install script or the tarball is run once
   where it will live, then replaces the old one, with the man page and

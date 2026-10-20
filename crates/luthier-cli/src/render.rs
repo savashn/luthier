@@ -320,7 +320,15 @@ impl Reporter {
         package.name, package.version
       ));
     }
-    if outcome.installed.is_empty() && outcome.skipped.is_empty() {
+    for id in &outcome.no_longer_installed {
+      self.note(format!(
+        "{id} was removed after the plan was made, so it was not upgraded"
+      ));
+    }
+    if outcome.installed.is_empty()
+      && outcome.skipped.is_empty()
+      && outcome.no_longer_installed.is_empty()
+    {
       self.note("Nothing to do.");
     }
   }
@@ -652,6 +660,10 @@ impl Reporter {
       UnavailableReason::NeededByUnavailable,
     ]);
     let unread = reasons(&[UnavailableReason::SourceUnreadable]);
+    let unresolvable = reasons(&[
+      UnavailableReason::Unresolvable,
+      UnavailableReason::NeededByHeldBack,
+    ]);
     let orphaned = reasons(&[UnavailableReason::Orphaned]);
     let said: Vec<String> = [
       (
@@ -675,6 +687,11 @@ impl Reporter {
         "packages could not be checked, as their source could not be read.",
       ),
       (
+        unresolvable,
+        "package is held back by a conflict.",
+        "packages are held back by a conflict.",
+      ),
+      (
         orphaned,
         "update is for a dependency nothing needs now.",
         "updates are for dependencies nothing needs now.",
@@ -687,7 +704,7 @@ impl Reporter {
     if said.is_empty() {
       return self.note("\nEverything is up to date.");
     }
-    let total = count + pinned + stuck + unread + orphaned;
+    let total = count + pinned + stuck + unread + unresolvable + orphaned;
     let them = if total == 1 { "it" } else { "them" };
     self.note(format!(
       "\n{} Run `luthier outdated` to see {them}.",
@@ -1016,6 +1033,17 @@ fn unavailable_reason(package: &Unavailable) -> String {
     UnavailableReason::NoReleaseForTarget => "no release is built for this machine any more".into(),
     UnavailableReason::NeededByUnavailable => format!(
       "{} needs it, and can no longer be upgraded",
+      package.because_of.as_deref().unwrap_or("a package")
+    ),
+    UnavailableReason::Unresolvable => format!(
+      "its upgrade cannot be resolved: {}",
+      package
+        .detail
+        .as_deref()
+        .unwrap_or("a requirement conflicts")
+    ),
+    UnavailableReason::NeededByHeldBack => format!(
+      "{} needs it, and is held back",
       package.because_of.as_deref().unwrap_or("a package")
     ),
     UnavailableReason::Orphaned => {
