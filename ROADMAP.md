@@ -12,17 +12,17 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 Four crates, 472 tests, fully offline. `update`, `search`, `info`, `install`,
 `list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
 `pin`/`unpin`, and `export`/`import` all work end to end against real
-packages; the verbs are apt's and Homebrew's (unreleased: 0.4 called them
+packages; the verbs are apt's and Homebrew's (since 0.5: 0.4 called them
 `refresh`, `update` and `cleanup`). Named
 environments existed until 0.2 and were removed; see *Deliberate ceilings*.
 `upgrade --self` upgrades Luthier itself the way it was installed, and
-`update` and `outdated` say when a newer one is out (unreleased; 0.4.0 has
-neither, so its users install the next release once by hand).
+`update` and `outdated` say when a newer one is out (since 0.5.0; 0.4.0 has
+neither, so its users install 0.5.0 once by hand).
 
 CLAP, VST3, LV2 and sample libraries install, from `.tar.gz`, `.tar.xz`,
 `.zip` and `.7z`, on Linux x86_64 and aarch64. Manifests are TOML; every package carries
 one category from a closed list plus free-form tags. Extraction runs through
-one hardened policy with a 38-case malicious-archive corpus.
+one hardened policy with a 48-case malicious-archive corpus.
 
 Two registries are read together. The Open Audio Stack registry supplies
 anything with a downloadable release binary — 464 of its 560 packages
@@ -42,7 +42,7 @@ extras exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
-`v0.4.0` is the latest release: a static binary for Linux x86_64 and one for
+`v0.5.0` is the latest release: a static binary for Linux x86_64 and one for
 aarch64, each as a tarball, a .deb and an .rpm, an install script that picks the
 tarball for the machine, and extras, from the public repository at `savashn/luthier`,
 published straight from a `v*` tag. Phase 0 is done.
