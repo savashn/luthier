@@ -359,6 +359,11 @@ impl Reporter {
     if let Some(pruned) = &outcome.pruned {
       self.remove_outcome(pruned);
     }
+    for id in &outcome.prune_kept {
+      self.warn(format!(
+        "kept {id}, which was to be removed: a package that stays still needs it"
+      ));
+    }
   }
 
   /// Said with the plan, since an unattended `import --prune` should not
@@ -431,6 +436,9 @@ impl Reporter {
       );
     }
     self.stranded(&outcome.stranded, "is left");
+    for id in &outcome.no_longer_installed {
+      self.note(format!("{id} was removed meanwhile by another command"));
+    }
   }
 
   // ---------------------------------------------------------- search path --

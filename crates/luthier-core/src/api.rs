@@ -531,9 +531,13 @@ impl Session {
   pub fn plan_upgrade(&self, ids: &[PackageId]) -> Result<InstallPlan> {
     self.require_locations(&LocationKind::ALL)?;
     let state = crate::state::load(&self.layout)?;
-    let (roots, held_back, holding) = self.upgrade_roots(ids, &state)?;
-    let mut plan = self.plan_for(&Request::upgrade(&roots, &holding), false, &state)?;
-    plan.held_back = held_back;
+    let upgrade = self.upgrade_roots(ids, &state)?;
+    let request = Request::upgrade(&upgrade.roots, &upgrade.holding);
+    let mut plan = match upgrade.resolution {
+      Some(resolution) => self.plan_from(resolution, &request, BTreeSet::new(), false, &state)?,
+      None => self.plan_for(&request, false, &state)?,
+    };
+    plan.held_back = upgrade.held_back;
     Ok(plan)
   }
 
@@ -556,7 +560,7 @@ impl Session {
     } else {
       BTreeSet::new()
     };
-    let mut resolution = resolver::resolve(
+    let resolution = resolver::resolve(
       index,
       &ResolveRequest {
         roots: ids,
@@ -569,6 +573,26 @@ impl Session {
         held: purpose.held(),
       },
     )?;
+    self.plan_from(resolution, request, leaving, prune, state)
+  }
+
+  /// The plan `resolution` makes: what `request` resolved to, with
+  /// `leaving` what an `import --prune` removes.
+  fn plan_from(
+    &self,
+    mut resolution: Resolution<'_>,
+    request: &Request<'_>,
+    leaving: BTreeSet<PackageId>,
+    prune: bool,
+    state: &State,
+  ) -> Result<InstallPlan> {
+    let Request {
+      roots: ids,
+      force,
+      purpose,
+      ..
+    } = *request;
+    let index = self.index()?;
     purpose.record_reasons(&mut resolution, state);
 
     let unplayable = self.unplayable(&resolution, index, state);
@@ -1244,21 +1268,8 @@ impl Session {
   /// that are not there, which `verify` reports and `install` declines to fix
   /// because it reads the package as satisfied.
   pub fn remove(&self, ids: &[PackageId], force: bool) -> Result<RemoveOutcome> {
-    self.remove_checked(ids, force, |_| Ok(()))
-  }
-
-  /// [`Session::remove`], refused by `check` — given the state under the
-  /// lock, before anything is deleted — if what the caller showed the user
-  /// is no longer true.
-  fn remove_checked(
-    &self,
-    ids: &[PackageId],
-    force: bool,
-    check: impl FnOnce(&State) -> Result<()>,
-  ) -> Result<RemoveOutcome> {
     self.require_locations(&[LocationKind::Libraries, LocationKind::Plugins])?;
     let mut guard = StateGuard::acquire(&self.layout)?;
-    check(guard.state())?;
     self.remove_locked(&mut guard, ids, force)
   }
 
@@ -1370,6 +1381,7 @@ impl Session {
       removed,
       kept_files,
       stranded,
+      no_longer_installed: Vec::new(),
     })
   }
 
@@ -1427,7 +1439,12 @@ impl Session {
   /// Changes nothing.
   pub fn outdated(&self) -> Result<Outdated> {
     let state = crate::state::load(&self.layout)?;
-    Ok(self.survey(&state, true)?.outdated)
+    // Whether an external is present changes no version, so none is
+    // looked for: `outdated` reads the index and the state, not the disk.
+    let scope = Scope::Everything {
+      detected: &NO_PACKAGES,
+    };
+    Ok(self.survey(&state, scope)?.0.outdated)
   }
 
   /// Works out, once, what `outdated` says and what `upgrade` resolves, so
@@ -1443,10 +1460,9 @@ impl Session {
   /// explicit package reaches it; one nothing explicit reaches is an
   /// orphan's, which only `upgrade <package>` brings.
   ///
-  /// `upgrade <package>` resolves only what it names, so with
-  /// `every_root` false nothing else is resolved, and the updates listed
-  /// are only those a pin holds back.
-  fn survey(&self, state: &State, every_root: bool) -> Result<Survey> {
+  /// With [`Scope::Everything`] the resolution is returned too, for the
+  /// plan to be built from rather than resolved again.
+  fn survey(&self, state: &State, scope: Scope<'_>) -> Result<(Survey, Option<Resolution<'_>>)> {
     let index = self.index()?;
     // A source that could not be read may well carry what is missing.
     let complete = index.problems.is_empty();
@@ -1459,11 +1475,17 @@ impl Session {
       .map(|package| &package.id);
     let reach = state.reachable_from(explicit.clone());
     survey.roots = explicit.cloned().collect();
-    let (resolved, holding) = if every_root {
-      self.resolve_upgrade(index, state, &survey.roots)?
-    } else {
-      (BTreeMap::new(), BTreeMap::new())
+    let (resolution, holding) = match scope {
+      Scope::Everything { detected } => {
+        self.resolve_upgrade(index, state, &survey.roots, detected)?
+      }
+      Scope::Named => (None, BTreeMap::new()),
     };
+    let resolved: BTreeMap<&PackageId, &Version> = resolution
+      .iter()
+      .flat_map(|resolution| &resolution.order)
+      .map(|package| (package.id(), &package.version))
+      .collect();
     survey.holding = holding.keys().cloned().collect();
     let frozen = resolver::frozen(
       index,
@@ -1539,6 +1561,7 @@ impl Session {
           } else {
             resolved
               .get(&package.id)
+              .copied()
               .filter(|version| **version > package.version)
           };
           if let Some(version) = lands_on {
@@ -1560,7 +1583,7 @@ impl Session {
         survey.newest.insert(package.id.clone(), available);
       }
     }
-    Ok(survey)
+    Ok((survey, resolution))
   }
 
   /// The newest release of `package` built for this machine, where it is
@@ -1579,8 +1602,10 @@ impl Session {
       .filter(|version| version > &package.version)
   }
 
-  /// What upgrading every one of `roots` resolves each package to, and the
-  /// roots it holds back, with why.
+  /// How upgrading every one of `roots` resolves, and the roots it holds
+  /// back, with why. `None` when even holding every root back resolves
+  /// nothing: what is installed cannot be resolved any more, and `upgrade`
+  /// says why when it tries.
   ///
   /// A root whose own upgrade cannot be resolved — it needs a newer release
   /// of something kept where it is, say — must not stop every other package
@@ -1589,21 +1614,20 @@ impl Session {
   /// ([`ResolveRequest::held`]), so nothing else moves past what its
   /// installed release requires. Held back is each root that fails to
   /// resolve on its own, given what is held already, until the whole set
-  /// resolves — a property of the root, not of where its ID sorts. Roots
-  /// that each resolve alone and conflict only with one another are all
-  /// held back, each said to be with the conflict: which of them should
-  /// move is the user's call, and `upgrade <package>` makes it. What
-  /// succeeds at once costs one resolution.
-  ///
-  /// Whether an external is present changes no version, so none is looked
-  /// for: `outdated` reads the index and the state, not the disk.
-  fn resolve_upgrade(
+  /// resolves — a property of the root, not of where its ID sorts. Where
+  /// every root resolves alone, they clash with one another, and a
+  /// minimal set of them that will not resolve together, found in order
+  /// of ID, is held back whole, each with the clash: which of them should move is the user's
+  /// call, and `upgrade <package>` makes it. Then the next, so one clash
+  /// holds back only the packages in it. What succeeds at once costs one
+  /// resolution.
+  fn resolve_upgrade<'a>(
     &self,
-    index: &RegistryIndex,
+    index: &'a RegistryIndex,
     state: &State,
     roots: &[PackageId],
-  ) -> Result<(BTreeMap<PackageId, Version>, BTreeMap<PackageId, HeldBack>)> {
-    let (none, required) = (BTreeSet::new(), BTreeMap::new());
+    detected: &BTreeSet<PackageId>,
+  ) -> Result<(Option<Resolution<'a>>, BTreeMap<PackageId, HeldBack>)> {
     let resolve = |roots: &[PackageId], held: &BTreeSet<PackageId>| {
       resolver::resolve(
         index,
@@ -1611,65 +1635,66 @@ impl Session {
           roots,
           target: &self.target,
           state,
-          detected_externals: &none,
+          detected_externals: detected,
           force: false,
-          required_versions: &required,
-          leaving: &none,
+          required_versions: &NO_VERSIONS,
+          leaving: &NO_PACKAGES,
           held,
         },
       )
+    };
+    // Whether `roots` resolve with `held` held: the error if not.
+    let clashes = |roots: &[PackageId], held: &BTreeSet<PackageId>| match resolve(roots, held) {
+      Ok(_) => Ok(None),
+      Err(Error::Resolve(error)) => Ok(Some(error)),
+      Err(other) => Err(other),
     };
     let mut holding: BTreeMap<PackageId, HeldBack> = BTreeMap::new();
     loop {
       let held: BTreeSet<PackageId> = holding.keys().cloned().collect();
       let failure = match resolve(roots, &held) {
-        Ok(resolution) => {
-          let resolved = resolution
-            .order
-            .iter()
-            .map(|package| (package.id().clone(), package.version.clone()))
-            .collect();
-          return Ok((resolved, holding));
-        }
+        Ok(resolution) => return Ok((Some(resolution), holding)),
         Err(Error::Resolve(error)) => error,
         Err(other) => return Err(other),
       };
-      let moving: Vec<PackageId> = roots
-        .iter()
-        .filter(|root| !held.contains(*root))
-        .cloned()
-        .collect();
-      if moving.is_empty() {
-        return Err(Error::Resolve(failure));
+      let (base, moving): (Vec<PackageId>, Vec<PackageId>) =
+        roots.iter().cloned().partition(|root| held.contains(root));
+      // What is held back fails even held: what is installed cannot be
+      // resolved any more, and no root still moving is to blame for it.
+      if moving.is_empty() || (!base.is_empty() && clashes(&base, &held)?.is_some()) {
+        return Ok((None, holding));
       }
       let mut failing = BTreeMap::new();
       for root in &moving {
-        match resolve(std::slice::from_ref(root), &held) {
-          Ok(_) => {}
-          Err(Error::Resolve(error)) => {
-            failing.insert(root.clone(), HeldBack::of(&error));
-          }
-          Err(other) => return Err(other),
+        if let Some(error) = clashes(std::slice::from_ref(root), &held)? {
+          failing.insert(root.clone(), HeldBack::of(&error));
         }
       }
       if failing.is_empty() {
-        // Each resolves alone: the conflict is between them. Held back
-        // is every root without which the rest resolve, or every one
-        // when no single one is to blame.
-        for root in &moving {
-          let others: Vec<PackageId> = moving.iter().filter(|r| *r != root).cloned().collect();
-          match resolve(&others, &held) {
-            Ok(_) => {
-              failing.insert(root.clone(), HeldBack::of(&failure));
-            }
-            Err(Error::Resolve(_)) => {}
-            Err(other) => return Err(other),
+        let with = |part: &[PackageId]| [&base[..], part].concat();
+        // The shortest run of roots, in order of ID, that clashes — the
+        // whole run does, as just seen — whose last one takes part in the
+        // clash. Then each earlier one the clash does without is let go,
+        // which leaves a minimal set: every root in it is needed for it.
+        let mut found = None;
+        for end in 1..moving.len() {
+          if let Some(error) = clashes(&with(&moving[..end]), &held)? {
+            found = Some((end - 1, error));
+            break;
           }
         }
-        if failing.is_empty() {
-          for root in &moving {
-            failing.insert(root.clone(), HeldBack::of(&failure));
+        let (last, mut clash) = found.unwrap_or((moving.len() - 1, failure));
+        let mut part: Vec<PackageId> = Vec::new();
+        for (i, root) in moving[..last].iter().enumerate() {
+          let without: Vec<PackageId> = part.iter().chain(&moving[i + 1..=last]).cloned().collect();
+          match clashes(&with(&without), &held)? {
+            Some(error) => clash = error,
+            None => part.push(root.clone()),
           }
+        }
+        part.push(moving[last].clone());
+        for root in part {
+          failing.insert(root, HeldBack::of(&clash));
         }
       }
       holding.extend(failing);
@@ -1683,17 +1708,29 @@ impl Session {
   /// is not there is an install, and saying so beats doing one unasked. A
   /// named package is never held back: one that cannot be upgraded is
   /// refused, with why.
-  fn upgrade_roots(
-    &self,
-    ids: &[PackageId],
-    state: &State,
-  ) -> Result<(Vec<PackageId>, Outdated, BTreeSet<PackageId>)> {
+  fn upgrade_roots(&self, ids: &[PackageId], state: &State) -> Result<UpgradeRoots<'_>> {
     if let Some(missing) = ids.iter().find(|id| !state.is_installed(id)) {
       return Err(Error::State(StateError::NotInstalled {
         id: missing.clone(),
       }));
     }
-    let survey = self.survey(state, ids.is_empty())?;
+    let anything_explicit = state
+      .packages
+      .values()
+      .any(|package| package.reason == InstallReason::Explicit);
+    let scope = if !ids.is_empty() {
+      Scope::Named
+    } else if anything_explicit {
+      Scope::Everything {
+        detected: self.externals_present(self.index()?),
+      }
+    } else {
+      // Nothing to resolve needs nothing looked for on disk.
+      Scope::Everything {
+        detected: &NO_PACKAGES,
+      }
+    };
+    let (survey, resolution) = self.survey(state, scope)?;
     let named = |id: &str| ids.is_empty() || ids.iter().any(|named| named.as_str() == id);
     // §27: a pin is a decision to stay put, and is reported rather than
     // silently obeyed; so is what the resolver will keep where it is. An
@@ -1734,7 +1771,12 @@ impl Session {
     } else {
       ids.to_vec()
     };
-    Ok((roots, held, survey.holding))
+    Ok(UpgradeRoots {
+      roots,
+      held_back: held,
+      holding: survey.holding,
+      resolution,
+    })
   }
 
   // ----------------------------------------------------------- autoremove --
@@ -1768,17 +1810,26 @@ impl Session {
   /// something `autoremove` would take: in between, another command may
   /// have asked for it by name, installed something that needs it, or
   /// installed content only it plays. Checking for dependents alone, as
-  /// `remove` does, would delete the first and the last.
+  /// `remove` does, would delete the first and the last. One another
+  /// command removed meanwhile is already gone, which is what was asked:
+  /// it is skipped, and said to be (`no_longer_installed`).
   pub fn autoremove(&self, plan: &RemovalPlan) -> Result<RemoveOutcome> {
-    self.remove_checked(&plan.ids, false, |state| {
-      let (still, _) = self.autoremove_candidates(state)?;
-      match plan.ids.iter().find(|id| !still.contains(id)) {
-        Some(id) => Err(Error::State(StateError::NoLongerUnneeded {
-          id: id.clone(),
-        })),
-        None => Ok(()),
-      }
-    })
+    self.require_locations(&[LocationKind::Libraries, LocationKind::Plugins])?;
+    let mut guard = StateGuard::acquire(&self.layout)?;
+    let (present, gone): (Vec<PackageId>, Vec<PackageId>) = plan
+      .ids
+      .iter()
+      .cloned()
+      .partition(|id| guard.state().is_installed(id));
+    let (still, _) = self.autoremove_candidates(guard.state())?;
+    if let Some(id) = present.iter().find(|id| !still.contains(id)) {
+      return Err(Error::State(StateError::NoLongerUnneeded {
+        id: id.clone(),
+      }));
+    }
+    let mut outcome = self.remove_locked(&mut guard, &present, false)?;
+    outcome.no_longer_installed = gone.iter().map(ToString::to_string).collect();
+    Ok(outcome)
   }
 
   fn autoremove_candidates(&self, state: &State) -> Result<(Vec<PackageId>, Vec<KeptEngine>)> {
@@ -2108,7 +2159,7 @@ impl Session {
     }
     let prune_withheld = if prune { self.prune_withheld()? } else { None };
 
-    let (outcome, pruned) = {
+    let (outcome, pruned, prune_kept) = {
       let mut guard = StateGuard::acquire(&self.layout)?;
       // From the state under the lock, so what an `import --prune` frees
       // is worked out from the state it then changes. Only what is then
@@ -2142,7 +2193,20 @@ impl Session {
       } else {
         None
       };
-      (outcome, pruned)
+      // Shown as removed and still here: a package that stays needs it.
+      // Said, so an unattended import does not read as having converged
+      // on the file.
+      let prune_kept: Vec<String> = if prune && prune_withheld.is_none() {
+        plan
+          .prune
+          .iter()
+          .filter(|id| guard.state().is_installed(id))
+          .map(ToString::to_string)
+          .collect()
+      } else {
+        Vec::new()
+      };
+      (outcome, pruned, prune_kept)
     };
 
     // Pins are reapplied afterwards: a pin is state about the user's
@@ -2159,6 +2223,7 @@ impl Session {
       skipped_pins,
       pruned,
       prune_withheld,
+      prune_kept,
     })
   }
 
@@ -2783,6 +2848,11 @@ pub struct ImportOutcome {
   /// Why `--prune` removed nothing this time: a source could not be read.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub prune_withheld: Option<String>,
+  /// What the plan said `--prune` would remove and it kept: a package that
+  /// stays still needs it — one installed after the plan was made, or one
+  /// the install kept at the version installed.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub prune_kept: Vec<String>,
 }
 
 /// The name an artifact was published under: the last segment of its URL,
@@ -3157,6 +3227,10 @@ pub struct RemoveOutcome {
   /// Installed content this removal left with nothing to play it.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub stranded: Vec<StrandedContent>,
+  /// Packages `autoremove` listed that another command removed before the
+  /// user answered: nothing was left to remove.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub no_longer_installed: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3275,6 +3349,27 @@ pub enum UnavailableReason {
   /// now, so upgrading everything never reaches it. `autoremove` removes
   /// it; `upgrade <package>` upgrades it.
   Orphaned,
+}
+
+/// What [`Session::survey`] resolves.
+#[derive(Clone, Copy)]
+enum Scope<'d> {
+  /// Only what is named, as `upgrade <package>` resolves: nothing else is
+  /// resolved, and the updates listed are only those a pin holds back.
+  Named,
+  /// Every explicit package, as `upgrade` with nothing named resolves,
+  /// with `detected` the externals present.
+  Everything { detected: &'d BTreeSet<PackageId> },
+}
+
+/// What [`Session::upgrade_roots`] works out for a plan.
+struct UpgradeRoots<'a> {
+  roots: Vec<PackageId>,
+  held_back: Outdated,
+  holding: BTreeSet<PackageId>,
+  /// How those roots resolve, with nothing named: the plan is built from
+  /// it rather than resolving the same request again.
+  resolution: Option<Resolution<'a>>,
 }
 
 /// Why `upgrade` holds a root back ([`Session::resolve_upgrade`]).
@@ -3422,6 +3517,27 @@ mod tests {
     assert_eq!(installed_ids(&session), ["gone"]);
   }
 
+  #[test]
+  fn autoremove_skips_what_another_command_removed_after_it_was_listed() {
+    // Gone already is what was asked: the rest still goes, and that one
+    // is said to have gone meanwhile.
+    let dir = tempfile::tempdir().unwrap();
+    let session = session_reading(dir.path(), &[]);
+    record(session.layout(), "a", InstallReason::Dependency);
+    record(session.layout(), "b", InstallReason::Dependency);
+    let plan = session.plan_autoremove().unwrap();
+    assert_eq!(plan.ids.len(), 2);
+
+    session
+      .remove(&[PackageId::new("a").unwrap()], false)
+      .unwrap();
+    let outcome = session.autoremove(&plan).unwrap();
+    let removed: Vec<&str> = outcome.removed.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(removed, ["b"]);
+    assert_eq!(outcome.no_longer_installed, ["a"]);
+    assert_eq!(installed_ids(&session), ["gone"]);
+  }
+
   #[tokio::test]
   async fn import_prune_removes_only_what_its_plan_showed() {
     // The plan removes `gone`. A package installed in another terminal
@@ -3466,6 +3582,7 @@ mod tests {
       .await
       .unwrap();
     assert!(outcome.pruned.is_none(), "{:?}", outcome.pruned);
+    assert_eq!(outcome.prune_kept, ["gone"]);
     assert_eq!(installed_ids(&session), ["gone", "late"]);
   }
 

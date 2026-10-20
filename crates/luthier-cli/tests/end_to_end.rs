@@ -1254,15 +1254,20 @@ fn a_package_held_back_keeps_what_it_needs_where_it_is() {
 }
 
 #[test]
-fn packages_whose_upgrades_clash_with_each_other_are_both_held_back() {
+fn packages_whose_upgrades_clash_with_each_other_are_held_back() {
   // `alpha` 2.0.0 needs `c <2` and `beta` 2.0.0 needs `c >=2`. Each
   // upgrades alone; together they cannot. Neither is the one to blame, so
-  // both stay, said to be, `outdated` still answers, and `gamma` upgrades.
+  // both stay, said to be, and `outdated` still answers. `delta` and
+  // `epsilon` clash the same way over `d`, apart from the first clash:
+  // each holds back only its own two, and `gamma` upgrades.
   let fixture = Fixture::new();
   for (id, deps) in [
     ("c", &[][..]),
+    ("d", &[][..]),
     ("alpha", &["c"][..]),
     ("beta", &["c"][..]),
+    ("delta", &["d"][..]),
+    ("epsilon", &["d"][..]),
     ("gamma", &[][..]),
   ] {
     let artifact = fixture.make_artifact(&capitalise(id));
@@ -1270,18 +1275,24 @@ fn packages_whose_upgrades_clash_with_each_other_are_both_held_back() {
   }
   fixture
     .luthier()
-    .args(["install", "alpha", "beta", "gamma"])
+    .args(["install", "alpha", "beta", "delta", "epsilon", "gamma"])
     .assert()
     .success();
   add_release(&fixture, "c", "2.0.0", &[]);
-  for (id, wanted) in [("alpha", "<2"), ("beta", ">=2")] {
+  add_release(&fixture, "d", "2.0.0", &[]);
+  for (id, on, wanted) in [
+    ("alpha", "c", "<2"),
+    ("beta", "c", ">=2"),
+    ("delta", "d", "<2"),
+    ("epsilon", "d", ">=2"),
+  ] {
     let artifact = fixture.make_artifact(&capitalise(id));
-    fixture.add_plugin(id, "2.0.0", &artifact, &["c"]);
+    fixture.add_plugin(id, "2.0.0", &artifact, &[on]);
     require(
       &fixture,
       id,
-      "dependencies = [\"c\"]",
-      &format!("dependencies = [{{ id = \"c\", version = \"{wanted}\" }}]"),
+      &format!("dependencies = [\"{on}\"]"),
+      &format!("dependencies = [{{ id = \"{on}\", version = \"{wanted}\" }}]"),
     );
   }
   let artifact = fixture.make_artifact("Gamma");
@@ -1317,7 +1328,10 @@ fn packages_whose_upgrades_clash_with_each_other_are_both_held_back() {
     [
       ("alpha", "unresolvable"),
       ("beta", "unresolvable"),
-      ("c", "needed-by-held-back")
+      ("c", "needed-by-held-back"),
+      ("d", "needed-by-held-back"),
+      ("delta", "unresolvable"),
+      ("epsilon", "unresolvable")
     ],
     "{json}"
   );

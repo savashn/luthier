@@ -290,7 +290,8 @@ the crate map keeps that out of `luthier-manifest`.
   list where that second answer agrees, less anything a package installed
   since needs (`shown_and_unneeded`, and `still_unneeded` again after the
   install), never a package nobody was shown; only that list holds
-  nothing while the install resolves. While any
+  nothing while the install resolves, and what it shows and keeps is
+  named (`prune_kept`). While any
   source failed to load nothing is removed (`prune_withheld`, in the
   plan and the outcome): what that
   source carries would read as unwanted, and the module runs it
@@ -309,14 +310,20 @@ the crate map keeps that out of `luthier-manifest`.
   what it needs stay at the version installed, as for a gone package, so
   the rest upgrades without moving a shared dependency past what it
   needs (`HeldBy`, reported as `NeededByHeldBack`). Held back is what
-  fails on its own, never what sorts last; roots that resolve alone and
-  clash only with each other are all held back, since which one moves is
-  the user's call. Named, a package is refused rather than held. The plan carries
-  `held_back`, `holding` and the `roots` it resolved, and
-  `Session::upgrade` executes those — minus any removed meanwhile, which
-  the outcome names — not ones worked out again after the user answered.
-  `Session::autoremove` likewise removes the plan's list, refused under
-  the lock if one stopped being an orphan.
+  fails on its own, never what sorts last; where roots resolve alone and
+  clash only with each other, a minimal set that clashes, found in order
+  of ID, is held back whole, one clash at a time, since which one moves is the user's call.
+  If even holding everything resolves nothing, `outdated` still lists
+  what it can and `upgrade` says why. Named, a package is refused rather
+  than held. The plan carries `held_back`, `holding` and the `roots` it
+  resolved, and `Session::upgrade` executes those — minus any removed
+  meanwhile, which the outcome names — not ones worked out again after
+  the user answered.
+- **`autoremove` removes the list it showed.** `Session::autoremove`
+  checks it again under the lock and refuses (`NoLongerUnneeded`) if one
+  was asked for by name, became needed, or became the last player of
+  content meanwhile; one another command already removed is skipped and
+  named (`RemoveOutcome::no_longer_installed`).
 - **An explicit package is never demoted.** `Purpose::record_reasons`
   overrides the resolver, which knows roots and dependencies only: every
   installed package keeps its recorded reason, except a root of an

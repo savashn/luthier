@@ -194,11 +194,15 @@ pub fn frozen<S: PackageSource>(
     })
     .map(|package| &package.id);
   let staying = state.reachable_from(explicit);
-  let holders: Vec<PackageId> = frozen
+  let mut holders: Vec<PackageId> = frozen
     .keys()
     .filter(|id| staying.contains(id) && !leaving.contains(*id))
     .cloned()
     .collect();
+  // A package nothing can upgrade holds before one `upgrade` holds back,
+  // whatever their IDs: what it needs stays even once the conflict that
+  // held the other back is gone, and that is the reason to report.
+  holders.sort_by_key(|id| frozen.get(id) == Some(&Frozen::HeldBack));
   for id in &holders {
     let why = if frozen.get(id) == Some(&Frozen::HeldBack) {
       Frozen::HeldBy(id.clone())
@@ -1266,6 +1270,26 @@ mod tests {
       message.contains("zeta needs lib >=2, but lib stays at 1.0.0: old needs it"),
       "{message}"
     );
+  }
+
+  #[test]
+  fn what_a_gone_package_needs_is_held_by_it_whatever_holds_it_too() {
+    // `alpha`, held back, and `zeta`, which no source carries, both need
+    // `d`. It stays even once `alpha` can move, because `zeta` needs it:
+    // that is its reason, though `alpha` sorts first.
+    let fixture = Fixture::new()
+      .add("alpha", &[("1.0.0", &["d"])])
+      .add("d", &[("1.0.0", &[])]);
+    let state = installed(&[
+      ("alpha", "1.0.0", &["d"]),
+      ("zeta", "1.0.0", &["d"]),
+      ("d", "1.0.0", &[]),
+    ]);
+    let held = BTreeSet::from([id("alpha")]);
+    let frozen = frozen(&fixture, &state, &linux(), &BTreeSet::new(), &[], &held);
+    assert_eq!(frozen.get(&id("alpha")), Some(&Frozen::HeldBack));
+    assert_eq!(frozen.get(&id("zeta")), Some(&Frozen::NotCarried));
+    assert_eq!(frozen.get(&id("d")), Some(&Frozen::NeededBy(id("zeta"))));
   }
 
   #[test]
