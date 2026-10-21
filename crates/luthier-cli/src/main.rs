@@ -381,11 +381,17 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.info(&session.info(&id)?);
     }
 
-    Command::List { unmanaged } => {
+    Command::List {
+      packages,
+      unmanaged,
+    } => {
       if *unmanaged {
         reporter.scan(&session.scan()?);
-      } else {
+      } else if packages.is_empty() {
         reporter.list(&session.list()?);
+      } else {
+        let ids = ids(&session, packages)?;
+        reporter.files(&session.installed(&ids)?);
       }
     }
 

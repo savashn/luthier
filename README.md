@@ -208,6 +208,7 @@ luthier search <query>          # find packages
 luthier info <package>          # everything known about one
 luthier install <package>       # resolve, download, verify, install
 luthier list                    # what is installed
+luthier list <package>          # where its files are, one path per line
 luthier list --unmanaged        # plugins installed outside Luthier
 luthier verify [package]        # check installed files are unchanged
 luthier outdated                # what has a newer release
@@ -273,6 +274,10 @@ warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or 
 | State and registry snapshots | `~/.local/share/luthier/` |
 | Downloaded artifacts | `~/.cache/luthier/` |
 | Configuration | `~/.config/luthier/config.json` |
+
+`luthier list <package>` prints where one package went, and `luthier info`
+shows it as `Location`: the way to find a sample library's folder to open
+in a player, since the library directory is hidden.
 
 `--root <dir>` confines all of these to one directory, which is how the test
 suite avoids ever touching a real plugin directory.

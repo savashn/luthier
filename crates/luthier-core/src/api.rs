@@ -442,6 +442,14 @@ impl Session {
       target: self.target.to_string(),
       registry: entry.registry.clone(),
       installed_version: installed.map(|p| p.version.to_string()),
+      files: installed
+        .map(|p| {
+          p.files
+            .iter()
+            .map(|f| f.path().display().to_string())
+            .collect()
+        })
+        .unwrap_or_default(),
       // An `external` package is never installed *by us*, so
       // `installed_version` is permanently None for it and reporting only
       // that would say "no" about software sitting in /usr/lib.
@@ -491,6 +499,26 @@ impl Session {
         .map(InstalledSummary::from)
         .collect(),
     )
+  }
+
+  /// The named packages as installed, in the order named, each once.
+  ///
+  /// What `luthier list <package>` prints the files of. A package that is
+  /// not installed is an error rather than an empty answer, so a script
+  /// asking where something is cannot mistake a typo for "nowhere".
+  pub fn installed(&self, ids: &[PackageId]) -> Result<Vec<InstalledSummary>> {
+    let state = crate::state::load(&self.layout)?;
+    let mut seen = BTreeSet::new();
+    ids
+      .iter()
+      .filter(|id| seen.insert(*id))
+      .map(|id| {
+        state
+          .get(id)
+          .map(InstalledSummary::from)
+          .ok_or_else(|| Error::State(StateError::NotInstalled { id: id.clone() }))
+      })
+      .collect()
   }
 
   /// Plugins on disk, whether or not Luthier installed them (§29).
@@ -2905,6 +2933,10 @@ pub struct PackageInfo {
   pub target: String,
   pub registry: String,
   pub installed_version: Option<String>,
+  /// Where Luthier put it: one path per file or bundle it installed. Empty
+  /// when it is not installed. Sample libraries live in a hidden directory,
+  /// and this is how a user finds the folder to open in a player.
+  pub files: Vec<String>,
   /// Where an `external` package was found on this machine, if it is present.
   pub detected_at: Option<String>,
   pub pinned: Option<String>,

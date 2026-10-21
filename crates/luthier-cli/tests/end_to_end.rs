@@ -2290,6 +2290,76 @@ fn a_sample_library_installs_under_the_library_root() {
 }
 
 #[test]
+fn list_and_info_say_where_a_package_is() {
+  // The library root is a hidden directory, and a player has to be pointed
+  // at the folder by hand, so the user needs a way to ask where it went.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_library_artifact("VSCO-2-CE");
+  fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &artifact);
+  fixture
+    .luthier()
+    .args(["install", "vsco2"])
+    .assert()
+    .success();
+  let installed = fixture
+    .root()
+    .join("share/luthier/libraries/VSCO-2-CE")
+    .display()
+    .to_string();
+
+  // One path per line and nothing else, so it can be handed to a program.
+  let list = stdout_of(&fixture.luthier().args(["list", "vsco2"]).output().unwrap());
+  assert_eq!(list.lines().collect::<Vec<_>>(), vec![installed.as_str()]);
+
+  let json = stdout_of(
+    &fixture
+      .luthier()
+      .args(["list", "--json", "vsco2", "vsco2"])
+      .output()
+      .unwrap(),
+  );
+  let packages: serde_json::Value = serde_json::from_str(&json).unwrap();
+  assert_eq!(
+    packages.as_array().unwrap().len(),
+    1,
+    "named twice, listed once"
+  );
+  assert_eq!(packages[0]["files"][0], installed.as_str());
+
+  let info = stdout_of(&fixture.luthier().args(["info", "vsco2"]).output().unwrap());
+  assert!(
+    info
+      .lines()
+      .any(|line| line.starts_with("Location") && line.ends_with(&installed)),
+    "{info}"
+  );
+
+  // A package that is not installed is an error, never an empty answer.
+  fixture
+    .luthier()
+    .args(["remove", "vsco2"])
+    .assert()
+    .success();
+  fixture.luthier().args(["list", "vsco2"]).assert().failure();
+  let info = stdout_of(
+    &fixture
+      .luthier()
+      .args(["info", "--json", "vsco2"])
+      .output()
+      .unwrap(),
+  );
+  let info: serde_json::Value = serde_json::from_str(&info).unwrap();
+  assert_eq!(info["files"], serde_json::json!([]));
+
+  // Naming packages asks about them, which --unmanaged does not.
+  fixture
+    .luthier()
+    .args(["list", "--unmanaged", "vsco2"])
+    .assert()
+    .failure();
+}
+
+#[test]
 fn a_library_with_no_rules_installs_under_its_package_id() {
   // What the Open Audio Stack registry publishes: `contains: sfz` and no
   // install rules. The archive's shape says where the content is, and the

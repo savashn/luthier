@@ -111,6 +111,9 @@ impl Reporter {
         .map(|p| format!(" (pinned to {p})"))
         .unwrap_or_default();
       fields.push(("Installed", format!("{installed}{suffix}")));
+      for (i, path) in info.files.iter().enumerate() {
+        fields.push((if i == 0 { "Location" } else { "" }, path.clone()));
+      }
     } else if let Some(path) = &info.detected_at {
       fields.push(("Installed", "yes, outside Luthier".into()));
       fields.push(("Found at", path.clone()));
@@ -482,6 +485,16 @@ impl Reporter {
       })
       .collect();
     table(&["NAME", "VERSION", "FORMATS", "WHY"], &rows);
+  }
+
+  /// The paths of named packages, one per line, like `brew list <formula>`.
+  pub fn files(&self, packages: &[InstalledSummary]) {
+    if self.json {
+      return self.emit(&packages);
+    }
+    for path in packages.iter().flat_map(|p| &p.files) {
+      println!("{path}");
+    }
   }
 
   pub fn scan(&self, plugins: &[DetectedPlugin]) {

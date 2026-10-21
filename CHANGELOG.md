@@ -15,6 +15,17 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **`luthier list <package>` prints where a package is installed**, one
+  path per file or bundle and nothing else, as `brew list <formula>`
+  does, so the output can go straight to another program. A package that
+  is not installed is an error, not an empty answer. `luthier info` shows
+  the same paths as `Location`, and its `--json` gains a `files` list
+  (empty when the package is not installed). Sample libraries live in a
+  hidden directory, and a player has to be pointed at their folder by
+  hand.
+
 ## [0.5.0] — 2026-10-20
 
 ### Added

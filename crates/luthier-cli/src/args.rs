@@ -113,10 +113,16 @@ pub enum Command {
     force: bool,
   },
 
-  /// List installed packages.
+  /// List installed packages, or where the named ones are installed.
+  ///
+  /// Named packages print one path per file or bundle installed, and
+  /// nothing else, so the output can be handed to another program.
   List {
+    /// Print where these packages' files are instead.
+    packages: Vec<String>,
+
     /// Also show plugins present but not installed by Luthier.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "packages")]
     unmanaged: bool,
   },
 
