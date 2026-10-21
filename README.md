@@ -277,7 +277,8 @@ warning: crocellkit holds DrumGizmo content, and playing it needs DrumGizmo, or 
 
 `luthier list <package>` prints where one package went, and `luthier info`
 shows it as `Location`: the way to find a sample library's folder to open
-in a player, since the library directory is hidden.
+in a player, since the library directory is hidden. Setting a player up
+once is in [Opening libraries in a player](docs/PLAYERS.md).
 
 `--root <dir>` confines all of these to one directory, which is how the test
 suite avoids ever touching a real plugin directory.
@@ -308,6 +309,7 @@ See [Export and import](docs/EXPORT.md) for the format.
 - [Security model](SECURITY.md) — what is trusted, and what is not
 - [Scope](docs/SCOPE.md) — what it will not do, and why some plugins are missing
 - [DAWs installed from Flathub](docs/FLATHUB.md) — what a sandboxed host sees
+- [Opening libraries in a player](docs/PLAYERS.md) — pointing sfizz, DrumGizmo and Carla at what Luthier installed
 - [Manifest format](docs/MANIFEST.md) — the package schema
 - [Registry](docs/REGISTRY.md) — adding a package
 - [Exit codes](docs/EXIT_CODES.md)
