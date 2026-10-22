@@ -15,8 +15,13 @@ on:
       - '.github/workflows/extras.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   urls:
@@ -28,9 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # Saved on pull requests, unlike ci.yml's: this never runs on main, so
+      # a pull request's own cache is the only one its next push can restore.
       - uses: Swatinem/rust-cache@v2
 
       # With the authoring features: --check-urls is one of the things they
-      # are for.
+      # are for. A debug build: the time goes on waiting for the hosts, and
+      # an optimised build only makes the compile longer.
       - name: Check URLs
-        run: cargo run --release -p luthier-registry-tool -- validate extras --check-urls
+        run: cargo run -p luthier-registry-tool -- validate extras --check-urls

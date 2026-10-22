@@ -30,6 +30,12 @@ on:
       - '.github/workflows/nix.yml'
   workflow_dispatch:
 
+# The slowest workflow, so the one where a superseded pull request run costs
+# the most.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # On both systems the flake offers, each on a runner of its own kind, so the
   # aarch64 package is built and its suite run as a Nix user on ARM gets it.

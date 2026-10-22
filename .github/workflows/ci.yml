@@ -7,9 +7,21 @@ on:
     branches: [main]
     paths-ignore: ['**.md', 'docs/**']
 
+# A newer push to a pull request makes the older run's answer moot. Not on
+# main, where every commit keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  # Line numbers in a panic are all CI reads from debug info; the rest only
+  # makes every test binary slower to link and the cache larger.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
+# Every rust-cache below saves on main only. A pull request's cache can be
+# restored by that pull request alone, and saving one evicts main's, which
+# every pull request restores from.
 jobs:
   # On both architectures a release builds for: the release runs the suite on
   # each before it builds, so a test that only holds on x86_64 would otherwise
@@ -33,9 +45,12 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # Formatting, the feature-less build and the schema come out the same on
-      # both architectures, so they run once; clippy and the suite run on both.
+      # Formatting and the feature-less build come out the same on both
+      # architectures, so they run once; clippy and the suite run on both. The
+      # schema is checked by the suite (`schema_is_current.rs`).
       - name: Format
         if: matrix.arch == 'x86_64'
         run: cargo fmt --all --check
@@ -54,15 +69,11 @@ jobs:
       # configuration a CI that only validates manifests can afford. Nothing else
       # asserts it, so an
       # import added under the default features would rot it unnoticed.
-      - name: Registry tool builds without the authoring features
+      # `check`, not `build`: what rots is which crates it pulls in, and that
+      # fails before anything is linked.
+      - name: Registry tool compiles without the authoring features
         if: matrix.arch == 'x86_64'
-        run: cargo build -p luthier-registry-tool --no-default-features
-
-      - name: Schema is up to date
-        if: matrix.arch == 'x86_64'
-        run: |
-          cargo run -q -p luthier-registry-tool -- schema > /tmp/generated.json
-          diff -u schemas/package-v1.json /tmp/generated.json
+        run: cargo check -p luthier-registry-tool --no-default-features
 
   # The release's packaging, on every change and on both architectures: a
   # release only runs it on a tag, and a broken nfpm.yaml or install.sh found
@@ -86,6 +97,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Once: the scripts are the same on both architectures.
       - name: Shell scripts
@@ -175,5 +188,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.93
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check
         run: cargo check --workspace --all-targets --locked
