@@ -1,9 +1,12 @@
 # Opening libraries in a player
 
 A sample library is not a plugin. No host scans for one, and installing it
-tells no player it is there. Luthier installs each library as a folder,
-`<library location>/<package id>`, and you point a player at a file inside
-it. The player stores that file in your project, so this is once per
+tells no player it is there. Luthier installs each library as a folder in
+the library location, and you point a player at a file inside it. A
+library from the Open Audio Stack registry gets a folder named after its
+package ID; one from extras keeps the name of the folder in its archive,
+so `muldjordkit` goes to `MuldjordKit3`. Ask Luthier rather than guess
+([Finding the folder](#finding-the-folder)). The player stores that file in your project, so this is once per
 instrument, not once per session. To skip even that, save the track with
 its player as a template in your DAW.
 
@@ -21,6 +24,8 @@ and the DrumGizmo 0.9.20 binary.
 
 The library location is `~/.local/share/luthier/libraries` (under
 `$XDG_DATA_HOME`), unless `luthier location set libraries` moved it.
+`luthier install` prints a library's folder under the line saying it was
+installed, and you can ask for it again at any time:
 
 ```console
 $ luthier list vsco-2-ce        # where one package went

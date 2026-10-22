@@ -25,6 +25,9 @@ about.
   (empty when the package is not installed). Sample libraries live in a
   hidden directory, and a player has to be pointed at their folder by
   hand.
+- **Installing a sample library prints its folder** under the line
+  saying it was installed. A plugin's paths are not printed: a host
+  finds it by itself.
 
 ## [0.5.0] — 2026-10-20
 

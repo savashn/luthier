@@ -2296,16 +2296,25 @@ fn list_and_info_say_where_a_package_is() {
   let fixture = Fixture::new();
   let artifact = fixture.make_library_artifact("VSCO-2-CE");
   fixture.add_library("vsco2", "1.1.0", "VSCO-2-CE", &artifact);
-  fixture
+  let output = fixture
     .luthier()
     .args(["install", "vsco2"])
-    .assert()
-    .success();
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "{}",
+    String::from_utf8_lossy(&output.stderr)
+  );
   let installed = fixture
     .root()
     .join("share/luthier/libraries/VSCO-2-CE")
     .display()
     .to_string();
+
+  // The install says where it went, so the user need not ask.
+  let text = stdout_of(&output);
+  assert!(text.lines().any(|line| line.trim() == installed), "{text}");
 
   // One path per line and nothing else, so it can be handed to a program.
   let list = stdout_of(&fixture.luthier().args(["list", "vsco2"]).output().unwrap());

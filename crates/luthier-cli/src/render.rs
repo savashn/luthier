@@ -316,6 +316,13 @@ impl Reporter {
           package.formats.join(", ")
         );
       }
+      // A host finds a plugin by itself; a player has to be pointed at a
+      // library's folder, which is in a hidden directory.
+      if package.formats.iter().any(|f| f == "library") {
+        for path in &package.files {
+          println!("  {path}");
+        }
+      }
     }
     for package in &outcome.skipped {
       self.note(format!(
