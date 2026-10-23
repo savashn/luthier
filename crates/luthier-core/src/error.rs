@@ -62,6 +62,15 @@ pub enum Error {
   #[error(transparent)]
   Archive(#[from] ArchiveError),
 
+  /// An archive failed while a package was being installed from it. Named,
+  /// because an import of twenty packages that fails on one has to say which.
+  #[error("{id} {version}: {error}")]
+  PackageArchive {
+    id: PackageId,
+    version: Version,
+    error: Box<ArchiveError>,
+  },
+
   #[error(transparent)]
   Install(#[from] InstallError),
 
@@ -111,7 +120,9 @@ impl Error {
       Error::Registry(RegistryError::PackageNotFound { .. }) => ExitCode::PackageNotFound,
       Error::Download(DownloadError::ChecksumMismatch { .. }) => ExitCode::VerificationFailed,
       Error::VerificationFailed { .. } => ExitCode::VerificationFailed,
-      Error::Archive(_) | Error::Install(_) => ExitCode::InstallationFailed,
+      Error::Archive(_) | Error::PackageArchive { .. } | Error::Install(_) => {
+        ExitCode::InstallationFailed
+      }
       // Refusing to break another package's dependency is a dependency
       // failure, not a generic one, so scripts can tell them apart.
       Error::State(StateError::StillRequired { .. } | StateError::NoLongerUnneeded { .. }) => {
@@ -130,6 +141,7 @@ impl Error {
       Error::Download(e) => e.hint(),
       Error::SelfUpdate(e) => e.hint(),
       Error::Archive(e) => e.hint(),
+      Error::PackageArchive { error, .. } => error.hint(),
       Error::Install(e) => e.hint(),
       Error::Resolve(e) => e.hint(),
       Error::State(e) => e.hint(),
@@ -454,6 +466,12 @@ pub enum ArchiveError {
   #[error("archive is corrupt: {0}")]
   Corrupt(String),
 
+  /// Well-formed, and compressed with a method this build has no decoder
+  /// for. Not `Corrupt`: the download passed its checksum and the container
+  /// parsed, and calling it damaged sends the user after a bad download.
+  #[error("the archive is compressed with {method}, which this build cannot decode")]
+  UnsupportedMethod { method: String },
+
   #[error("the archive does not contain {path:?}")]
   MissingEntry { path: String },
 
@@ -482,6 +500,11 @@ impl ArchiveError {
       ArchiveError::MissingEntry { .. } => Some(
         "The manifest's install rules do not match the archive's layout; the package \
                  needs updating in the registry."
+          .into(),
+      ),
+      ArchiveError::UnsupportedMethod { .. } => Some(
+        "The download matched its checksum, so nothing is wrong with it: Luthier has \
+         no decoder for that method yet. Please report the package so it can be added."
           .into(),
       ),
       _ => None,

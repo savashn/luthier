@@ -29,6 +29,18 @@ about.
   saying it was installed. A plugin's paths are not printed: a host
   finds it by itself.
 
+### Fixed
+
+- **7z archives compressed with Deflate or BZip2 extract.** Only LZMA,
+  LZMA2 and the filters were read before, and FreePats publishes its 7z
+  libraries with Deflate (`hang-d-minor` from the Open Audio Stack
+  registry). Both decoders were already in the build through zip.
+- **An archive Luthier cannot decode is no longer called corrupt.** A
+  compression method with no decoder, in a 7z or a zip, is its own error
+  naming the method; "corrupt" is kept for an archive that is damaged.
+- **An archive's error names the package and version** it was installing,
+  so an `import` that stops on one of twenty says which.
+
 ## [0.5.0] — 2026-10-20
 
 ### Added

@@ -311,10 +311,17 @@ impl SevenZEntry {
 
 /// Builds a 7z containing exactly `entries`.
 pub fn build_7z(entries: &[SevenZEntry]) -> Vec<u8> {
+  build_7z_using(entries, sevenz_rust2::EncoderMethod::LZMA2)
+}
+
+/// The same, with the content compressed by `method` rather than LZMA2,
+/// the writer's default and 7-Zip's.
+pub fn build_7z_using(entries: &[SevenZEntry], method: sevenz_rust2::EncoderMethod) -> Vec<u8> {
   use sevenz_rust2::{ArchiveEntry, ArchiveWriter};
 
   let cursor = std::io::Cursor::new(Vec::new());
   let mut writer = ArchiveWriter::new(cursor).expect("7z writer");
+  writer.set_content_methods(vec![method.into()]);
   for entry in entries {
     let mut archive_entry = if entry.directory {
       ArchiveEntry::new_directory(&entry.name)

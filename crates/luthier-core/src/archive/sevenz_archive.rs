@@ -28,7 +28,7 @@ pub fn extract<R: Read + Seek>(
   extractor: &mut SafeExtractor,
 ) -> Result<(), ArchiveError> {
   let mut archive = sevenz_rust2::ArchiveReader::new(reader, sevenz_rust2::Password::empty())
-    .map_err(|e| ArchiveError::Corrupt(format!("cannot open 7z: {e}")))?;
+    .map_err(|e| reader_error("cannot open 7z", e))?;
 
   // The reader hands each entry to this closure in archive order. Returning
   // an error stops the walk, which is what makes a refusal abort the whole
@@ -67,6 +67,44 @@ pub fn extract<R: Read + Seek>(
   if let Some(error) = failure {
     return Err(error);
   }
-  result.map_err(|e| ArchiveError::Corrupt(format!("cannot read 7z: {e}")))?;
+  result.map_err(|e| reader_error("cannot read 7z", e))?;
   Ok(())
+}
+
+/// What the reader's error means. A method it has no decoder for is a limit
+/// of this build, not damage: reported as a corrupt archive, as FreePats'
+/// Deflate was before the feature was on, it sent the user after a download
+/// that was fine.
+fn reader_error(context: &str, error: sevenz_rust2::Error) -> ArchiveError {
+  match error {
+    sevenz_rust2::Error::UnsupportedCompressionMethod(method) => {
+      ArchiveError::UnsupportedMethod { method }
+    }
+    other => ArchiveError::Corrupt(format!("{context}: {other}")),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  // The writer cannot produce a method the reader lacks, since one feature
+  // turns on both, so the classification is tested on the reader's errors.
+  #[test]
+  fn a_method_without_a_decoder_is_not_called_corrupt() {
+    let error = reader_error(
+      "cannot read 7z",
+      sevenz_rust2::Error::UnsupportedCompressionMethod("PPMD".into()),
+    );
+    assert!(
+      matches!(&error, ArchiveError::UnsupportedMethod { method } if method == "PPMD"),
+      "{error}"
+    );
+
+    let error = reader_error(
+      "cannot read 7z",
+      sevenz_rust2::Error::ChecksumVerificationFailed,
+    );
+    assert!(matches!(error, ArchiveError::Corrupt(_)), "{error}");
+  }
 }

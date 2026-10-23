@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 487 tests, fully offline
+cargo test --workspace                     # 491 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -148,8 +148,13 @@ the crate map keeps that out of `luthier-manifest`.
   and CRCs: every Linux zip sampled from OAS, and every zip in extras,
   passes it. 8.x was pinned while 9 was a prerelease; RUSTSEC-2026-0367 to
   0369 are fixed only in 9.
-- **`sevenz-rust2` takes no default features.** The dev-dependency adds
-  `compress` because only the test fixtures write archives. It is in its own
+- **`sevenz-rust2` takes no default features**, only `deflate` and
+  `bzip2`, whose decoders zip already brings in (FreePats publishes
+  Deflate 7z). A method still missing — PPMd, Deflate64 — is
+  `ArchiveError::UnsupportedMethod`, never `Corrupt`; a test cannot write
+  one, since the feature that writes a method also reads it. The
+  dev-dependency adds `compress` because only the test fixtures write
+  archives. It is in its own
   Dependabot group so that a release raising the MSRV again holds back only
   itself.
 - **DPF-Plugins ships `ProM.clap` as a directory**, not a shared object, so no

@@ -798,6 +798,62 @@ fn a_legitimate_7z_extracts_intact() {
   sandbox.assert_nothing_escaped();
 }
 
+// ---------------------------------------------------- compression methods --
+//
+// Not escapes, but the same honesty about what an archive is: a method this
+// build has no decoder for is reported as that, never as damage.
+
+#[test]
+fn a_7z_compressed_with_deflate_or_bzip2_extracts_intact() {
+  // FreePats publishes its 7z archives with Deflate.
+  for method in [
+    sevenz_rust2::EncoderMethod::DEFLATE,
+    sevenz_rust2::EncoderMethod::BZIP2,
+  ] {
+    let sandbox = Sandbox::new();
+    let bytes = build_7z_using(
+      &[
+        SevenZEntry::dir("Hang"),
+        SevenZEntry::file("Hang/hang.sfz", b"<region> sample=samples/A3.flac"),
+      ],
+      method,
+    );
+    let archive = write_file(&sandbox.archives, "payload.7z", &bytes);
+    if let Err(e) = sandbox.run(&archive, ArchiveFormat::SevenZ) {
+      panic!("a {} 7z did not extract: {e}", method.name());
+    }
+    assert_eq!(
+      std::fs::read(sandbox.dest.join("Hang/hang.sfz")).unwrap(),
+      b"<region> sample=samples/A3.flac"
+    );
+    sandbox.assert_nothing_escaped();
+  }
+}
+
+#[test]
+fn a_zip_method_without_a_decoder_is_unsupported_and_not_corrupt() {
+  // Deflate64, which this build cannot decode. The writer will not produce
+  // it, so the method is patched into both headers of a stored entry.
+  let original = build_zip(&[ZipEntry::file("kit.sfz", b"<region>")]);
+  let mut bytes = original.clone();
+  for (signature, offset) in [(&b"PK\x03\x04"[..], 8), (&b"PK\x01\x02"[..], 10)] {
+    let at = original
+      .windows(4)
+      .position(|w| w == signature)
+      .expect("header present");
+    bytes[at + offset..at + offset + 2].copy_from_slice(&9u16.to_le_bytes());
+  }
+
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  match sandbox.run(&archive, ArchiveFormat::Zip) {
+    Err(ArchiveError::UnsupportedMethod { method }) => assert_eq!(method, "Deflate64"),
+    other => panic!("expected an unsupported method, got {other:?}"),
+  }
+  assert!(list_tree(&sandbox.dest).is_empty());
+  sandbox.assert_nothing_escaped();
+}
+
 // ------------------------------------------------------------- bare files --
 //
 // A bare file has one name, and it comes from the URL it was published at.

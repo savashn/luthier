@@ -7,7 +7,8 @@ use super::safe::{SafeExtractor, claimed_mode};
 use crate::error::{ArchiveError, UnsafeEntry};
 use std::collections::HashSet;
 use std::io::{self, Read, Seek, SeekFrom};
-use zip::{ZipArchive, ZipReadOptions};
+use zip::result::ZipError;
+use zip::{CompressionMethod, ZipArchive, ZipReadOptions};
 
 /// The signature that opens each record of a zip's central directory.
 const CENTRAL_RECORD: u32 = 0x0201_4b50;
@@ -48,12 +49,10 @@ pub fn extract<R: Read + Seek>(
     if let Err(e) = archive.by_index_with_options(index, checked).map(drop) {
       return Err(match archive.by_index(index) {
         Ok(_) => extractor.reject(&name, UnsafeEntry::HeadersDisagree),
-        Err(_) => ArchiveError::Corrupt(format!("cannot read zip entry {index}: {e}")),
+        Err(_) => entry_error(index, e),
       });
     }
-    let mut file = archive
-      .by_index(index)
-      .map_err(|e| ArchiveError::Corrupt(format!("cannot read zip entry {index}: {e}")))?;
+    let mut file = archive.by_index(index).map_err(|e| entry_error(index, e))?;
 
     // The mode from the upper half of the external attributes, whatever
     // system the entry says made it, as zip 8 read it: zip 9 builds one
@@ -70,6 +69,20 @@ pub fn extract<R: Read + Seek>(
     }
   }
   Ok(())
+}
+
+/// Why entry `index` could not be opened. A method the crate has no decoder
+/// for is a limit of this build, told apart from damage as 7z tells it.
+fn entry_error(index: usize, error: ZipError) -> ArchiveError {
+  match error {
+    ZipError::CompressionMethodNotSupported(id) => ArchiveError::UnsupportedMethod {
+      method: match CompressionMethod::name_from_u16(id) {
+        "Unknown" => format!("method {id}"),
+        name => name.to_owned(),
+      },
+    },
+    other => ArchiveError::Corrupt(format!("cannot read zip entry {index}: {other}")),
+  }
 }
 
 fn open<R: Read + Seek>(reader: R) -> Result<ZipArchive<R>, ArchiveError> {

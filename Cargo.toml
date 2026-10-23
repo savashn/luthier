@@ -39,7 +39,9 @@ flate2 = "1.1.10"
 liblzma = { version = "0.4.8", features = ["static"] }
 # Sets the workspace MSRV: 0.21+ needs Rust 1.93. A release that raises it
 # again fails the MSRV job in CI, so the floor only moves on purpose.
-sevenz-rust2 = { version = "0.24.0", default-features = false }
+# Deflate and BZip2 are the methods 7-Zip offers beside LZMA that Luthier
+# already carries a decoder for, through zip; FreePats publishes Deflate.
+sevenz-rust2 = { version = "0.24.0", default-features = false, features = ["deflate", "bzip2"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 indicatif = "0.18.6"

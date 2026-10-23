@@ -462,6 +462,39 @@ fn a_checksum_mismatch_aborts_before_installing_anything() {
 }
 
 #[test]
+fn an_archive_that_fails_to_extract_names_its_package() {
+  // In an import of twenty that stops on one, an error that does not say
+  // which package it was for leaves the user guessing. The archive passes
+  // its checksum and is not a tar inside the gzip.
+  let fixture = Fixture::new();
+  let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+  encoder.write_all(&[0xff; 1024]).unwrap();
+  let bytes = encoder.finish().unwrap();
+  let path = fixture.dir.path().join("artifacts/broken.tar.gz");
+  std::fs::write(&path, &bytes).unwrap();
+  let artifact = Artifact {
+    url: url::Url::from_file_path(&path).unwrap().to_string(),
+    sha256: luthier_core::fsutil::hash_file(&path).unwrap().to_string(),
+    size: bytes.len() as u64,
+    path,
+  };
+  fixture.add_library("broken", "1.2.0", "Broken", &artifact);
+
+  let output = fixture
+    .luthier()
+    .args(["install", "broken"])
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(5), "an installation failure");
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(
+    stderr.contains("error: broken 1.2.0: archive is corrupt"),
+    "{stderr}"
+  );
+  assert!(installed(&fixture).is_empty());
+}
+
+#[test]
 fn dependencies_are_installed_first_and_recorded_as_such() {
   let fixture = Fixture::new();
   let engine = fixture.make_artifact("Engine");

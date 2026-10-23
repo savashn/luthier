@@ -1099,6 +1099,16 @@ impl Session {
       // leaves earlier packages properly installed and recorded, and this
       // package as it was.
       let mut transaction = InstallTransaction::begin(&self.layout, package.id())?;
+      // What went wrong with an archive names the package it was for: an
+      // import of twenty that stops on one must say which.
+      let named = |error: Error| match error {
+        Error::Archive(error) => Error::PackageArchive {
+          id: package.id().clone(),
+          version: package.version.clone(),
+          error: Box::new(error),
+        },
+        other => other,
+      };
       let extract_root = transaction.workspace().join("extract");
       fsutil::ensure_dir(&extract_root)?;
       archive::unpack(
@@ -1107,7 +1117,8 @@ impl Session {
         &published_name(&artifact.source.url),
         &extract_root,
         ExtractLimits::for_download(fetched.bytes),
-      )?;
+      )
+      .map_err(|e| named(e.into()))?;
 
       // A source that carries no install rules hands over bytes and a
       // checksum and nothing else. The rules are then read from the
@@ -1158,15 +1169,19 @@ impl Session {
         rules,
         package.id(),
         guard.state(),
-      )?;
+      )
+      .map_err(named)?;
       if let Some(content) = &content {
-        items.push(install::plan_content(
-          &self.layout,
-          &extract_root,
-          content,
-          package.id(),
-          guard.state(),
-        )?);
+        items.push(
+          install::plan_content(
+            &self.layout,
+            &extract_root,
+            content,
+            package.id(),
+            guard.state(),
+          )
+          .map_err(named)?,
+        );
       }
 
       let mut files: Vec<InstalledEntry> = Vec::new();
