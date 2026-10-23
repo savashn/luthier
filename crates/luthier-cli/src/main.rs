@@ -15,7 +15,7 @@ use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
 use luthier_manifest::PackageId;
-use progress::BarProgress;
+use progress::{BarProgress, Display};
 use render::Reporter;
 use std::io::{IsTerminal, Write};
 
@@ -144,6 +144,15 @@ fn build_session(global: &GlobalArgs) -> Result<Session> {
   Ok(session)
 }
 
+/// Download progress, as stderr can show it.
+fn progress(global: &GlobalArgs) -> BarProgress {
+  BarProgress::new(Display::for_stderr(
+    global.quiet,
+    global.json,
+    std::io::stderr().is_terminal(),
+  ))
+}
+
 fn ids(session: &Session, raw: &[String]) -> Result<Vec<PackageId>> {
   raw.iter().map(|name| session.parse_id(name)).collect()
 }
@@ -210,8 +219,7 @@ async fn upgrade_luthier(
   if !confirm(global, "\nProceed?")? {
     return Err(Error::Cancelled);
   }
-  let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
-  let mut bar = BarProgress::new(show_progress);
+  let mut bar = progress(global);
   session.self_update(&plan, &mut bar).await?;
   reporter.self_update_done(&plan);
   Ok(())
@@ -363,8 +371,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         return Err(Error::Cancelled);
       }
 
-      let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
-      let mut bar = BarProgress::new(show_progress);
+      let mut bar = progress(global);
       let outcome = session.import(&env_file, *prune, &plan, &mut bar).await?;
       reporter.import_outcome(&outcome);
       if let Some(error) = outcome.installed.incomplete() {
@@ -441,8 +448,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
         return Err(Error::Cancelled);
       }
 
-      let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
-      let mut bar = BarProgress::new(show_progress);
+      let mut bar = progress(global);
       let outcome = session.install(&ids, *force, &mut bar).await?;
       reporter.install_outcome(&outcome);
       if let Some(error) = outcome.incomplete() {
@@ -492,8 +498,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       if !confirm(global, "\nProceed?")? {
         return Err(Error::Cancelled);
       }
-      let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
-      let mut bar = BarProgress::new(show_progress);
+      let mut bar = progress(global);
       let outcome = session.upgrade(&plan, &mut bar).await?;
       reporter.install_outcome(&outcome);
       if let Some(error) = outcome.incomplete() {

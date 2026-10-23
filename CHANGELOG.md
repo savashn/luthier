@@ -35,6 +35,9 @@ about.
   the first failure, or 4 if any download did not match its checksum.
   `--json` lists `failed` and `not_attempted`. A full or read-only disk
   still ends the command at once.
+- **Progress off a terminal is a line now and then** — when a download
+  starts and at every tenth of it — rather than nothing, so a log or the
+  journal shows where an hour-long download is.
 
 ### Changed
 
@@ -45,6 +48,8 @@ about.
 
 ### Fixed
 
+- **Resuming a large download no longer reads the partial file into
+  memory**, which needed as much memory as had been downloaded.
 - **7z archives compressed with Deflate or BZip2 extract.** Only LZMA,
   LZMA2 and the filters were read before, and FreePats publishes its 7z
   libraries with Deflate (`hang-d-minor` from the Open Audio Stack

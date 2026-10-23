@@ -596,6 +596,34 @@ fn keep_going_installs_the_rest_and_fails_at_the_end() {
 }
 
 #[test]
+fn off_a_terminal_progress_is_written_as_lines() {
+  // The Home Manager module's service writes to the journal, where a bar
+  // shows nothing; a line per step does. The suite's stderr is a pipe.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Logged");
+  fixture.add_plugin("logged", "1.0.0", &artifact, &[]);
+  let output = fixture
+    .luthier()
+    .args(["install", "logged"])
+    .output()
+    .unwrap();
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(stderr.contains("Downloading Logged.tar.gz ("), "{stderr}");
+  assert!(
+    stderr.contains("Logged.tar.gz: ") && stderr.contains("(100%)"),
+    "{stderr}"
+  );
+
+  // Under --quiet, nothing.
+  let output = fixture
+    .luthier()
+    .args(["--quiet", "install", "--force", "logged"])
+    .output()
+    .unwrap();
+  assert!(!String::from_utf8_lossy(&output.stderr).contains("Downloading"));
+}
+
+#[test]
 fn import_prune_removes_nothing_after_a_package_failed() {
   // What the file names is not all installed, and the Home Manager module
   // runs this unattended: removing now would act on an installation that

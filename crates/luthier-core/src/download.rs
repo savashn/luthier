@@ -10,7 +10,7 @@ use crate::error::{DownloadError, Error, Result};
 use crate::fsutil;
 use luthier_manifest::Sha256Hash;
 use sha2::{Digest, Sha256};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use url::Url;
@@ -555,10 +555,21 @@ impl Downloader {
     let mut written = 0u64;
     let mut file = if resumed {
       // The digest has to cover the whole file, so the bytes already on disk
-      // are hashed before the new ones arrive.
-      let existing = std::fs::read(temporary).map_err(|e| Error::io("read", temporary, e))?;
-      hasher.update(&existing);
-      written = existing.len() as u64;
+      // are hashed before the new ones arrive — a piece at a time: a
+      // library resumed after a reboot can have gigabytes there.
+      let mut existing =
+        std::fs::File::open(temporary).map_err(|e| Error::io("read", temporary, e))?;
+      let mut buffer = vec![0u8; 1 << 20];
+      loop {
+        let n = existing
+          .read(&mut buffer)
+          .map_err(|e| Error::io("read", temporary, e))?;
+        if n == 0 {
+          break;
+        }
+        hasher.update(&buffer[..n]);
+        written += n as u64;
+      }
       progress.advance(written);
       std::fs::OpenOptions::new()
         .append(true)
