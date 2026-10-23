@@ -95,6 +95,9 @@ struct Request<'r> {
   force: bool,
   required_versions: &'r BTreeMap<PackageId, Version>,
   purpose: Purpose<'r>,
+  /// Leave installed packages at the version installed where that still
+  /// fits ([`ResolveRequest::keep_installed`]): what an import asks.
+  keep_installed: bool,
 }
 
 impl<'r> Request<'r> {
@@ -108,6 +111,17 @@ impl<'r> Request<'r> {
       force,
       required_versions: required,
       purpose: Purpose::Install,
+      keep_installed: false,
+    }
+  }
+
+  /// An import of `roots`: an install that upgrades nothing already there.
+  /// A version the file names still decides, and `upgrade` is what moves
+  /// the rest.
+  fn import(roots: &'r [PackageId], required: &'r BTreeMap<PackageId, Version>) -> Self {
+    Self {
+      keep_installed: true,
+      ..Self::install(roots, false, required)
     }
   }
 
@@ -119,6 +133,7 @@ impl<'r> Request<'r> {
       force: false,
       required_versions: &NO_VERSIONS,
       purpose: Purpose::Upgrade { held },
+      keep_installed: false,
     }
   }
 }
@@ -575,6 +590,7 @@ impl Session {
       force,
       required_versions,
       purpose,
+      keep_installed,
     } = *request;
     let index = self.index()?;
     // Nothing to install needs nothing looked for on disk.
@@ -599,6 +615,7 @@ impl Session {
         required_versions,
         leaving: &leaving,
         held: purpose.held(),
+        keep_installed,
       },
     )?;
     self.plan_from(resolution, request, leaving, prune, state)
@@ -951,6 +968,7 @@ impl Session {
       force,
       required_versions,
       purpose,
+      keep_installed,
     } = *request;
 
     // An upgrade's roots come from a plan the user read, and a root another
@@ -988,6 +1006,7 @@ impl Session {
         required_versions,
         leaving,
         held: purpose.held(),
+        keep_installed,
       },
     )?;
     purpose.record_reasons(&mut resolution, guard.state());
@@ -1683,6 +1702,7 @@ impl Session {
           required_versions: &NO_VERSIONS,
           leaving: &NO_PACKAGES,
           held,
+          keep_installed: false,
         },
       )
     };
@@ -2220,7 +2240,7 @@ impl Session {
         self
           .install_locked(
             &mut guard,
-            &Request::install(&roots, false, &required),
+            &Request::import(&roots, &required),
             &removing,
             progress,
           )
@@ -2401,6 +2421,7 @@ impl Session {
             required_versions: required,
             leaving: &leaving,
             held: &NO_PACKAGES,
+            keep_installed: true,
           },
         )?;
         let mut reached: BTreeSet<&PackageId> = resolution
@@ -2440,7 +2461,7 @@ impl Session {
       self.require_locations(&LocationKind::ALL)?;
     }
     let required = file.required_versions();
-    let mut plan = self.plan_for(&Request::install(&roots, false, &required), prune, &state)?;
+    let mut plan = self.plan_for(&Request::import(&roots, &required), prune, &state)?;
     let (requested, dependency) = Self::import_marks(file, prune, &state);
     plan.marked_requested = requested;
     plan.marked_dependency = dependency;

@@ -126,6 +126,12 @@ pub struct ResolveRequest<'a> {
   /// what it needs, as for a package no source supplies, so nothing else
   /// moves past what its installed release requires.
   pub held: &'a BTreeSet<PackageId>,
+  /// Keep an installed package at the version installed wherever that
+  /// still satisfies everything, rather than moving it to the newest
+  /// release: `import`, which makes an installation hold a set of
+  /// packages, and leaves upgrading them to `upgrade`. A version the
+  /// request requires, or a pin, still decides.
+  pub keep_installed: bool,
 }
 
 /// Why an installed package is resolved from the state rather than a source.
@@ -253,19 +259,23 @@ fn held_because(why: &Frozen) -> String {
 }
 
 /// Resolves `request` against `source`.
+///
+/// The walk decides each package once, so an installed version kept under
+/// [`ResolveRequest::keep_installed`] can turn out too old for a requirer
+/// reached later, or a requirer kept old can need it older than another
+/// allows. The package — or, when it was not kept, the requirers kept
+/// where they are that stand in the way — is then let go of, resolved like
+/// any other, newest first, and the walk run again until nothing clashes:
+/// whatever can stay where it is, stays. Each pass keeps fewer, so this
+/// ends.
 pub fn resolve<'a, S: PackageSource>(
   source: &'a S,
   request: &ResolveRequest<'_>,
 ) -> Result<Resolution<'a>> {
-  let mut requirements: BTreeMap<PackageId, Vec<(PackageId, VersionReq)>> = BTreeMap::new();
-  let mut chosen: BTreeMap<PackageId, Version> = BTreeMap::new();
-  let mut edges: BTreeMap<PackageId, Vec<PackageId>> = BTreeMap::new();
-  let mut externals: BTreeMap<PackageId, ExternalRequirement> = BTreeMap::new();
-  let mut reasons: BTreeMap<PackageId, InstallReason> = BTreeMap::new();
-  let mut kept: BTreeMap<PackageId, Version> = BTreeMap::new();
   // Worked out before the walk, not as it goes: whether a dependency is
   // held must not depend on whether the package holding it was reached
-  // first. It stays installed either way.
+  // first. It stays installed either way. Nor does it depend on what is
+  // kept, so once for every pass.
   let frozen = frozen(
     source,
     request.state,
@@ -274,6 +284,83 @@ pub fn resolve<'a, S: PackageSource>(
     request.roots,
     request.held,
   );
+  let mut keeping: BTreeSet<PackageId> = if request.keep_installed {
+    request.state.packages.keys().cloned().collect()
+  } else {
+    BTreeSet::new()
+  };
+  loop {
+    match walk(source, request, &frozen, &keeping) {
+      Err(Error::Resolve(ResolveError::Conflict { id, requirers }))
+        if keeping.remove(&id)
+          || let_go_of_requirers(source, request, &id, &requirers, &mut keeping) => {}
+      other => return other,
+    }
+  }
+}
+
+/// Stops keeping the requirers of `id` that stand in the way: those kept
+/// where they are whose requirement the version the others settle on does
+/// not meet, or every kept one when they settle on none. A kept requirer
+/// that asks nothing of the version stays where it is. Whether any was
+/// let go of.
+fn let_go_of_requirers<S: PackageSource>(
+  source: &S,
+  request: &ResolveRequest<'_>,
+  id: &PackageId,
+  requirers: &[(PackageId, VersionReq)],
+  keeping: &mut BTreeSet<PackageId>,
+) -> bool {
+  let (kept, others): (Vec<_>, Vec<_>) = requirers
+    .iter()
+    .cloned()
+    .partition(|(requirer, _)| keeping.contains(requirer));
+  if kept.is_empty() {
+    return false;
+  }
+  let settled = source.manifest(id).and_then(|manifest| {
+    let pin = request.state.get(id).and_then(|p| p.pin.clone());
+    select_version(
+      manifest,
+      &others,
+      request.target,
+      request.required_versions.get(id),
+      pin.as_ref(),
+      None,
+    )
+    .ok()
+  });
+  let in_the_way: Vec<&PackageId> = kept
+    .iter()
+    .filter(|(_, req)| settled.as_ref().is_none_or(|version| !req.matches(version)))
+    .map(|(requirer, _)| requirer)
+    .collect();
+  if in_the_way.is_empty() {
+    for (requirer, _) in &kept {
+      keeping.remove(requirer);
+    }
+  } else {
+    for requirer in in_the_way {
+      keeping.remove(requirer);
+    }
+  }
+  true
+}
+
+/// One walk of [`resolve`], keeping each package in `keeping` at the
+/// version installed where every constraint known by then allows it.
+fn walk<'a, S: PackageSource>(
+  source: &'a S,
+  request: &ResolveRequest<'_>,
+  frozen: &BTreeMap<PackageId, Frozen>,
+  keeping: &BTreeSet<PackageId>,
+) -> Result<Resolution<'a>> {
+  let mut requirements: BTreeMap<PackageId, Vec<(PackageId, VersionReq)>> = BTreeMap::new();
+  let mut chosen: BTreeMap<PackageId, Version> = BTreeMap::new();
+  let mut edges: BTreeMap<PackageId, Vec<PackageId>> = BTreeMap::new();
+  let mut externals: BTreeMap<PackageId, ExternalRequirement> = BTreeMap::new();
+  let mut reasons: BTreeMap<PackageId, InstallReason> = BTreeMap::new();
+  let mut kept: BTreeMap<PackageId, Version> = BTreeMap::new();
 
   let mut pending: BTreeSet<PackageId> = request.roots.iter().cloned().collect();
   for root in request.roots {
@@ -369,13 +456,35 @@ pub fn resolve<'a, S: PackageSource>(
         // required one cannot.
         let required = request.required_versions.get(&id);
         let pin = request.state.get(&id).and_then(|p| p.pin.clone());
-        select_version(
+        let installed = keeping
+          .contains(&id)
+          .then(|| request.state.get(&id).map(|p| &p.version))
+          .flatten();
+        match select_version(
           manifest,
           &constraints,
           request.target,
           required,
           pin.as_ref(),
-        )?
+          installed,
+        ) {
+          Ok(version) => version,
+          // A requirer kept where it is may be what leaves nothing to
+          // choose, when its requirement and a later one's both arrived
+          // before this was decided: a clash, so `resolve` lets go of it.
+          // Once none is kept, the error is the one that stands.
+          Err(Error::Resolve(_))
+            if constraints
+              .iter()
+              .any(|(requirer, req)| keeping.contains(requirer) && *req != VersionReq::STAR) =>
+          {
+            return Err(Error::Resolve(ResolveError::Conflict {
+              id: id.clone(),
+              requirers: constraints,
+            }));
+          }
+          Err(error) => return Err(error),
+        }
       }
     };
 
@@ -508,6 +617,7 @@ fn select_version(
   target: &Target,
   required: Option<&Version>,
   pin: Option<&Version>,
+  installed: Option<&Version>,
 ) -> Result<Version> {
   // A required version comes from an imported environment file. Unlike a
   // pin it cannot degrade into "something close": an import that silently
@@ -549,6 +659,16 @@ fn select_version(
     if manifest.release(pinned).is_some() {
       return Ok(pinned.clone());
     }
+  }
+
+  // Where it is, when the request keeps installed packages and the
+  // release installed still fits: an import does not upgrade.
+  if let Some(installed) = installed
+    && constraints.iter().all(|(_, req)| req.matches(installed))
+    && let Some(release) = manifest.release(installed)
+    && (manifest.kind == PackageKind::Pack || select_artifact(release, target).is_some())
+  {
+    return Ok(installed.clone());
   }
 
   let candidates = manifest.releases_newest_first();
@@ -870,6 +990,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )?;
     Ok(
@@ -957,6 +1078,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -996,6 +1118,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -1033,6 +1156,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -1058,6 +1182,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -1105,6 +1230,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -1138,6 +1264,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap_err();
@@ -1184,8 +1311,198 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
+  }
+
+  /// As [`resolve_in`], for an import: installed packages stay where they
+  /// are wherever that still fits.
+  fn import_in<'a>(fixture: &'a Fixture, state: &State, roots: &[&str]) -> Result<Resolution<'a>> {
+    let roots: Vec<PackageId> = roots.iter().map(|r| id(r)).collect();
+    resolve(
+      fixture,
+      &ResolveRequest {
+        roots: &roots,
+        target: &linux(),
+        state,
+        detected_externals: &BTreeSet::new(),
+        force: false,
+        required_versions: &BTreeMap::new(),
+        leaving: &BTreeSet::new(),
+        held: &BTreeSet::new(),
+        keep_installed: true,
+      },
+    )
+  }
+
+  /// A plugin whose releases each carry a `dependencies` line as written,
+  /// so a requirement can name a version.
+  fn requiring(fixture: Fixture, id: &str, releases: &[(&str, &str)]) -> Fixture {
+    let mut lines = vec![
+      "schema = 1".to_string(),
+      format!("id = \"{id}\""),
+      format!("name = \"{id}\""),
+      "kind = \"plugin\"".to_string(),
+      "category = \"instrument\"".to_string(),
+      "license = { kind = \"open-source\", spdx = \"MIT\" }".to_string(),
+    ];
+    for (version, dependencies) in releases {
+      lines.push("\n[[releases]]".to_string());
+      lines.push(format!("version = \"{version}\""));
+      lines.push(format!("dependencies = {dependencies}"));
+      lines.extend(artifact_lines(id));
+    }
+    fixture.insert(&lines.join("\n"), id)
+  }
+
+  #[test]
+  fn an_import_leaves_installed_packages_where_they_are() {
+    let fixture = Fixture::new()
+      .add("app", &[("1.0.0", &["lib"]), ("2.0.0", &["lib"])])
+      .add("lib", &[("1.0.0", &[]), ("1.1.0", &[])]);
+    let state = installed(&[("app", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+
+    let imported = import_in(&fixture, &state, &["app"]).unwrap();
+    assert_eq!(version_of(&imported, "app"), "1.0.0");
+    assert_eq!(version_of(&imported, "lib"), "1.0.0");
+    assert!(
+      imported
+        .order
+        .iter()
+        .all(|p| p.disposition == Disposition::Satisfied)
+    );
+
+    // An install is what moves them, as it always has.
+    let installed = resolve_in(&fixture, &state, &["app"]).unwrap();
+    assert_eq!(version_of(&installed, "app"), "2.0.0");
+    assert_eq!(version_of(&installed, "lib"), "1.1.0");
+  }
+
+  #[test]
+  fn an_import_moves_an_installed_package_a_requirer_reached_later_needs_newer() {
+    // `lib` is decided before `zeta` says it needs 2: kept at 1.0.0 first,
+    // then let go of, rather than refused as a conflict.
+    let fixture = Fixture::new()
+      .add("lib", &[("1.0.0", &[]), ("2.0.0", &[])])
+      .add("alpha", &[("1.0.0", &["lib"])]);
+    let fixture = requiring(
+      fixture,
+      "zeta",
+      &[("1.0.0", "[{ id = \"lib\", version = \">=2\" }]")],
+    );
+    let state = installed(&[("alpha", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    let resolution = import_in(&fixture, &state, &["alpha", "zeta"]).unwrap();
+    assert_eq!(version_of(&resolution, "lib"), "2.0.0");
+    assert_eq!(version_of(&resolution, "alpha"), "1.0.0");
+  }
+
+  #[test]
+  fn an_import_moves_an_installed_requirer_that_holds_a_dependency_back() {
+    // `app` 1.0.0, installed, needs `lib` below 2, and `zeta` needs 2: the
+    // clash is on `lib`, which was never kept, so it is `app` that moves —
+    // as far as a plain install would have taken it.
+    let fixture = Fixture::new().add("lib", &[("1.0.0", &[]), ("2.0.0", &[])]);
+    let fixture = requiring(
+      fixture,
+      "app",
+      &[
+        ("1.0.0", "[{ id = \"lib\", version = \"<2\" }]"),
+        ("2.0.0", "[\"lib\"]"),
+      ],
+    );
+    let fixture = requiring(
+      fixture,
+      "zeta",
+      &[("1.0.0", "[{ id = \"lib\", version = \">=2\" }]")],
+    );
+    let state = installed(&[("app", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+    let resolution = import_in(&fixture, &state, &["app", "zeta"]).unwrap();
+    assert_eq!(version_of(&resolution, "app"), "2.0.0");
+    assert_eq!(version_of(&resolution, "lib"), "2.0.0");
+  }
+
+  #[test]
+  fn an_import_moves_a_kept_requirer_when_both_requirements_arrive_first() {
+    // As above, but `zlib` sorts after `beta`: both requirements are known
+    // before it is decided, so no version fits rather than one clashing.
+    let fixture = Fixture::new().add("zlib", &[("1.0.0", &[]), ("2.0.0", &[])]);
+    let fixture = requiring(
+      fixture,
+      "app",
+      &[
+        ("1.0.0", "[{ id = \"zlib\", version = \"<2\" }]"),
+        ("2.0.0", "[\"zlib\"]"),
+      ],
+    );
+    let fixture = requiring(
+      fixture,
+      "beta",
+      &[("1.0.0", "[{ id = \"zlib\", version = \">=2\" }]")],
+    );
+    let state = installed(&[("app", "1.0.0", &["zlib"]), ("zlib", "1.0.0", &[])]);
+    let resolution = import_in(&fixture, &state, &["app", "beta"]).unwrap();
+    assert_eq!(version_of(&resolution, "app"), "2.0.0");
+    assert_eq!(version_of(&resolution, "zlib"), "2.0.0");
+  }
+
+  #[test]
+  fn an_import_moves_only_the_requirer_in_the_way() {
+    // `alpha` needs any `lib`, so the clash between `app` and `zeta` is
+    // none of its doing: it stays at the version installed.
+    let fixture = Fixture::new()
+      .add("lib", &[("1.0.0", &[]), ("2.0.0", &[])])
+      .add("alpha", &[("1.0.0", &["lib"]), ("2.0.0", &["lib"])]);
+    let fixture = requiring(
+      fixture,
+      "app",
+      &[
+        ("1.0.0", "[{ id = \"lib\", version = \"<2\" }]"),
+        ("2.0.0", "[\"lib\"]"),
+      ],
+    );
+    let fixture = requiring(
+      fixture,
+      "zeta",
+      &[("1.0.0", "[{ id = \"lib\", version = \">=2\" }]")],
+    );
+    let state = installed(&[
+      ("alpha", "1.0.0", &["lib"]),
+      ("app", "1.0.0", &["lib"]),
+      ("lib", "1.0.0", &[]),
+    ]);
+    let resolution = import_in(&fixture, &state, &["alpha", "app", "zeta"]).unwrap();
+    assert_eq!(version_of(&resolution, "alpha"), "1.0.0");
+    assert_eq!(version_of(&resolution, "app"), "2.0.0");
+    assert_eq!(version_of(&resolution, "lib"), "2.0.0");
+  }
+
+  #[test]
+  fn an_import_that_cannot_be_resolved_says_why_once_nothing_is_kept() {
+    // `app` needs `zlib` below 2 in every release: letting go of it changes
+    // nothing, and the error is the one a plain install gives.
+    let fixture = Fixture::new().add("zlib", &[("1.0.0", &[]), ("2.0.0", &[])]);
+    let fixture = requiring(
+      fixture,
+      "app",
+      &[("1.0.0", "[{ id = \"zlib\", version = \"<2\" }]")],
+    );
+    let fixture = requiring(
+      fixture,
+      "beta",
+      &[("1.0.0", "[{ id = \"zlib\", version = \">=2\" }]")],
+    );
+    let state = installed(&[("app", "1.0.0", &["zlib"]), ("zlib", "1.0.0", &[])]);
+    let imported = import_in(&fixture, &state, &["app", "beta"]).unwrap_err();
+    let installed = resolve_in(&fixture, &state, &["app", "beta"]).unwrap_err();
+    assert_eq!(imported.to_string(), installed.to_string());
+    assert!(
+      matches!(
+        imported,
+        Error::Resolve(ResolveError::NoMatchingVersion { .. })
+      ),
+      "{imported}"
+    );
   }
 
   fn version_of(resolution: &Resolution<'_>, name: &str) -> String {
@@ -1330,6 +1647,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap_err();
@@ -1373,6 +1691,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &leaving,
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();
@@ -1410,6 +1729,7 @@ mod tests {
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap_err();

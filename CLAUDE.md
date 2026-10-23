@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 491 tests, fully offline
+cargo test --workspace                     # 498 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -321,6 +321,17 @@ the crate map keeps that out of `luthier-manifest`.
   plan and the outcome): what that
   source carries would read as unwanted, and the module runs it
   unattended. The install still goes ahead.
+- **An import upgrades nothing installed.** `ResolveRequest::keep_installed`
+  keeps an installed package at its version wherever every constraint
+  allows it; the resolver does not backtrack, so a kept version a requirer
+  reached later cannot use is let go of (or, when it was not kept, the
+  kept requirers whose requirement what the others settle on does not
+  meet: `let_go_of_requirers`) and the walk runs again. No version left to
+  choose while a kept requirer asks for one is such a clash too, since
+  both requirements can arrive before the package is decided. `install`
+  still moves what it touches, as apt does; the Home Manager module
+  imports whenever the declaration changes, and upgrading there moved
+  packages for unrelated reasons.
 - **`outdated` and `upgrade` share one survey, or they disagree.**
   `Session::survey` reads `resolver::frozen` rather than predicting it.
   `upgrade` with nothing named resolves every explicit package; what the

@@ -258,6 +258,7 @@ plays = ["drumgizmo"]
         required_versions: &BTreeMap::new(),
         leaving: &BTreeSet::new(),
         held: &BTreeSet::new(),
+        keep_installed: false,
       },
     )
     .unwrap();

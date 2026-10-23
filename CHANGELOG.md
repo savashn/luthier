@@ -29,6 +29,13 @@ about.
   saying it was installed. A plugin's paths are not printed: a host
   finds it by itself.
 
+### Changed
+
+- **`import` upgrades nothing already installed.** A package without a
+  version in the file stays at the version installed, as the Home Manager
+  module's documentation always said; `upgrade` moves it. A dependency a
+  newly imported package needs newer still moves.
+
 ### Fixed
 
 - **7z archives compressed with Deflate or BZip2 extract.** Only LZMA,

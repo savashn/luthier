@@ -495,6 +495,40 @@ fn an_archive_that_fails_to_extract_names_its_package() {
 }
 
 #[test]
+fn an_import_upgrades_nothing_already_installed() {
+  // The Home Manager module imports on every switch it applies. Upgrading
+  // there would move packages whenever the declaration changed for some
+  // other reason; `upgrade` is what moves them.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Steady");
+  fixture.add_plugin("steady", "1.0.0", &artifact, &[]);
+  let file = loose_env_file(&fixture, &["steady"]);
+  fixture
+    .luthier()
+    .arg("import")
+    .arg(&file)
+    .assert()
+    .success();
+  add_release(&fixture, "steady", "1.1.0", &[]);
+
+  let output = fixture.luthier().arg("import").arg(&file).output().unwrap();
+  assert!(output.status.success());
+  assert!(
+    stdout_of(&output).contains("already matches"),
+    "{}",
+    stdout_of(&output)
+  );
+
+  fixture
+    .luthier()
+    .args(["upgrade", "steady"])
+    .assert()
+    .success();
+  let list = stdout_of(&fixture.luthier().arg("list").output().unwrap());
+  assert!(list.contains("1.1.0"), "{list}");
+}
+
+#[test]
 fn dependencies_are_installed_first_and_recorded_as_such() {
   let fixture = Fixture::new();
   let engine = fixture.make_artifact("Engine");
