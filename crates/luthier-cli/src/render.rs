@@ -335,9 +335,30 @@ impl Reporter {
         "{id} was removed after the plan was made, so it was not upgraded"
       ));
     }
+    // Each with its own reason and what to do about it: the error the
+    // command ends with only counts them.
+    for failure in &outcome.failed {
+      eprintln!(
+        "error: {} {}: {}",
+        failure.id, failure.version, failure.error
+      );
+      if let Some(hint) = &failure.hint {
+        for line in hint.lines() {
+          eprintln!("  {line}");
+        }
+      }
+    }
+    for package in &outcome.not_attempted {
+      self.warn(format!(
+        "{} {} was not installed: it needs {}, which failed",
+        package.id, package.version, package.because
+      ));
+    }
     if outcome.installed.is_empty()
       && outcome.skipped.is_empty()
       && outcome.no_longer_installed.is_empty()
+      && outcome.failed.is_empty()
+      && outcome.not_attempted.is_empty()
     {
       self.note("Nothing to do.");
     }
@@ -373,6 +394,12 @@ impl Reporter {
       self.warn(format!(
         "kept {id}, which was to be removed: a package that stays still needs it"
       ));
+    }
+    if outcome.prune_held_for_failures {
+      self.warn(
+        "not removing anything the file does not name: a package failed to install, so \
+         the installation is not what the file describes yet",
+      );
     }
   }
 

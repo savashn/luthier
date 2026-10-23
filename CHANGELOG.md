@@ -28,6 +28,13 @@ about.
 - **Installing a sample library prints its folder** under the line
   saying it was installed. A plugin's paths are not printed: a host
   finds it by itself.
+- **`--keep-going` for `install`, `upgrade` and `import`.** A package that
+  fails is reported, with its reason, and the rest are installed; what
+  needs it is not tried, and `import --prune` removes nothing while
+  anything failed. The command still fails at the end, with the status of
+  the first failure, or 4 if any download did not match its checksum.
+  `--json` lists `failed` and `not_attempted`. A full or read-only disk
+  still ends the command at once.
 
 ### Changed
 

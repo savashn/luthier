@@ -101,6 +101,11 @@ pub enum Command {
     /// Reinstall even if already at the selected version.
     #[arg(long)]
     force: bool,
+
+    /// Go on past a package that fails to install, listing at the end what
+    /// failed and why. What needs a package that failed is not tried.
+    #[arg(long)]
+    keep_going: bool,
   },
 
   /// Remove packages, deleting only files Luthier installed.
@@ -149,6 +154,11 @@ pub enum Command {
     /// package manager is left to it.
     #[arg(long = "self", conflicts_with = "packages")]
     luthier: bool,
+
+    /// Go on past a package that fails to upgrade, listing at the end what
+    /// failed and why. What needs a package that failed is not tried.
+    #[arg(long, conflicts_with = "luthier")]
+    keep_going: bool,
   },
 
   /// Check installed files still match what was recorded.
@@ -183,6 +193,12 @@ pub enum Command {
     /// needs, so the installation ends up exactly as the file describes.
     #[arg(long)]
     prune: bool,
+
+    /// Go on past a package that fails to install, listing at the end what
+    /// failed and why. What needs a package that failed is not tried, and
+    /// `--prune` removes nothing while anything failed.
+    #[arg(long)]
+    keep_going: bool,
   },
 
   /// Remove packages installed as dependencies that nothing needs any more.

@@ -11,7 +11,7 @@ use crate::config::{Config, RegistrySource};
 use crate::download::{Downloader, Progress};
 use crate::engine;
 use crate::envfile::EnvFile;
-use crate::error::{Error, InstallError, ResolveError, Result, StateError};
+use crate::error::{Error, ExitCode, InstallError, ResolveError, Result, StateError};
 use crate::fsutil;
 use crate::install::{self, EntryStatus, InstallTransaction};
 use crate::layout::{Layout, LocationKind};
@@ -204,6 +204,8 @@ pub struct Session {
   config: Config,
   target: Target,
   offline: bool,
+  /// Carry on past a package that fails ([`Session::keep_going`]).
+  keep_going: bool,
   /// Where the latest Luthier release is described.
   releases_api: url::Url,
   /// The merged index, built at most once per session.
@@ -236,6 +238,7 @@ impl Session {
       config,
       target,
       offline: false,
+      keep_going: false,
       releases_api: url::Url::parse(selfupdate::RELEASES_API).expect("the releases API is a URL"),
       index: std::sync::OnceLock::new(),
       detected_externals: std::sync::OnceLock::new(),
@@ -259,6 +262,14 @@ impl Session {
 
   pub fn offline(mut self, offline: bool) -> Self {
     self.offline = offline;
+    self
+  }
+
+  /// Go on past a package that fails to install, rather than stopping at
+  /// it: what it fails for is reported in the outcome
+  /// ([`InstallOutcome::failed`]), and what needs it is not tried.
+  pub fn keep_going(mut self, keep_going: bool) -> Self {
+    self.keep_going = keep_going;
     self
   }
 
@@ -1046,6 +1057,10 @@ impl Session {
     let mut skipped = Vec::new();
     let mut warnings = Vec::new();
     let mut unsaved = false;
+    let mut failed = Vec::new();
+    let mut not_attempted = Vec::new();
+    // What failed, and what was not tried because of it.
+    let mut broken: BTreeSet<PackageId> = BTreeSet::new();
 
     // Before anything is fetched, and in one write: a dependency asked for
     // by name is one the user wants, whether or not a later download in
@@ -1078,6 +1093,19 @@ impl Session {
         continue;
       }
 
+      // Not tried when something it needs failed: it would be installed
+      // against what is not there. The order is dependencies first, so
+      // whatever failed has been reached by now.
+      if let Some(because) = package.dependencies.iter().find(|d| broken.contains(*d)) {
+        not_attempted.push(NotAttempted {
+          id: package.id().to_string(),
+          version: package.version.to_string(),
+          because: because.to_string(),
+        });
+        broken.insert(package.id().clone());
+        continue;
+      }
+
       // A pack installs nothing of its own; it is recorded so that it can
       // be removed and so its members become orphans when it goes (§49).
       let Some(artifact) = package.artifact else {
@@ -1105,134 +1133,30 @@ impl Session {
         continue;
       };
 
-      let fetched = downloader
-        .fetch(
-          &artifact.source.url,
-          &artifact.checksum.sha256,
-          artifact.size,
+      let record = match self
+        .install_package(
+          package,
+          artifact,
+          guard.state(),
+          &downloader,
           progress,
+          &mut warnings,
         )
-        .await?;
-
-      // One transaction per package: a failure part-way through a batch
-      // leaves earlier packages properly installed and recorded, and this
-      // package as it was.
-      let mut transaction = InstallTransaction::begin(&self.layout, package.id())?;
-      // What went wrong with an archive names the package it was for: an
-      // import of twenty that stops on one must say which.
-      let named = |error: Error| match error {
-        Error::Archive(error) => Error::PackageArchive {
-          id: package.id().clone(),
-          version: package.version.clone(),
-          error: Box::new(error),
-        },
-        other => other,
-      };
-      let extract_root = transaction.workspace().join("extract");
-      fsutil::ensure_dir(&extract_root)?;
-      archive::unpack(
-        &fetched.path,
-        &artifact.archive,
-        &published_name(&artifact.source.url),
-        &extract_root,
-        ExtractLimits::for_download(fetched.bytes),
-      )
-      .map_err(|e| named(e.into()))?;
-
-      // A source that carries no install rules hands over bytes and a
-      // checksum and nothing else. The rules are then read from the
-      // archive that checksum just verified, by the same code
-      // `luthier-registry inspect` shows a contributor — one
-      // implementation, so what the tool promises is what happens here.
-      let derived;
-      // Content is installed only where the artifact says it holds some.
-      // Reading it out of the shape of any archive that happened to carry
-      // no plugin would install a broken plugin release as a folder of
-      // samples, which is a guess, and the wrong one.
-      let mut content = None;
-      let rules: &[luthier_manifest::InstallRule] = if artifact.derive_install {
-        derived = install::derive::from_tree(&extract_root)?;
-        if artifact.provides.contains(&Format::Library) {
-          content = derived.content.clone();
+        .await
+      {
+        Ok(record) => record,
+        // Under `--keep-going` a package's own failure is said and the
+        // rest go ahead. The Home Manager module applies a declaration
+        // unattended, and one archive that could not be read kept
+        // everything after it from ever being installed.
+        // A full or read-only disk is not this package's failure: every
+        // one after it would report the same, so the command ends here.
+        Err(error) if self.keep_going && !error.affects_every_package() => {
+          failed.push(PackageFailure::of(package, &error));
+          broken.insert(package.id().clone());
+          continue;
         }
-        if derived.rules.is_empty() && content.is_none() {
-          return Err(Error::Install(InstallError::NothingToInstall {
-            id: package.id().clone(),
-            version: package.version.clone(),
-          }));
-        }
-        // The source's `provides` was its own claim about the archive,
-        // and a source that carries no install rules is a source whose
-        // claim nothing has ever checked. Now that the real contents
-        // are known, disagreement is worth saying out loud: it means
-        // upstream metadata is wrong, which is a thing to fix there
-        // rather than absorb here.
-        for missing in missing_formats(&artifact.provides, &derived.rules) {
-          if missing == Format::Library && content.is_some() {
-            continue;
-          }
-          warnings.push(format!(
-            "{} {} claims to provide {missing}, and the archive holds none",
-            package.id(),
-            package.version
-          ));
-        }
-        &derived.rules
-      } else {
-        &artifact.install
-      };
-
-      let mut items = install::plan(
-        &self.layout,
-        &extract_root,
-        rules,
-        package.id(),
-        guard.state(),
-      )
-      .map_err(named)?;
-      if let Some(content) = &content {
-        items.push(
-          install::plan_content(
-            &self.layout,
-            &extract_root,
-            content,
-            package.id(),
-            guard.state(),
-          )
-          .map_err(named)?,
-        );
-      }
-
-      let mut files: Vec<InstalledEntry> = Vec::new();
-      for item in &items {
-        files.push(transaction.place(item)?);
-      }
-      transaction.commit()?;
-
-      let record = InstalledPackage {
-        id: package.id().clone(),
-        name: package.entry.manifest.name.clone(),
-        version: package.version.clone(),
-        registry: package.entry.registry.clone(),
-        manifest_digest: package.entry.digest,
-        reason: package.reason,
-        pin: guard.state().get(package.id()).and_then(|p| p.pin.clone()),
-        installed_at: Timestamp::now(),
-        formats: {
-          // One entry per distinct format: Dragonfly ships four CLAPs
-          // and four VST3s, which is still just "clap, vst3".
-          let mut formats: Vec<Format> = items.iter().map(|i| i.format.clone()).collect();
-          formats.sort();
-          formats.dedup();
-          formats
-        },
-        content: package.entry.manifest.content.clone(),
-        artifacts: vec![ArtifactRecord {
-          url: artifact.source.url.to_string(),
-          sha256: artifact.checksum.sha256,
-        }],
-        dependencies: package.dependencies.clone(),
-        files,
+        Err(error) => return Err(error),
       };
 
       installed.push(InstalledSummary::from(&record));
@@ -1257,7 +1181,142 @@ impl Session {
         .iter()
         .map(ToString::to_string)
         .collect(),
+      failed,
+      not_attempted,
     })
+  }
+
+  /// Fetches, unpacks and places one package in a transaction of its own,
+  /// and returns what to record. What fails in here fails for this package
+  /// alone — the transaction leaves it as it was — which is what lets
+  /// `--keep-going` carry on past it.
+  async fn install_package(
+    &self,
+    package: &resolver::ResolvedPackage<'_>,
+    artifact: &luthier_manifest::Artifact,
+    state: &State,
+    downloader: &Downloader,
+    progress: &mut dyn Progress,
+    warnings: &mut Vec<String>,
+  ) -> Result<InstalledPackage> {
+    let fetched = downloader
+      .fetch(
+        &artifact.source.url,
+        &artifact.checksum.sha256,
+        artifact.size,
+        progress,
+      )
+      .await?;
+
+    // One transaction per package: a failure part-way through a batch
+    // leaves earlier packages properly installed and recorded, and this
+    // package as it was.
+    let mut transaction = InstallTransaction::begin(&self.layout, package.id())?;
+    // What went wrong with an archive names the package it was for: an
+    // import of twenty that stops on one must say which.
+    let named = |error: Error| match error {
+      Error::Archive(error) => Error::PackageArchive {
+        id: package.id().clone(),
+        version: package.version.clone(),
+        error: Box::new(error),
+      },
+      other => other,
+    };
+    let extract_root = transaction.workspace().join("extract");
+    fsutil::ensure_dir(&extract_root)?;
+    archive::unpack(
+      &fetched.path,
+      &artifact.archive,
+      &published_name(&artifact.source.url),
+      &extract_root,
+      ExtractLimits::for_download(fetched.bytes),
+    )
+    .map_err(|e| named(e.into()))?;
+
+    // A source that carries no install rules hands over bytes and a
+    // checksum and nothing else. The rules are then read from the
+    // archive that checksum just verified, by the same code
+    // `luthier-registry inspect` shows a contributor — one
+    // implementation, so what the tool promises is what happens here.
+    let derived;
+    // Content is installed only where the artifact says it holds some.
+    // Reading it out of the shape of any archive that happened to carry
+    // no plugin would install a broken plugin release as a folder of
+    // samples, which is a guess, and the wrong one.
+    let mut content = None;
+    let rules: &[luthier_manifest::InstallRule] = if artifact.derive_install {
+      derived = install::derive::from_tree(&extract_root)?;
+      if artifact.provides.contains(&Format::Library) {
+        content = derived.content.clone();
+      }
+      if derived.rules.is_empty() && content.is_none() {
+        return Err(Error::Install(InstallError::NothingToInstall {
+          id: package.id().clone(),
+          version: package.version.clone(),
+        }));
+      }
+      // The source's `provides` was its own claim about the archive,
+      // and a source that carries no install rules is a source whose
+      // claim nothing has ever checked. Now that the real contents
+      // are known, disagreement is worth saying out loud: it means
+      // upstream metadata is wrong, which is a thing to fix there
+      // rather than absorb here.
+      for missing in missing_formats(&artifact.provides, &derived.rules) {
+        if missing == Format::Library && content.is_some() {
+          continue;
+        }
+        warnings.push(format!(
+          "{} {} claims to provide {missing}, and the archive holds none",
+          package.id(),
+          package.version
+        ));
+      }
+      &derived.rules
+    } else {
+      &artifact.install
+    };
+
+    let mut items =
+      install::plan(&self.layout, &extract_root, rules, package.id(), state).map_err(named)?;
+    if let Some(content) = &content {
+      items.push(
+        install::plan_content(&self.layout, &extract_root, content, package.id(), state)
+          .map_err(named)?,
+      );
+    }
+
+    let mut files: Vec<InstalledEntry> = Vec::new();
+    for item in &items {
+      files.push(transaction.place(item)?);
+    }
+    transaction.commit()?;
+
+    let record = InstalledPackage {
+      id: package.id().clone(),
+      name: package.entry.manifest.name.clone(),
+      version: package.version.clone(),
+      registry: package.entry.registry.clone(),
+      manifest_digest: package.entry.digest,
+      reason: package.reason,
+      pin: state.get(package.id()).and_then(|p| p.pin.clone()),
+      installed_at: Timestamp::now(),
+      formats: {
+        // One entry per distinct format: Dragonfly ships four CLAPs
+        // and four VST3s, which is still just "clap, vst3".
+        let mut formats: Vec<Format> = items.iter().map(|i| i.format.clone()).collect();
+        formats.sort();
+        formats.dedup();
+        formats
+      },
+      content: package.entry.manifest.content.clone(),
+      artifacts: vec![ArtifactRecord {
+        url: artifact.source.url.to_string(),
+        sha256: artifact.checksum.sha256,
+      }],
+      dependencies: package.dependencies.clone(),
+      files,
+    };
+    Ok(record)
   }
 
   // --------------------------------------------------------------- remove --
@@ -2222,7 +2281,7 @@ impl Session {
     }
     let prune_withheld = if prune { self.prune_withheld()? } else { None };
 
-    let (outcome, pruned, prune_kept) = {
+    let (outcome, pruned, prune_kept, prune_held_for_failures) = {
       let mut guard = StateGuard::acquire(&self.layout)?;
       // From the state under the lock, so what an `import --prune` frees
       // is worked out from the state it then changes. Only what is then
@@ -2246,12 +2305,17 @@ impl Session {
           )
           .await?
       };
+      // Nor after a package failed under `--keep-going`, for the same
+      // reason: the file is not what is installed yet.
+      let prune_held_for_failures = prune
+        && prune_withheld.is_none()
+        && !(outcome.failed.is_empty() && outcome.not_attempted.is_empty());
       // After the install, not before: a failed install then leaves what
       // was there in place instead of an environment with things removed
       // and nothing added. Asked again of the state the install left, in
       // case a release it kept at the version installed still needs one.
       let removing = Self::still_unneeded(removing, guard.state());
-      let pruned = if prune_withheld.is_none() && !removing.is_empty() {
+      let pruned = if prune_withheld.is_none() && !prune_held_for_failures && !removing.is_empty() {
         Some(self.remove_locked(&mut guard, &removing, false)?)
       } else {
         None
@@ -2259,7 +2323,8 @@ impl Session {
       // Shown as removed and still here: a package that stays needs it.
       // Said, so an unattended import does not read as having converged
       // on the file.
-      let prune_kept: Vec<String> = if prune && prune_withheld.is_none() {
+      let prune_kept: Vec<String> = if prune && prune_withheld.is_none() && !prune_held_for_failures
+      {
         plan
           .prune
           .iter()
@@ -2269,7 +2334,7 @@ impl Session {
       } else {
         Vec::new()
       };
-      (outcome, pruned, prune_kept)
+      (outcome, pruned, prune_kept, prune_held_for_failures)
     };
 
     // Pins are reapplied afterwards: a pin is state about the user's
@@ -2287,6 +2352,7 @@ impl Session {
       pruned,
       prune_withheld,
       prune_kept,
+      prune_held_for_failures,
     })
   }
 
@@ -2917,6 +2983,11 @@ pub struct ImportOutcome {
   /// the install kept at the version installed.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub prune_kept: Vec<String>,
+  /// `--prune` removed nothing because a package failed to install under
+  /// `--keep-going`: the installation does not hold what the file asks
+  /// for yet, and this runs unattended.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub prune_held_for_failures: bool,
 }
 
 /// The name an artifact was published under: the last segment of its URL,
@@ -3225,6 +3296,73 @@ pub struct InstallOutcome {
   /// the user answered, and that were therefore not upgraded.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub no_longer_installed: Vec<String>,
+  /// Packages that failed to install, under `--keep-going`; without it the
+  /// first failure is the command's error.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub failed: Vec<PackageFailure>,
+  /// Packages not tried because something they need failed.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub not_attempted: Vec<NotAttempted>,
+}
+
+impl InstallOutcome {
+  /// The error the command ends with when a package failed: the outcome
+  /// is reported first, then this decides the exit status.
+  pub fn incomplete(&self) -> Option<Error> {
+    let first = self.failed.first()?;
+    // A download that did not match its checksum may have been tampered
+    // with, and says so with its own status even among other failures.
+    let exit = if self
+      .failed
+      .iter()
+      .any(|f| f.exit == ExitCode::VerificationFailed)
+    {
+      ExitCode::VerificationFailed
+    } else {
+      first.exit
+    };
+    Some(Error::Incomplete {
+      failed: self.failed.len(),
+      not_attempted: self.not_attempted.len(),
+      exit,
+    })
+  }
+}
+
+/// A package that failed to install, and why.
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageFailure {
+  pub id: String,
+  pub version: String,
+  pub error: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub hint: Option<String>,
+  #[serde(skip)]
+  exit: ExitCode,
+}
+
+impl PackageFailure {
+  fn of(package: &resolver::ResolvedPackage<'_>, error: &Error) -> Self {
+    Self {
+      id: package.id().to_string(),
+      version: package.version.to_string(),
+      // Said under the package's name already, so not twice.
+      error: match error {
+        Error::PackageArchive { error, .. } => error.to_string(),
+        other => other.to_string(),
+      },
+      hint: error.hint(),
+      exit: error.exit_code(),
+    }
+  }
+}
+
+/// A package not tried because `because`, which it needs, failed.
+#[derive(Debug, Clone, Serialize)]
+pub struct NotAttempted {
+  pub id: String,
+  pub version: String,
+  pub because: String,
 }
 
 /// Formats a source claimed that the archive did not actually deliver.

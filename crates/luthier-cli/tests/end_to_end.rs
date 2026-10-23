@@ -528,6 +528,101 @@ fn an_import_upgrades_nothing_already_installed() {
   assert!(list.contains("1.1.0"), "{list}");
 }
 
+/// `alpha`, `broken` (whose checksum never matches), `needy` (which needs
+/// `broken`) and `zeta`, in the order they resolve.
+fn fixture_with_a_broken_package() -> Fixture {
+  let fixture = Fixture::new();
+  for (id, deps) in [
+    ("alpha", &[][..]),
+    ("broken", &[][..]),
+    ("needy", &["broken"][..]),
+    ("zeta", &[][..]),
+  ] {
+    let artifact = fixture.make_artifact(&capitalise(id));
+    fixture.add_plugin(id, "1.0.0", &artifact, deps);
+  }
+  fixture.corrupt_checksum("broken");
+  fixture
+}
+
+#[test]
+fn keep_going_installs_the_rest_and_fails_at_the_end() {
+  let fixture = fixture_with_a_broken_package();
+  let packages = ["alpha", "broken", "needy", "zeta"];
+
+  // Without it, the first failure ends the command and what sorts after
+  // it is never tried.
+  let output = fixture
+    .luthier()
+    .arg("install")
+    .args(packages)
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(4));
+  assert_eq!(installed(&fixture), ["alpha"]);
+
+  let output = fixture
+    .luthier()
+    .args(["install", "--keep-going"])
+    .args(packages)
+    .output()
+    .unwrap();
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  // A checksum that did not match keeps its own status among failures.
+  assert_eq!(output.status.code(), Some(4), "{stderr}");
+  assert_eq!(installed(&fixture), ["alpha", "zeta"]);
+  assert!(
+    stderr.contains("error: broken 1.0.0: checksum verification failed"),
+    "{stderr}"
+  );
+  assert!(
+    stderr.contains("needy 1.0.0 was not installed: it needs broken, which failed"),
+    "{stderr}"
+  );
+  assert!(
+    stderr.contains("error: 1 package(s) failed to install, and 1 that need them were not tried"),
+    "{stderr}"
+  );
+
+  // The outcome is still the one document under --json.
+  let output = fixture
+    .luthier()
+    .args(["--json", "install", "--keep-going", "broken"])
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(4));
+  let outcome: serde_json::Value = serde_json::from_str(&stdout_of(&output)).unwrap();
+  assert_eq!(outcome["failed"][0]["id"], "broken");
+}
+
+#[test]
+fn import_prune_removes_nothing_after_a_package_failed() {
+  // What the file names is not all installed, and the Home Manager module
+  // runs this unattended: removing now would act on an installation that
+  // is not yet the one the file describes.
+  let fixture = fixture_with_a_broken_package();
+  fixture
+    .luthier()
+    .args(["install", "zeta"])
+    .assert()
+    .success();
+  let file = loose_env_file(&fixture, &["alpha", "broken"]);
+
+  let output = fixture
+    .luthier()
+    .args(["import", "--prune", "--keep-going"])
+    .arg(&file)
+    .output()
+    .unwrap();
+  let stderr = String::from_utf8_lossy(&output.stderr);
+  assert!(!output.status.success());
+  assert!(
+    stderr.contains("not removing anything the file does not name: a package failed"),
+    "{stderr}"
+  );
+  assert_eq!(installed(&fixture), ["alpha", "zeta"]);
+}
+
 #[test]
 fn dependencies_are_installed_first_and_recorded_as_such() {
   let fixture = Fixture::new();

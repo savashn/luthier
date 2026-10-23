@@ -26,3 +26,11 @@ destination.
 **6 on removal.** Refusing to remove a package another package still depends on
 is a dependency failure, so it shares code 6 with resolution failures rather
 than collapsing into the generic 1.
+
+**`--keep-going`.** `install`, `upgrade` and `import` with `--keep-going`
+install what they can and then fail with the status of the first package
+that failed — or 4 if any download did not match its checksum, since a
+possible tampering should not hide among other failures. The packages that
+did install stay installed. A full or read-only disk ends the command at
+once, as it would without the flag: every package after it would fail the
+same way.

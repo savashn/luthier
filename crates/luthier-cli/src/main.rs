@@ -245,7 +245,22 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     return run_location(global, command.as_ref(), reporter);
   }
 
-  let session = build_session(global)?;
+  // A session is one command, and whether it stops at the first package
+  // that fails is part of what that command was asked.
+  let keep_going = matches!(
+    &cli.command,
+    Command::Install {
+      keep_going: true,
+      ..
+    } | Command::Upgrade {
+      keep_going: true,
+      ..
+    } | Command::Import {
+      keep_going: true,
+      ..
+    }
+  );
+  let session = build_session(global)?.keep_going(keep_going);
 
   // A registry that could not be read is reported before the command
   // answers, so a half-configured setup never looks like a complete one.
@@ -297,7 +312,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
     }
 
-    Command::Import { file, prune } => {
+    Command::Import { file, prune, .. } => {
       // Reading the file from stdin leaves nothing to ask the confirmation
       // on: stdin is at EOF by the time the question is put, so a pipe is
       // refused as non-interactive and a terminal reads an empty answer as
@@ -352,6 +367,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       let mut bar = BarProgress::new(show_progress);
       let outcome = session.import(&env_file, *prune, &plan, &mut bar).await?;
       reporter.import_outcome(&outcome);
+      if let Some(error) = outcome.installed.incomplete() {
+        return Err(error);
+      }
     }
 
     Command::Update => {
@@ -395,7 +413,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
     }
 
-    Command::Install { packages, force } => {
+    Command::Install {
+      packages, force, ..
+    } => {
       let ids = ids(&session, packages)?;
       let plan = session.plan_install(&ids, *force)?;
 
@@ -425,6 +445,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       let mut bar = BarProgress::new(show_progress);
       let outcome = session.install(&ids, *force, &mut bar).await?;
       reporter.install_outcome(&outcome);
+      if let Some(error) = outcome.incomplete() {
+        return Err(error);
+      }
     }
 
     Command::Remove { packages, force } => {
@@ -441,7 +464,9 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.remove_outcome(&outcome);
     }
 
-    Command::Upgrade { packages, luthier } => {
+    Command::Upgrade {
+      packages, luthier, ..
+    } => {
       if *luthier {
         return upgrade_luthier(&session, global, reporter).await;
       }
@@ -469,7 +494,11 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
       let show_progress = !global.quiet && !global.json && std::io::stderr().is_terminal();
       let mut bar = BarProgress::new(show_progress);
-      reporter.install_outcome(&session.upgrade(&plan, &mut bar).await?);
+      let outcome = session.upgrade(&plan, &mut bar).await?;
+      reporter.install_outcome(&outcome);
+      if let Some(error) = outcome.incomplete() {
+        return Err(error);
+      }
     }
 
     Command::Verify { packages } => {

@@ -99,6 +99,19 @@ pub enum Error {
     path: PathBuf,
   },
 
+  /// Packages failed under `--keep-going`. The outcome says which and
+  /// why; this is what the command then ends with, and `exit` is the
+  /// status the failures call for.
+  #[error(
+    "{failed} package(s) failed to install{}",
+    if *not_attempted > 0 { format!(", and {not_attempted} that need them were not tried") } else { String::new() }
+  )]
+  Incomplete {
+    failed: usize,
+    not_attempted: usize,
+    exit: ExitCode,
+  },
+
   #[error("operation cancelled")]
   Cancelled,
 }
@@ -111,6 +124,30 @@ impl Error {
       path: path.into(),
       source,
     }
+  }
+
+  /// Whether every package after this one would fail the same way: the
+  /// disk is full or cannot be written. `--keep-going` stops there
+  /// rather than trying each one and reporting the same failure for all
+  /// of them. A failed download is not one of these — one server being
+  /// down says nothing of the others, and with the network gone each
+  /// fails within seconds.
+  pub fn affects_every_package(&self) -> bool {
+    use std::io::ErrorKind::{QuotaExceeded, ReadOnlyFilesystem, StorageFull};
+    let source = match self {
+      Error::Install(InstallError::NotEnoughSpace { .. }) => return true,
+      Error::Io { source, .. } | Error::Install(InstallError::Io { source, .. }) => source,
+      Error::Archive(ArchiveError::Io { source, .. }) => source,
+      Error::PackageArchive { error, .. } => match error.as_ref() {
+        ArchiveError::Io { source, .. } => source,
+        _ => return false,
+      },
+      _ => return false,
+    };
+    matches!(
+      source.kind(),
+      StorageFull | ReadOnlyFilesystem | QuotaExceeded
+    )
   }
 
   pub fn exit_code(&self) -> ExitCode {
@@ -129,6 +166,7 @@ impl Error {
         ExitCode::DependencyResolutionFailed
       }
       Error::InvalidArgument(_) => ExitCode::InvalidArguments,
+      Error::Incomplete { exit, .. } => *exit,
       _ => ExitCode::Generic,
     }
   }
@@ -955,5 +993,51 @@ mod tests {
     let hint = error.hint().unwrap();
     assert!(hint.contains("will not overwrite"), "{hint}");
     assert!(hint.contains("luthier install surge-xt"), "{hint}");
+  }
+
+  #[test]
+  fn only_a_full_or_read_only_disk_stops_keep_going() {
+    use std::io::{Error as IoError, ErrorKind};
+    let full = || IoError::from(ErrorKind::StorageFull);
+    let id = PackageId::new("kit").unwrap();
+    let version = Version::new(1, 0, 0);
+    let every_package: Vec<Error> = vec![
+      Error::io("write", "/x", full()),
+      Error::io("write", "/x", IoError::from(ErrorKind::ReadOnlyFilesystem)),
+      InstallError::NotEnoughSpace {
+        path: "/x".into(),
+        required: 2,
+        available: 1,
+      }
+      .into(),
+      Error::PackageArchive {
+        id: id.clone(),
+        version: version.clone(),
+        error: Box::new(ArchiveError::Io {
+          operation: "write",
+          path: "/x".into(),
+          source: full(),
+        }),
+      },
+    ];
+    for error in &every_package {
+      assert!(error.affects_every_package(), "{error}");
+    }
+    let this_package: Vec<Error> = vec![
+      Error::io("read", "/x", IoError::from(ErrorKind::NotFound)),
+      DownloadError::Transport {
+        url: "u".into(),
+        reason: "r".into(),
+      }
+      .into(),
+      Error::PackageArchive {
+        id,
+        version,
+        error: Box::new(ArchiveError::Corrupt("x".into())),
+      },
+    ];
+    for error in &this_package {
+      assert!(!error.affects_every_package(), "{error}");
+    }
   }
 }

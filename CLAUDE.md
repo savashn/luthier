@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 498 tests, fully offline
+cargo test --workspace                     # 501 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -320,7 +320,12 @@ the crate map keeps that out of `luthier-manifest`.
   source failed to load nothing is removed (`prune_withheld`, in the
   plan and the outcome): what that
   source carries would read as unwanted, and the module runs it
-  unattended. The install still goes ahead.
+  unattended. The install still goes ahead. Nor while a package failed
+  under `--keep-going` (`prune_held_for_failures`). That install was
+  resolved with the list as `leaving`, so a gone package on it held
+  nothing and can be left installed with a dependency moved past what it
+  needs, until a run succeeds and removes it: accepted, since it takes a
+  gone package, a prune and a failure at once.
 - **An import upgrades nothing installed.** `ResolveRequest::keep_installed`
   keeps an installed package at its version wherever every constraint
   allows it; the resolver does not backtrack, so a kept version a requirer
