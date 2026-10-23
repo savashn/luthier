@@ -13,10 +13,24 @@
 #   locations  `luthier location set`
 #   update     `luthier update` first, so a newly declared package can be
 #              found
+#   apply      where those run: a systemd user service the switch starts
+#              and does not wait for (`background`), or the activation
+#              script itself (`activation`)
+#   notify     a desktop notification when the service finishes
 #
 # A failure — no network, a disk that is not mounted — is reported as a
 # warning and does not fail the switch: the rest of a Home Manager
 # configuration should not depend on a plugin registry being reachable.
+#
+# Applying in the background exists because installing sample libraries can
+# take an hour, and the NixOS module gives activation five minutes before it
+# kills it, and the rest of the switch with it. The switch records which
+# declaration it wants (`wanted`, a link to the script that applies it); the
+# service applies it and records it as done (`applied`) only once every
+# step succeeded. So it runs when the declaration changed or the last run
+# did not finish, one at a time, since systemd starts a unit only once; a
+# switch while it runs leaves it to finish, and it then applies the newest
+# declaration before it stops.
 {
   config,
   lib,
@@ -110,6 +124,101 @@ let
   applies = cfg.packages != [ ] || cfg.prune;
 
   pluginsDir = cfg.locations.plugins;
+
+  # The steps, each through a `luthier` function the caller defines: the
+  # activation script warns and goes on, the service also remembers that
+  # something failed. `--keep-going`, so one package that cannot be
+  # installed does not keep every one after it from ever being installed.
+  steps = ''
+    ${optionalString cfg.update "luthier update"}
+
+    ${concatMapStrings
+      (kind: ''
+        luthier location set ${kind} ${escapeShellArg cfg.locations.${kind}}
+      '')
+      (
+        builtins.filter (kind: cfg.locations.${kind} != null) [
+          "cache"
+          "libraries"
+          "plugins"
+        ]
+      )
+    }
+
+    ${optionalString applies ''
+      luthier import --keep-going ${declared}${pruneFlag}
+    ''}
+  '';
+
+  # One declaration, applied: its store path is what `wanted` and `applied`
+  # name, so a change to anything it runs — the packages, a flag, luthier
+  # itself — is a declaration not yet applied.
+  applyScript = pkgs.writeShellScript "luthier-apply" ''
+    failed=0
+    luthier() {
+      ${exe} ${lib.escapeShellArgs globalFlags} "$@" || {
+        echo "luthier $*: failed" >&2
+        failed=1
+      }
+    }
+
+    ${steps}
+
+    exit "$failed"
+  '';
+
+  # Fixed when the configuration is built, not read from $XDG_STATE_HOME:
+  # activation writes here and the user service reads, and the two need not
+  # share an environment.
+  stateDir = escapeShellArg "${config.xdg.stateHome}/luthier/home-manager";
+
+  notifySend =
+    urgency: message:
+    optionalString cfg.notify ''
+      ${pkgs.libnotify}/bin/notify-send --app-name=Luthier --urgency=${urgency} \
+        Luthier ${escapeShellArg message} || true
+    '';
+
+  # Applies whatever the last switch declared, until nothing newer is.
+  runner = pkgs.writeShellScript "luthier-home-manager" ''
+    PATH=${lib.makeBinPath [ pkgs.coreutils ]}
+    state=${stateDir}
+
+    while :; do
+      wanted=$(readlink "$state/wanted") || exit 0
+      if [ "$wanted" = "$(cat "$state/applied" 2>/dev/null)" ]; then
+        exit 0
+      fi
+      # The generation that declared it was collected: a switch since has
+      # declared something else, or nothing.
+      if [ ! -x "$wanted" ]; then
+        echo "$wanted is gone; switch again to apply the declaration" >&2
+        exit 1
+      fi
+
+      # Not applied while it runs: a run cut short, or one that failed after
+      # a switch back to what was applied before, has changed the
+      # installation since, so that declaration must run again.
+      rm -f "$state/applied"
+      echo "Applying $wanted"
+      if "$wanted"; then
+        printf '%s\n' "$wanted" > "$state/applied.new"
+        mv "$state/applied.new" "$state/applied"
+        if [ "$(readlink "$state/wanted")" = "$wanted" ]; then
+          echo "The declared packages are installed."
+          ${notifySend "normal" "The declared packages are installed."}
+          exit 0
+        fi
+      elif [ "$(readlink "$state/wanted")" = "$wanted" ]; then
+        ${notifySend "critical" "Applying the declaration failed. journalctl --user -u luthier says why."}
+        exit 1
+      fi
+      # A switch declared something newer meanwhile.
+    done
+  '';
+
+  background = cfg.apply == "background";
+  systemctl = ''env XDG_RUNTIME_DIR="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" ${config.systemd.user.systemctlPath}'';
 in
 {
   options.programs.luthier = {
@@ -141,9 +250,43 @@ in
       default = true;
       description = ''
         Run `luthier update` before applying, so a newly declared package can
-        be found. It asks for the package list on every switch, which
-        downloads it only when it changed. Off, the list is asked for only once
-        a day has passed, as it is by any command.
+        be found. It asks for the package list each time the declaration is
+        applied, which downloads it only when it changed. Off, the list is
+        asked for only once a day has passed, as it is by any command.
+      '';
+    };
+
+    apply = mkOption {
+      type = types.enum [
+        "background"
+        "activation"
+      ];
+      default = "background";
+      description = ''
+        Where the declaration is applied.
+
+        `background`
+        : In `luthier.service`, a systemd user service the switch starts
+          and does not wait for. It runs only when the declaration changed
+          or the last run did not finish, one at a time, and after a login
+          if a run was cut short. Follow it with
+          `journalctl --user -u luthier -f`; `systemctl --user start luthier`
+          waits for it.
+
+        `activation`
+        : During the switch, which waits for every download. The NixOS
+          module stops activation after five minutes, so this suits a
+          declaration that installs little at a time, or a system without a
+          systemd user session.
+      '';
+    };
+
+    notify = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Send a desktop notification when `luthier.service` has applied the
+        declaration, or failed to. Only with `apply = "background"`.
       '';
     };
 
@@ -208,30 +351,68 @@ in
       ];
     };
 
-    home.activation.luthier = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      luthier() {
-        run ${exe} ${lib.escapeShellArgs globalFlags} "$@" \
-          || warnEcho "luthier $*: failed; the rest of the switch goes ahead"
-      }
+    home.activation =
+      if background then
+        {
+          # Before sd-switch starts anything, so a service it starts already
+          # reads this declaration rather than the last one.
+          luthierDeclare = lib.hm.dag.entryBetween [ "reloadSystemd" ] [ "writeBoundary" ] ''
+            run mkdir -p ${stateDir}
+            run ln -sfn ${applyScript} ${stateDir}/wanted
+          '';
 
-      ${optionalString cfg.update "luthier update"}
+          luthier = lib.hm.dag.entryAfter [ "reloadSystemd" ] ''
+            if [ "$(readlink ${stateDir}/wanted)" = "$(cat ${stateDir}/applied 2>/dev/null)" ]; then
+              verboseEcho "luthier: the declaration is already applied"
+            elif run ${systemctl} --user start --no-block luthier.service; then
+              echo "luthier: applying the declaration in the background;" \
+                "follow it with journalctl --user -u luthier -f"
+            else
+              warnEcho "luthier: could not start luthier.service; it applies the declaration at the next login"
+            fi
+          '';
+        }
+      else
+        {
+          luthier = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+            luthier() {
+              run ${exe} ${lib.escapeShellArgs globalFlags} "$@" \
+                || warnEcho "luthier $*: failed; the rest of the switch goes ahead"
+            }
 
-      ${concatMapStrings
-        (kind: ''
-          luthier location set ${kind} ${escapeShellArg cfg.locations.${kind}}
-        '')
-        (
-          builtins.filter (kind: cfg.locations.${kind} != null) [
-            "cache"
-            "libraries"
-            "plugins"
-          ]
-        )
-      }
+            ${steps}
+          '';
+        };
 
-      ${optionalString applies ''
-        luthier import ${declared}${pruneFlag}
-      ''}
-    '';
+    systemd.user.services = mkIf background {
+      luthier = {
+        Unit = {
+          Description = "Install the packages programs.luthier declares";
+          # A switch never stops a run halfway: the run picks up what the
+          # switch declared once it is done.
+          X-SwitchMethod = "keep-old";
+        };
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${runner}";
+          # Downloading and unpacking gigabytes is not what the desktop
+          # should wait behind.
+          Nice = 10;
+        };
+      };
+
+      # Starts it after a login, in case a run was cut short or the switch
+      # could not reach the user manager. Not luthier.service itself wanted
+      # by default.target: the login, and sd-switch on the first switch,
+      # would wait for an hour of downloads.
+      luthier-resume = {
+        Unit.Description = "Finish installing what programs.luthier declares";
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${config.systemd.user.systemctlPath} --user start --no-block luthier.service";
+        };
+        Install.WantedBy = [ "default.target" ];
+      };
+    };
   };
 }

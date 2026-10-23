@@ -95,11 +95,13 @@ from the list does **not** uninstall it until you turn on `prune`; see below.
 
 | Option | Default | What it does |
 |---|---|---|
-| `enable` | `false` | Install `luthier` and apply the declaration on every switch. |
+| `enable` | `false` | Install `luthier` and apply the declaration when it changes. |
 | `package` | built from the flake | The luthier package to use. |
 | `packages` | `[ ]` | Packages to install in your home directory. |
 | `prune` | `false` | Remove installed packages the declaration does not list. |
 | `update` | `true` | Ask for the package list before applying. |
+| `apply` | `"background"` | Apply in a user service the switch does not wait for, or during the switch. |
+| `notify` | `false` | A desktop notification when the service finishes. |
 | `systemPlugins` | `true` | Count plugins from nixpkgs or your distribution as engines. |
 | `locations.cache` | `null` | Where downloaded archives go. |
 | `locations.libraries` | `null` | Where sample libraries go. |
@@ -174,18 +176,56 @@ programs.luthier.packages = [ "salamander-drumkit" ];     # the samples
 
 ## What a switch does
 
-During activation, after Home Manager has written your files, the module runs
-`luthier` with `--yes`:
+Applying the declaration means running `luthier` with `--yes`:
 
 1. `luthier update`, unless `update = false`.
 2. `luthier location set <kind> <dir>` for each location that is set.
-3. `luthier import <file>`, with `--prune` if `prune` is on. The file is
-   generated from `packages`, in the same format `luthier export` writes.
+3. `luthier import --keep-going <file>`, with `--prune` if `prune` is on.
+   The file is generated from `packages`, in the same format
+   `luthier export` writes.
 
-If a step fails — no network, a registry that is down, a disk that is not
-mounted — Home Manager prints a warning and the rest of the switch goes ahead.
-Nothing else in your configuration depends on a plugin registry being
-reachable. Run `home-manager switch` again once the problem is gone.
+`--keep-going` means a package that cannot be installed is reported and the
+rest are installed anyway; what needs it is not tried, and `prune` removes
+nothing until every package is in. An import never upgrades a package that
+is already installed — `luthier upgrade` does — so applying the same
+declaration again downloads nothing.
+
+### In the background (the default)
+
+Installing sample libraries can take an hour, and the NixOS module stops
+Home Manager's activation after five minutes. So by default the switch only
+records which declaration it wants and starts `luthier.service`, a systemd
+user service, without waiting for it:
+
+```console
+$ journalctl --user -u luthier -f       # follow it
+$ systemctl --user status luthier       # running, done, or failed
+$ systemctl --user start luthier        # wait for it to finish
+```
+
+The service runs only when there is something to do: the declaration (or
+the luthier package) changed, or the last run did not finish. Applying is
+recorded as done only once every step succeeded, so a run that failed or was
+cut short is tried again on the next switch, and at the next login. Only one
+runs at a time. A switch while it runs leaves it to finish, and it then
+applies what that switch declared before it stops. With `notify = true` it
+sends a desktop notification when it is done, or when it failed.
+
+The state lives in `luthier/home-manager` under `xdg.stateHome`
+(`~/.local/state` unless you set it): `wanted` links to the script for the
+declaration the last switch made, `applied` names the last one applied in
+full, and is gone while a run is under way.
+
+### During the switch
+
+With `apply = "activation"`, the steps run in the activation script and the
+switch waits for them; the NixOS module's five-minute limit still applies.
+It suits a system without a systemd user session.
+
+Either way, if a step fails — no network, a registry that is down, a disk
+that is not mounted — Home Manager prints a warning (or the service logs it)
+and the rest of the switch goes ahead. Nothing else in your configuration
+depends on a plugin registry being reachable.
 
 `home-manager switch --dry-run` prints the commands instead of running them.
 

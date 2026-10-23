@@ -172,7 +172,7 @@ nix profile install github:savashn/luthier
 
 The flake also has an overlay for a NixOS configuration, and a Home Manager
 module, `programs.luthier`, that declares your plugins and sample libraries
-and installs them on every `home-manager switch`. Adding the flake, every
+and installs them in the background after a `home-manager switch`. Adding the flake, every
 option of the module and what a switch does are in
 [Nix and Home Manager](docs/NIX.md).
 

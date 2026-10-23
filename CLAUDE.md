@@ -226,13 +226,28 @@ the crate map keeps that out of `luthier-manifest`.
   and locks everyone out the day a release moves it.
 - **The Home Manager module runs luthier; it does not reimplement it.**
   `nix/hm-module.nix` writes the declared packages to a file in the export
-  format and calls `import [--prune]` during activation, so verification and placement
-  have one implementation. Anything the module needs is a CLI feature first
-  (that is how `--prune` came to exist). Every call is wrapped so a failure
-  warns and the switch continues. Test changes to it against real Home
-  Manager by building `activationPackage` and running only the extracted
-  `home.activation.luthier` script with `HOME` and `XDG_*` pointed at a
-  scratch directory — never by activating, which touches the real profile.
+  format and calls `import --keep-going [--prune]`, so verification and
+  placement have one implementation. Anything the module needs is a CLI
+  feature first (that is how `--prune`, `--keep-going` and the line-by-line
+  progress off a terminal came to exist). By default (`apply =
+  "background"`) activation only links `wanted` to the script for this
+  declaration and starts `luthier.service` with `--no-block`: the NixOS
+  module kills activation after five minutes, and a sample library takes
+  longer. The service deletes `applied` before it runs a declaration and
+  writes it only when every step succeeded, loops while a switch declared
+  something newer meanwhile, is never restarted by sd-switch
+  (`X-SwitchMethod = keep-old`), and is started at login by
+  `luthier-resume.service`, never wanted by a target itself — the login
+  and sd-switch would wait for it. The state directory is under
+  `xdg.stateHome`, fixed at build time: activation and the user manager
+  need not share `$XDG_STATE_HOME`. One race is accepted: a switch between
+  the runner's last look at `wanted` and its exit has its start merged
+  into the finishing job, and waits for the next login or switch. Every
+  call is wrapped so a failure warns and the switch continues. Test changes
+  to it against real Home Manager by building `activationPackage` and
+  running only the extracted activation scripts and the service's runner
+  with `HOME` and `XDG_*` pointed at a scratch directory — never by
+  activating, which touches the real profile.
 - **There are no environments, by decision.** 0.2 had `luthier env`,
   `--env` and `LUTHIER_ENV`; 0.3 removed them because `CLAP_PATH` and
   `VST3_PATH` only extend the standard locations (no real isolation), the

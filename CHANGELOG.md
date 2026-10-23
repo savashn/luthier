@@ -28,6 +28,7 @@ about.
 - **Installing a sample library prints its folder** under the line
   saying it was installed. A plugin's paths are not printed: a host
   finds it by itself.
+
 - **`--keep-going` for `install`, `upgrade` and `import`.** A package that
   fails is reported, with its reason, and the rest are installed; what
   needs it is not tried, and `import --prune` removes nothing while
@@ -38,6 +39,12 @@ about.
 - **Progress off a terminal is a line now and then** — when a download
   starts and at every tenth of it — rather than nothing, so a log or the
   journal shows where an hour-long download is.
+- **Home Manager: the declaration is applied in the background.**
+  `programs.luthier.apply = "background"`, the default, has the switch start
+  `luthier.service`, a systemd user service, and not wait for it; it runs
+  only when the declaration changed or the last run did not finish, and
+  picks up a switch made while it runs. `"activation"` keeps the old way.
+  `programs.luthier.notify` sends a desktop notification when it is done.
 
 ### Changed
 
@@ -48,6 +55,10 @@ about.
 
 ### Fixed
 
+- **The NixOS module no longer stops a switch halfway through.** Home
+  Manager's activation is killed after five minutes there, and a large
+  sample library took longer; with it went everything activation had left
+  to do. Applying in the background is what fixes it.
 - **Resuming a large download no longer reads the partial file into
   memory**, which needed as much memory as had been downloaded.
 - **7z archives compressed with Deflate or BZip2 extract.** Only LZMA,
