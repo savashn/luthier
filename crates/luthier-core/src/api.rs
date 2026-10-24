@@ -3373,14 +3373,21 @@ impl PackageFailure {
     Self {
       id: package.id().to_string(),
       version: package.version.to_string(),
-      // Said under the package's name already, so not twice.
-      error: match error {
-        Error::PackageArchive { error, .. } => error.to_string(),
-        other => other.to_string(),
-      },
+      error: failure_text(package.id(), &package.version, error),
       hint: error.hint(),
       exit: error.exit_code(),
     }
+  }
+}
+
+/// `error`'s message, to be said under the package's name and version: an
+/// error that opens with them, as an archive's does, loses them here, or
+/// they would be said twice.
+fn failure_text(id: &PackageId, version: &Version, error: &Error) -> String {
+  let message = error.to_string();
+  match message.strip_prefix(&format!("{id} {version}: ")) {
+    Some(rest) => rest.to_owned(),
+    None => message,
   }
 }
 
@@ -3934,5 +3941,33 @@ mod tests {
     let plan = session.plan_import(&empty_env_file(), true).unwrap();
     assert!(plan.prune.is_empty(), "{:?}", plan.prune);
     assert!(plan.prune_withheld.is_some());
+  }
+
+  #[test]
+  fn a_failure_does_not_name_its_package_twice() {
+    let id = PackageId::new("kit").unwrap();
+    let version = Version::new(1, 0, 0);
+    let opens_with_it: Error = InstallError::NothingToInstall {
+      id: id.clone(),
+      version: version.clone(),
+    }
+    .into();
+    assert_eq!(
+      failure_text(&id, &version, &opens_with_it),
+      "the archive contains no CLAP, VST3 or LV2 plugin to install"
+    );
+    let archive = Error::PackageArchive {
+      id: id.clone(),
+      version: version.clone(),
+      error: Box::new(crate::error::ArchiveError::Corrupt("truncated".into())),
+    };
+    assert!(!failure_text(&id, &version, &archive).starts_with("kit"));
+    // A sentence about the package keeps its subject.
+    let changed: Error = InstallError::LocalChanges {
+      id: id.clone(),
+      changes: vec!["a.clap modified".into()],
+    }
+    .into();
+    assert!(failure_text(&id, &version, &changed).starts_with("kit has changed"));
   }
 }

@@ -550,62 +550,69 @@ impl Downloader {
       .map(|len| len + if resumed { resume_from } else { 0 })
       .or(expected_size);
     progress.start(file_label(url), total);
-
-    let mut hasher = Sha256::new();
-    let mut written = 0u64;
-    let mut file = if resumed {
-      // The digest has to cover the whole file, so the bytes already on disk
-      // are hashed before the new ones arrive — a piece at a time: a
-      // library resumed after a reboot can have gigabytes there.
-      let mut existing =
-        std::fs::File::open(temporary).map_err(|e| Error::io("read", temporary, e))?;
-      let mut buffer = vec![0u8; 1 << 20];
-      loop {
-        let n = existing
-          .read(&mut buffer)
-          .map_err(|e| Error::io("read", temporary, e))?;
-        if n == 0 {
-          break;
+    // Finished whatever the outcome, as `Progress::finish` promises: a bar
+    // left standing after a failure stays on screen above everything
+    // printed after it — under `--keep-going`, the next package's bar and
+    // the failure itself.
+    let streamed: Result<(Sha256Hash, u64)> = async {
+      let mut hasher = Sha256::new();
+      let mut written = 0u64;
+      let mut file = if resumed {
+        // The digest has to cover the whole file, so the bytes already on disk
+        // are hashed before the new ones arrive — a piece at a time: a
+        // library resumed after a reboot can have gigabytes there.
+        let mut existing =
+          std::fs::File::open(temporary).map_err(|e| Error::io("read", temporary, e))?;
+        let mut buffer = vec![0u8; 1 << 20];
+        loop {
+          let n = existing
+            .read(&mut buffer)
+            .map_err(|e| Error::io("read", temporary, e))?;
+          if n == 0 {
+            break;
+          }
+          hasher.update(&buffer[..n]);
+          written += n as u64;
         }
-        hasher.update(&buffer[..n]);
-        written += n as u64;
-      }
-      progress.advance(written);
-      std::fs::OpenOptions::new()
-        .append(true)
-        .open(temporary)
-        .map_err(|e| Error::io("append to", temporary, e))?
-    } else {
-      std::fs::File::create(temporary).map_err(|e| Error::io("create", temporary, e))?
-    };
-    let mut stream = response.bytes_stream();
+        progress.advance(written);
+        std::fs::OpenOptions::new()
+          .append(true)
+          .open(temporary)
+          .map_err(|e| Error::io("append to", temporary, e))?
+      } else {
+        std::fs::File::create(temporary).map_err(|e| Error::io("create", temporary, e))?
+      };
+      let mut stream = response.bytes_stream();
 
-    while let Some(chunk) = stream.next().await {
-      let chunk = chunk.map_err(|e| {
-        Error::Download(DownloadError::Transport {
-          url: url.to_string(),
-          reason: transport_reason(&e),
-        })
-      })?;
-      written += chunk.len() as u64;
-      if written > ceiling {
-        return Err(Error::Download(DownloadError::TooLarge {
-          url: url.to_string(),
-          limit: ceiling,
-        }));
+      while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| {
+          Error::Download(DownloadError::Transport {
+            url: url.to_string(),
+            reason: transport_reason(&e),
+          })
+        })?;
+        written += chunk.len() as u64;
+        if written > ceiling {
+          return Err(Error::Download(DownloadError::TooLarge {
+            url: url.to_string(),
+            limit: ceiling,
+          }));
+        }
+        hasher.update(&chunk);
+        file
+          .write_all(&chunk)
+          .map_err(|e| Error::io("write", temporary, e))?;
+        progress.advance(chunk.len() as u64);
       }
-      hasher.update(&chunk);
+
       file
-        .write_all(&chunk)
-        .map_err(|e| Error::io("write", temporary, e))?;
-      progress.advance(chunk.len() as u64);
+        .sync_all()
+        .map_err(|e| Error::io("flush", temporary, e))?;
+      Ok((Sha256Hash::from_bytes(hasher.finalize().into()), written))
     }
-
-    file
-      .sync_all()
-      .map_err(|e| Error::io("flush", temporary, e))?;
+    .await;
     progress.finish();
-    Ok((Sha256Hash::from_bytes(hasher.finalize().into()), written))
+    streamed
   }
 
   async fn fetch_file(
@@ -1088,6 +1095,49 @@ mod tests {
       .await
       .unwrap();
     assert_eq!(std::fs::read(&fetched.path).unwrap(), payload);
+  }
+
+  #[tokio::test]
+  async fn a_download_that_fails_partway_still_finishes_its_progress() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Default)]
+    struct Recorder {
+      started: u32,
+      finished: u32,
+    }
+    impl Progress for Recorder {
+      fn start(&mut self, _label: &str, _total: Option<u64>) {
+        self.started += 1;
+      }
+      fn finish(&mut self) {
+        self.finished += 1;
+      }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+      .and(path("/big"))
+      .respond_with(ResponseTemplate::new(200).set_body_bytes(b"more than four".to_vec()))
+      .mount(&server)
+      .await;
+
+    // Past the ceiling once the body is streaming, after `start`.
+    let downloader = Downloader::new(dir.path().join("cache")).max_bytes(4);
+    let url = Url::parse(&format!("{}/big", server.uri())).unwrap();
+    let mut progress = Recorder::default();
+    let err = downloader
+      .fetch(&url, &digest_of(b"more than four"), None, &mut progress)
+      .await
+      .unwrap_err();
+    assert!(
+      matches!(err, Error::Download(DownloadError::TooLarge { .. })),
+      "{err}"
+    );
+    assert!(progress.started > 0);
+    assert_eq!(progress.finished, progress.started);
   }
 
   #[tokio::test]
