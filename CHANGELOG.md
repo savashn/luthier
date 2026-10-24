@@ -15,6 +15,8 @@ about.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-25
+
 ### Added
 
 - **`luthier list <package>` prints where a package is installed**, one
@@ -450,7 +452,8 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
-[Unreleased]: https://github.com/savashn/luthier/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/savashn/luthier/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/savashn/luthier/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/savashn/luthier/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/savashn/luthier/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/savashn/luthier/compare/v0.2.0...v0.3.0

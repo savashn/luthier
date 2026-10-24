@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 472 tests, fully offline. `update`, `search`, `info`, `install`,
+Four crates, 506 tests, fully offline. `update`, `search`, `info`, `install`,
 `list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
 `pin`/`unpin`, and `export`/`import` all work end to end against real
 packages; the verbs are apt's and Homebrew's (since 0.5: 0.4 called them
@@ -42,7 +42,7 @@ extras exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
-`v0.5.0` is the latest release: a static binary for Linux x86_64 and one for
+`v0.6.0` is the latest release: a static binary for Linux x86_64 and one for
 aarch64, each as a tarball, a .deb and an .rpm, an install script that picks the
 tarball for the machine, and extras, from the public repository at `savashn/luthier`,
 published straight from a `v*` tag. Phase 0 is done.
@@ -406,12 +406,16 @@ Then the Nix-facing work, in order of what unblocks what:
    flake input have it.
 2. **A Home Manager module — done.** `programs.luthier` (`nix/hm-module.nix`,
    documented in `docs/NIX.md`) writes the declared packages to a file in
-   the export format and applies it during activation with `import`,
-   `--prune` when asked, after `update` and `location set`. It runs luthier rather than
+   the export format and applies it with `import --keep-going`, `--prune`
+   when asked, after `update` and `location set` — since 0.6 in
+   `luthier.service`, a user service the switch does not wait for, since a
+   sample library outlasts the five minutes the NixOS module gives
+   activation. It runs luthier rather than
    building plugins as derivations, so there is one implementation of
    verification and placement; a failure warns rather than failing the
    switch. Tested against real Home Manager: install, a second switch doing
-   nothing, pruning, a missing disk and a withdrawn version. This is the thing
+   nothing, pruning, a missing disk and a withdrawn version, and since 0.6
+   by `nix/tests/hm/run.sh`, by hand when the module changes. This is the thing
    a Nix user actually wants; 3 below is an alternative to it, not a
    prerequisite.
 3. **`luthier nix export`.** Emit a derivation set instead of installing one.
