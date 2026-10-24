@@ -115,7 +115,20 @@ let
     ) cfg.packages;
   };
 
-  exe = lib.getExe cfg.package;
+  # luthier finds its state, config and cache through the XDG variables,
+  # and neither the user manager nor a switch run by the NixOS module need
+  # have the ones a login shell does. Where Home Manager manages them, the
+  # values it puts in the session are passed on, so the declaration is
+  # applied to the installation an interactive `luthier` reads.
+  exe = toString (
+    lib.optionals config.xdg.enable [
+      "${pkgs.coreutils}/bin/env"
+      "XDG_CONFIG_HOME=${escapeShellArg config.xdg.configHome}"
+      "XDG_DATA_HOME=${escapeShellArg config.xdg.dataHome}"
+      "XDG_CACHE_HOME=${escapeShellArg config.xdg.cacheHome}"
+    ]
+    ++ [ (lib.getExe cfg.package) ]
+  );
   globalFlags = [ "--yes" ] ++ lib.optional (!cfg.systemPlugins) "--no-system-plugins";
   pruneFlag = optionalString cfg.prune " --prune";
 
@@ -125,16 +138,24 @@ let
 
   pluginsDir = cfg.locations.plugins;
 
-  # The steps, each through a `luthier` function the caller defines: the
-  # activation script warns and goes on, the service also remembers that
-  # something failed. `--keep-going`, so one package that cannot be
-  # installed does not keep every one after it from ever being installed.
+  # The steps, each through a `luthier` function the caller defines, which
+  # returns its status: the activation script warns and goes on, the
+  # service also remembers that something failed. `--keep-going`, so one
+  # package that cannot be installed does not keep every one after it from
+  # ever being installed.
+  #
+  # Nothing is imported while a location could not be set: the disk it
+  # names may not be mounted yet, and the import would install into the
+  # directory used before — the home disk, on a first run — which is what
+  # refusing to create a location exists to prevent. Every step is part of
+  # an `||` or an `if`, since activation runs under `set -e`.
   steps = ''
-    ${optionalString cfg.update "luthier update"}
+    ${optionalString cfg.update "luthier update || :"}
 
+    locations_set=1
     ${concatMapStrings
       (kind: ''
-        luthier location set ${kind} ${escapeShellArg cfg.locations.${kind}}
+        luthier location set ${kind} ${escapeShellArg cfg.locations.${kind}} || locations_set=0
       '')
       (
         builtins.filter (kind: cfg.locations.${kind} != null) [
@@ -146,7 +167,11 @@ let
     }
 
     ${optionalString applies ''
-      luthier import --keep-going ${declared}${pruneFlag}
+      if [ "$locations_set" = 1 ]; then
+        luthier import --keep-going ${declared}${pruneFlag} || :
+      else
+        echo "luthier: a location could not be set, so nothing is imported" >&2
+      fi
     ''}
   '';
 
@@ -159,6 +184,7 @@ let
       ${exe} ${lib.escapeShellArgs globalFlags} "$@" || {
         echo "luthier $*: failed" >&2
         failed=1
+        return 1
       }
     }
 
@@ -376,8 +402,10 @@ in
         {
           luthier = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
             luthier() {
-              run ${exe} ${lib.escapeShellArgs globalFlags} "$@" \
-                || warnEcho "luthier $*: failed; the rest of the switch goes ahead"
+              run ${exe} ${lib.escapeShellArgs globalFlags} "$@" || {
+                warnEcho "luthier $*: failed; the rest of the switch goes ahead"
+                return 1
+              }
             }
 
             ${steps}

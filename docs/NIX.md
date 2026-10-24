@@ -182,7 +182,14 @@ Applying the declaration means running `luthier` with `--yes`:
 2. `luthier location set <kind> <dir>` for each location that is set.
 3. `luthier import --keep-going <file>`, with `--prune` if `prune` is on.
    The file is generated from `packages`, in the same format
-   `luthier export` writes.
+   `luthier export` writes. It is skipped while a location could not be
+   set, since it would install into the directory used before.
+
+With `xdg.enable` on, `luthier` runs with the `XDG_CONFIG_HOME`,
+`XDG_DATA_HOME` and `XDG_CACHE_HOME` Home Manager gives your session, so
+the service and the switch apply the declaration to the installation an
+interactive `luthier` reads; neither the systemd user manager nor a switch
+run by the NixOS module need have them otherwise.
 
 `--keep-going` means a package that cannot be installed is reported and the
 rest are installed anyway; what needs it is not tried, and `prune` removes
@@ -246,7 +253,7 @@ programs.luthier.locations = {
 
 The directories must already exist. Luthier never creates them, so that a
 disk that is not mounted is noticed rather than filled underneath: until it
-is mounted, a switch warns and installs nothing there. Moving a location that
+is mounted, a switch warns and installs nothing at all. Moving a location that
 packages are already installed in is refused; remove them, switch, and they
 are installed in the new place.
 

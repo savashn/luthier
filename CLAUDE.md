@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 503 tests, fully offline
+cargo test --workspace                     # 504 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -240,7 +240,12 @@ the crate map keeps that out of `luthier-manifest`.
   `luthier-resume.service`, never wanted by a target itself — the login
   and sd-switch would wait for it. The state directory is under
   `xdg.stateHome`, fixed at build time: activation and the user manager
-  need not share `$XDG_STATE_HOME`. One race is accepted: a switch between
+  need not share `$XDG_STATE_HOME`; for the same reason, with
+  `xdg.enable`, `luthier` runs with Home Manager's `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME` and `XDG_CACHE_HOME`, or the service would apply the
+  declaration to another installation than the shell reads. No import
+  runs while a `location set` failed: it would install into the old
+  location, the home disk on a first run. One race is accepted: a switch between
   the runner's last look at `wanted` and its exit has its start merged
   into the finishing job, and waits for the next login or switch. Every
   call is wrapped so a failure warns and the switch continues. Test changes
