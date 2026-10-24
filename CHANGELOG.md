@@ -74,6 +74,15 @@ about.
 - **An archive's error names the package and version** it was installing,
   so an `import` that stops on one of twenty says which.
 
+### Security
+
+- **rustls-webpki 0.103.16** (RUSTSEC-2026-0382): a certificate path
+  through one of the distrusted emSign intermediates, whose private keys
+  are now known, could be accepted where the trust anchors allowed it.
+- **tokio 1.54.1** (RUSTSEC-2026-0384), and off 1.54.0, which was
+  yanked. The race is in `tokio::time::Interval`, which Luthier does not
+  use; moved anyway, since 1.54.1 is where it is fixed.
+
 ## [0.5.0] — 2026-10-20
 
 ### Added
