@@ -1061,6 +1061,9 @@ impl Session {
     let mut not_attempted = Vec::new();
     // What failed, and what was not tried because of it.
     let mut broken: BTreeSet<PackageId> = BTreeSet::new();
+    // The package whose failure every one after it would share — a full or
+    // read-only disk — once one has failed that way under `--keep-going`.
+    let mut stopped_at: Option<PackageId> = None;
 
     // Before anything is fetched, and in one write: a dependency asked for
     // by name is one the user wants, whether or not a later download in
@@ -1093,6 +1096,16 @@ impl Session {
         continue;
       }
 
+      if let Some(at) = &stopped_at {
+        not_attempted.push(NotAttempted {
+          id: package.id().to_string(),
+          version: package.version.to_string(),
+          because: at.to_string(),
+          stopped: true,
+        });
+        continue;
+      }
+
       // Not tried when something it needs failed: it would be installed
       // against what is not there. The order is dependencies first, so
       // whatever failed has been reached by now.
@@ -1101,6 +1114,7 @@ impl Session {
           id: package.id().to_string(),
           version: package.version.to_string(),
           because: because.to_string(),
+          stopped: false,
         });
         broken.insert(package.id().clone());
         continue;
@@ -1150,10 +1164,15 @@ impl Session {
         // unattended, and one archive that could not be read kept
         // everything after it from ever being installed.
         // A full or read-only disk is not this package's failure: every
-        // one after it would report the same, so the command ends here.
-        Err(error) if self.keep_going && !error.affects_every_package() => {
+        // one after it would report the same, so nothing more is tried.
+        // The outcome is still returned rather than this error, or what
+        // failed before it would go unreported.
+        Err(error) if self.keep_going => {
           failed.push(PackageFailure::of(package, &error));
           broken.insert(package.id().clone());
+          if error.affects_every_package() {
+            stopped_at = Some(package.id().clone());
+          }
           continue;
         }
         Err(error) => return Err(error),
@@ -1170,7 +1189,15 @@ impl Session {
     }
 
     if unsaved {
-      guard.commit()?;
+      // Only content learned for a record, which the next command learns
+      // again: not worth losing the report of a disk that filled up.
+      if stopped_at.is_some() {
+        if let Err(error) = guard.commit() {
+          tracing::warn!(%error, "could not record what installed packages contain");
+        }
+      } else {
+        guard.commit()?;
+      }
     }
 
     Ok(InstallOutcome {
@@ -3357,12 +3384,15 @@ impl PackageFailure {
   }
 }
 
-/// A package not tried because `because`, which it needs, failed.
+/// A package not tried because `because` failed: a package it needs, or,
+/// when `stopped`, one whose failure every package after it would share.
 #[derive(Debug, Clone, Serialize)]
 pub struct NotAttempted {
   pub id: String,
   pub version: String,
   pub because: String,
+  #[serde(skip_serializing_if = "std::ops::Not::not")]
+  pub stopped: bool,
 }
 
 /// Formats a source claimed that the archive did not actually deliver.

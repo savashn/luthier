@@ -104,7 +104,7 @@ pub enum Error {
   /// status the failures call for.
   #[error(
     "{failed} package(s) failed to install{}",
-    if *not_attempted > 0 { format!(", and {not_attempted} that need them were not tried") } else { String::new() }
+    if *not_attempted > 0 { format!(", and {not_attempted} were not tried") } else { String::new() }
   )]
   Incomplete {
     failed: usize,
@@ -132,22 +132,23 @@ impl Error {
   /// of them. A failed download is not one of these — one server being
   /// down says nothing of the others, and with the network gone each
   /// fails within seconds.
+  ///
+  /// Read from the I/O errors anywhere in the chain, not from a list of
+  /// variants, so a variant that wraps one is not missed.
   pub fn affects_every_package(&self) -> bool {
     use std::io::ErrorKind::{QuotaExceeded, ReadOnlyFilesystem, StorageFull};
-    let source = match self {
-      Error::Install(InstallError::NotEnoughSpace { .. }) => return true,
-      Error::Io { source, .. } | Error::Install(InstallError::Io { source, .. }) => source,
-      Error::Archive(ArchiveError::Io { source, .. }) => source,
-      Error::PackageArchive { error, .. } => match error.as_ref() {
-        ArchiveError::Io { source, .. } => source,
-        _ => return false,
-      },
-      _ => return false,
+    if matches!(self, Error::Install(InstallError::NotEnoughSpace { .. })) {
+      return true;
+    }
+    // The archive's error is part of the message there, not a source, so
+    // that it is not printed twice; the chain starts from it.
+    let start: &(dyn std::error::Error + 'static) = match self {
+      Error::PackageArchive { error, .. } => error.as_ref(),
+      other => other,
     };
-    matches!(
-      source.kind(),
-      StorageFull | ReadOnlyFilesystem | QuotaExceeded
-    )
+    std::iter::successors(Some(start), |error| error.source())
+      .filter_map(|error| error.downcast_ref::<std::io::Error>())
+      .any(|io| matches!(io.kind(), StorageFull | ReadOnlyFilesystem | QuotaExceeded))
   }
 
   pub fn exit_code(&self) -> ExitCode {
@@ -1004,6 +1005,13 @@ mod tests {
     let every_package: Vec<Error> = vec![
       Error::io("write", "/x", full()),
       Error::io("write", "/x", IoError::from(ErrorKind::ReadOnlyFilesystem)),
+      // Not one of the variants it once listed by hand.
+      StateError::Io {
+        operation: "write",
+        path: "/x".into(),
+        source: IoError::from(ErrorKind::QuotaExceeded),
+      }
+      .into(),
       InstallError::NotEnoughSpace {
         path: "/x".into(),
         required: 2,

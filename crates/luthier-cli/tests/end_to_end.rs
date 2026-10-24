@@ -580,7 +580,7 @@ fn keep_going_installs_the_rest_and_fails_at_the_end() {
     "{stderr}"
   );
   assert!(
-    stderr.contains("error: 1 package(s) failed to install, and 1 that need them were not tried"),
+    stderr.contains("error: 1 package(s) failed to install, and 1 were not tried"),
     "{stderr}"
   );
 

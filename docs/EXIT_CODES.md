@@ -31,6 +31,6 @@ than collapsing into the generic 1.
 install what they can and then fail with the status of the first package
 that failed — or 4 if any download did not match its checksum, since a
 possible tampering should not hide among other failures. The packages that
-did install stay installed. A full or read-only disk ends the command at
-once, as it would without the flag: every package after it would fail the
-same way.
+did install stay installed. A full or read-only disk stops it trying the
+rest, since every package after it would fail the same way; those are
+reported as not tried, and the status is still the first failure's.

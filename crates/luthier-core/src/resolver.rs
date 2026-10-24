@@ -662,10 +662,13 @@ fn select_version(
   }
 
   // Where it is, when the request keeps installed packages and the
-  // release installed still fits: an import does not upgrade.
+  // release installed still fits: an import does not upgrade. Not a
+  // yanked one: its source withdrew it, broken or unsafe, and keeping it
+  // would leave every import on it until someone ran `upgrade`.
   if let Some(installed) = installed
     && constraints.iter().all(|(_, req)| req.matches(installed))
     && let Some(release) = manifest.release(installed)
+    && !release.is_yanked()
     && (manifest.kind == PackageKind::Pack || select_artifact(release, target).is_some())
   {
     return Ok(installed.clone());
@@ -1377,6 +1380,26 @@ mod tests {
     let installed = resolve_in(&fixture, &state, &["app"]).unwrap();
     assert_eq!(version_of(&installed, "app"), "2.0.0");
     assert_eq!(version_of(&installed, "lib"), "1.1.0");
+  }
+
+  #[test]
+  fn an_import_moves_off_a_yanked_release() {
+    let mut fixture = Fixture::new()
+      .add("app", &[("1.0.0", &["lib"])])
+      .add("lib", &[("1.0.0", &[]), ("1.0.1", &[])]);
+    let entry = fixture.packages.get_mut(&id("lib")).unwrap();
+    entry
+      .manifest
+      .releases
+      .iter_mut()
+      .find(|r| r.version == Version::new(1, 0, 0))
+      .unwrap()
+      .yanked = Some("broken".into());
+    let state = installed(&[("app", "1.0.0", &["lib"]), ("lib", "1.0.0", &[])]);
+
+    let imported = import_in(&fixture, &state, &["app"]).unwrap();
+    assert_eq!(version_of(&imported, "app"), "1.0.0");
+    assert_eq!(version_of(&imported, "lib"), "1.0.1");
   }
 
   #[test]

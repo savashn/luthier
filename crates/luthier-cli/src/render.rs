@@ -349,10 +349,17 @@ impl Reporter {
       }
     }
     for package in &outcome.not_attempted {
-      self.warn(format!(
-        "{} {} was not installed: it needs {}, which failed",
-        package.id, package.version, package.because
-      ));
+      self.warn(if package.stopped {
+        format!(
+          "{} {} was not tried: what {} failed on would stop it too",
+          package.id, package.version, package.because
+        )
+      } else {
+        format!(
+          "{} {} was not installed: it needs {}, which failed",
+          package.id, package.version, package.because
+        )
+      });
     }
     if outcome.installed.is_empty()
       && outcome.skipped.is_empty()

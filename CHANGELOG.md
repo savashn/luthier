@@ -35,7 +35,8 @@ about.
   anything failed. The command still fails at the end, with the status of
   the first failure, or 4 if any download did not match its checksum.
   `--json` lists `failed` and `not_attempted`. A full or read-only disk
-  still ends the command at once.
+  stops it trying more, and what was not tried for that is listed with
+  `stopped`.
 - **Progress off a terminal is a line now and then** — when a download
   starts and at every tenth of it — rather than nothing, so a log or the
   journal shows where an hour-long download is.
