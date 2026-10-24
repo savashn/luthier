@@ -16,18 +16,45 @@ use std::time::Duration;
 use url::Url;
 
 /// Receives progress while an artifact is fetched.
+///
+/// Each attempt at the transfer is reported on its own, so a download that
+/// is retried starts again; one that fails before a byte is asked for
+/// reports nothing.
 pub trait Progress: Send {
-  /// Called once, with the total size when the server reports one.
+  /// Called once per attempt, with the total size when the server reports one.
   fn start(&mut self, _label: &str, _total: Option<u64>) {}
   /// Called for each chunk written.
   fn advance(&mut self, _bytes: u64) {}
-  /// Called once, whatever the outcome.
+  /// Called once after each `start`, whatever the outcome.
   fn finish(&mut self) {}
 }
 
 /// A sink that discards progress. Used by tests and non-interactive runs.
 pub struct NoProgress;
 impl Progress for NoProgress {}
+
+/// An attempt [`Progress`] has been told of, finished when this is dropped:
+/// on success, on an error, on a panic, or when the future is cancelled. A
+/// bar left standing stays on screen above everything printed after it —
+/// under `--keep-going`, the next package's bar and the failure itself.
+struct Started<'a>(&'a mut dyn Progress);
+
+impl<'a> Started<'a> {
+  fn new(progress: &'a mut dyn Progress, label: &str, total: Option<u64>) -> Self {
+    progress.start(label, total);
+    Self(progress)
+  }
+
+  fn advance(&mut self, bytes: u64) {
+    self.0.advance(bytes);
+  }
+}
+
+impl Drop for Started<'_> {
+  fn drop(&mut self) {
+    self.0.finish();
+  }
+}
 
 /// What names one version of a document to the server that sent it, so it
 /// can be asked whether it still has that version (RFC 9110 §13.1).
@@ -549,70 +576,62 @@ impl Downloader {
       .content_length()
       .map(|len| len + if resumed { resume_from } else { 0 })
       .or(expected_size);
-    progress.start(file_label(url), total);
-    // Finished whatever the outcome, as `Progress::finish` promises: a bar
-    // left standing after a failure stays on screen above everything
-    // printed after it — under `--keep-going`, the next package's bar and
-    // the failure itself.
-    let streamed: Result<(Sha256Hash, u64)> = async {
-      let mut hasher = Sha256::new();
-      let mut written = 0u64;
-      let mut file = if resumed {
-        // The digest has to cover the whole file, so the bytes already on disk
-        // are hashed before the new ones arrive — a piece at a time: a
-        // library resumed after a reboot can have gigabytes there.
-        let mut existing =
-          std::fs::File::open(temporary).map_err(|e| Error::io("read", temporary, e))?;
-        let mut buffer = vec![0u8; 1 << 20];
-        loop {
-          let n = existing
-            .read(&mut buffer)
-            .map_err(|e| Error::io("read", temporary, e))?;
-          if n == 0 {
-            break;
-          }
-          hasher.update(&buffer[..n]);
-          written += n as u64;
-        }
-        progress.advance(written);
-        std::fs::OpenOptions::new()
-          .append(true)
-          .open(temporary)
-          .map_err(|e| Error::io("append to", temporary, e))?
-      } else {
-        std::fs::File::create(temporary).map_err(|e| Error::io("create", temporary, e))?
-      };
-      let mut stream = response.bytes_stream();
+    let mut progress = Started::new(progress, file_label(url), total);
 
-      while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| {
-          Error::Download(DownloadError::Transport {
-            url: url.to_string(),
-            reason: transport_reason(&e),
-          })
-        })?;
-        written += chunk.len() as u64;
-        if written > ceiling {
-          return Err(Error::Download(DownloadError::TooLarge {
-            url: url.to_string(),
-            limit: ceiling,
-          }));
+    let mut hasher = Sha256::new();
+    let mut written = 0u64;
+    let mut file = if resumed {
+      // The digest has to cover the whole file, so the bytes already on disk
+      // are hashed before the new ones arrive — a piece at a time: a
+      // library resumed after a reboot can have gigabytes there.
+      let mut existing =
+        std::fs::File::open(temporary).map_err(|e| Error::io("read", temporary, e))?;
+      let mut buffer = vec![0u8; 1 << 20];
+      loop {
+        let n = existing
+          .read(&mut buffer)
+          .map_err(|e| Error::io("read", temporary, e))?;
+        if n == 0 {
+          break;
         }
-        hasher.update(&chunk);
-        file
-          .write_all(&chunk)
-          .map_err(|e| Error::io("write", temporary, e))?;
-        progress.advance(chunk.len() as u64);
+        hasher.update(&buffer[..n]);
+        written += n as u64;
       }
+      progress.advance(written);
+      std::fs::OpenOptions::new()
+        .append(true)
+        .open(temporary)
+        .map_err(|e| Error::io("append to", temporary, e))?
+    } else {
+      std::fs::File::create(temporary).map_err(|e| Error::io("create", temporary, e))?
+    };
+    let mut stream = response.bytes_stream();
 
+    while let Some(chunk) = stream.next().await {
+      let chunk = chunk.map_err(|e| {
+        Error::Download(DownloadError::Transport {
+          url: url.to_string(),
+          reason: transport_reason(&e),
+        })
+      })?;
+      written += chunk.len() as u64;
+      if written > ceiling {
+        return Err(Error::Download(DownloadError::TooLarge {
+          url: url.to_string(),
+          limit: ceiling,
+        }));
+      }
+      hasher.update(&chunk);
       file
-        .sync_all()
-        .map_err(|e| Error::io("flush", temporary, e))?;
-      Ok((Sha256Hash::from_bytes(hasher.finalize().into()), written))
+        .write_all(&chunk)
+        .map_err(|e| Error::io("write", temporary, e))?;
+      progress.advance(chunk.len() as u64);
     }
-    .await;
-    progress.finish();
-    streamed
+
+    file
+      .sync_all()
+      .map_err(|e| Error::io("flush", temporary, e))?;
+    Ok((Sha256Hash::from_bytes(hasher.finalize().into()), written))
   }
 
   async fn fetch_file(
@@ -644,10 +663,10 @@ impl Downloader {
         limit: ceiling,
       }));
     }
-    progress.start(file_label(url), Some(size));
+    let mut progress = Started::new(progress, file_label(url), Some(size));
     std::fs::copy(&source, temporary).map_err(|e| Error::io("copy", &source, e))?;
     progress.advance(size);
-    progress.finish();
+    drop(progress);
     Ok((fsutil::hash_file(temporary)?, size))
   }
 }
@@ -1136,8 +1155,9 @@ mod tests {
       matches!(err, Error::Download(DownloadError::TooLarge { .. })),
       "{err}"
     );
-    assert!(progress.started > 0);
-    assert_eq!(progress.finished, progress.started);
+    // Not retried: the ceiling says something about the bytes.
+    assert_eq!(progress.started, 1);
+    assert_eq!(progress.finished, 1);
   }
 
   #[tokio::test]

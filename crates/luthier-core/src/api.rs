@@ -3956,12 +3956,15 @@ mod tests {
       failure_text(&id, &version, &opens_with_it),
       "the archive contains no CLAP, VST3 or LV2 plugin to install"
     );
+    // Exactly the archive's own message: the prefix is matched as text, so
+    // rewording either error's format string fails here, not on screen.
+    let corrupt = crate::error::ArchiveError::Corrupt("truncated".into());
     let archive = Error::PackageArchive {
       id: id.clone(),
       version: version.clone(),
       error: Box::new(crate::error::ArchiveError::Corrupt("truncated".into())),
     };
-    assert!(!failure_text(&id, &version, &archive).starts_with("kit"));
+    assert_eq!(failure_text(&id, &version, &archive), corrupt.to_string());
     // A sentence about the package keeps its subject.
     let changed: Error = InstallError::LocalChanges {
       id: id.clone(),
