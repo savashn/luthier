@@ -35,18 +35,18 @@ name="luthier-$arch-linux"
 # checks the packaging with the nfpm the release uses. An nfpm already on PATH
 # is used only if it is that version. The machine this runs on picks the
 # archive, not <target>.
-nfpm_version=2.47.0
+nfpm_version=2.48.0
 # `go install` builds report it with a leading v; the release build without.
 nfpm_version_re=$(printf '%s' "$nfpm_version" | sed 's/\./\\./g')
 if ! nfpm --version 2> /dev/null | grep -qE "^GitVersion: +v?$nfpm_version_re\$"; then
   case "$(uname -m)" in
   x86_64)
     nfpm_archive="nfpm_${nfpm_version}_Linux_x86_64.tar.gz"
-    nfpm_sha256=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+    nfpm_sha256=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
     ;;
   aarch64)
     nfpm_archive="nfpm_${nfpm_version}_Linux_arm64.tar.gz"
-    nfpm_sha256=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+    nfpm_sha256=a9a75213763783b7669719e505474c748c5ad7dc66591a195619deb50f85c2f4
     ;;
   *)
     echo "no nfpm build is pinned for $(uname -m)" >&2
