@@ -59,6 +59,7 @@ crates/
 extras/              Luthier's own manifests (extras), MIT-licensed data
 schemas/             generated JSON Schema, committed
 nix/                 the flake's package and Home Manager module
+  tests/hm/          the module tried against real Home Manager (run.sh, by hand)
 docs/
 ```
 

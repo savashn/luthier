@@ -248,11 +248,13 @@ the crate map keeps that out of `luthier-manifest`.
   location, the home disk on a first run. One race is accepted: a switch between
   the runner's last look at `wanted` and its exit has its start merged
   into the finishing job, and waits for the next login or switch. Every
-  call is wrapped so a failure warns and the switch continues. Test changes
-  to it against real Home Manager by building `activationPackage` and
-  running only the extracted activation scripts and the service's runner
-  with `HOME` and `XDG_*` pointed at a scratch directory — never by
-  activating, which touches the real profile.
+  call is wrapped so a failure warns and the switch continues. Test a
+  change to it with `nix/tests/hm/run.sh`: a flake of its own builds
+  `activationPackage` with real Home Manager, and the script runs the
+  service's runner, the apply script and the activation block in a scratch
+  `HOME` and checks what they did — never activating, which touches the
+  real profile. It needs the network (the OAS index, matsuri from GitHub),
+  so it is run by hand and not in CI; extend it with the module.
 - **There are no environments, by decision.** 0.2 had `luthier env`,
   `--env` and `LUTHIER_ENV`; 0.3 removed them because `CLAP_PATH` and
   `VST3_PATH` only extend the standard locations (no real isolation), the
