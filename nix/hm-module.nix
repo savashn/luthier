@@ -224,21 +224,31 @@ let
     PATH=${lib.makeBinPath [ pkgs.coreutils ]}
     state=${stateDir}
 
-    # Left by the announcement, so the run knows to say how it ended.
-    rm -f "$state/announced"
+    # `announced` is left once the user has been told a run is under way,
+    # and stays through the retries until a run ends for good, so the try
+    # that succeeds says so however quickly it does. One left by a run cut
+    # short means the same for the run that finishes it.
     ${optionalString cfg.notify ''
       (
         trap 'kill "$sleeper" 2>/dev/null; exit' TERM
         sleep ${toString announceAfterSeconds} &
         sleeper=$!
         wait "$sleeper"
-        : > "$state/announced"
-        ${notifySend "normal" "Installing the declared packages in the background. You will be told when it is done; journalctl --user -u luthier -f follows it."}
-      ) &
+        if [ ! -e "$state/announced" ]; then
+          : > "$state/announced"
+          ${notifySend "normal" "Installing the declared packages in the background. You will be told when it is done; journalctl --user -u luthier -f follows it."}
+        fi
+      ) < /dev/null > /dev/null 2>&1 &
       announcer=$!
-      trap 'kill "$announcer" 2>/dev/null; rm -f "$state/announced"' EXIT
     ''}
+    # Ends the announcement before the run says how it ended, so it cannot
+    # come after: one already under way is let finish.
+    quiet() {
+      ${if cfg.notify then ''kill "$announcer" 2>/dev/null; wait "$announcer" 2>/dev/null'' else ":"}
+    }
+    trap quiet EXIT
     announced() {
+      quiet
       [ -e "$state/announced" ]
     }
 
@@ -285,12 +295,16 @@ let
             ${notifySend "normal" "The declared packages are installed."}
             :
           fi
+          rm -f "$state/announced"
           exit 0
         fi
       elif [ "$(readlink "$state/wanted")" = "$wanted" ]; then
         tries=$(($(failures) + 1))
         if [ "$tries" -le ${toString retries} ]; then
-          printf '%s\n%s\n' "$wanted" "$tries" > "$state/attempts"
+          # Replaced whole, as `applied` is: a count cut off halfway would
+          # read as none, and the tries would start over.
+          printf '%s\n%s\n' "$wanted" "$tries" > "$state/attempts.new"
+          mv "$state/attempts.new" "$state/attempts"
           echo "Applying failed; trying again in ${toString retryMinutes} minutes ($tries of ${toString retries})" >&2
           if announced; then
             ${notifySend "normal" "Some packages could not be installed yet; trying again in ${toString retryMinutes} minutes."}
@@ -300,17 +314,31 @@ let
         fi
         rm -f "$state/attempts"
         echo "Applying failed again after ${toString retries} retries; trying again at the next login or switch" >&2
+        quiet
         ${notifySend "critical" "Installing the declared packages failed. journalctl --user -u luthier says why."}
+        rm -f "$state/announced"
         exit 1
       fi
       # A switch declared something newer meanwhile.
     done
   '';
 
+  # Sets `luthier_verb` to what starts the service at once. While it waits
+  # to try again, `start` only queues behind the wait, up to a quarter of
+  # an hour; `restart` stops nothing then, since no run is under way.
+  pickVerb = systemctl: ''
+    if [ "$(${systemctl} --user show --property=SubState --value luthier.service 2>/dev/null)" = auto-restart ]; then
+      luthier_verb=restart
+    else
+      luthier_verb=start
+    fi
+  '';
+
   # A login starts it afresh, with every retry to come.
   resume = pkgs.writeShellScript "luthier-resume" ''
     ${pkgs.coreutils}/bin/rm -f ${stateDir}/attempts
-    exec ${config.systemd.user.systemctlPath} --user start --no-block luthier.service
+    ${pickVerb config.systemd.user.systemctlPath}
+    exec ${config.systemd.user.systemctlPath} --user "$luthier_verb" --no-block luthier.service
   '';
 
   background = cfg.apply == "background";
@@ -367,8 +395,7 @@ in
           or the last run did not finish, one at a time, and after a login
           if a run was cut short. A run that fails is tried again a quarter
           of an hour later, three times. Follow it with
-          `journalctl --user -u luthier -f`; `systemctl --user start luthier`
-          waits for it.
+          `journalctl --user -u luthier -f`.
 
         `activation`
         : During the switch, which waits for every download. The NixOS
@@ -461,12 +488,13 @@ in
           '';
 
           luthier = lib.hm.dag.entryAfter [ "reloadSystemd" ] ''
+            ${pickVerb systemctl}
             if [ "$(readlink ${stateDir}/wanted)" = "$(cat ${stateDir}/applied 2>/dev/null)" ]; then
               verboseEcho "luthier: the declaration is already applied"
             # A switch starts it afresh, with every retry to come, and at
             # once if it was waiting for one.
             elif run rm -f ${stateDir}/attempts \
-              && run ${systemctl} --user start --no-block luthier.service; then
+              && run ${systemctl} --user "$luthier_verb" --no-block luthier.service; then
               echo "luthier: applying the declaration in the background;" \
                 "follow it with journalctl --user -u luthier -f"
             else
@@ -502,11 +530,12 @@ in
           # Downloading and unpacking gigabytes is not what the desktop
           # should wait behind.
           Nice = 10;
-          # The runner asks for another try with its own status, and ends
-          # with 1 once the tries are spent.
-          Restart = "on-failure";
+          # Started again only when the runner asks, with its own status,
+          # which it does a bounded number of times. Restart=on-failure would
+          # also restart a run the OOM killer took, or one that crashed,
+          # every quarter of an hour without end, since neither counts.
+          RestartForceExitStatus = retryStatus;
           RestartSec = "${toString retryMinutes}min";
-          RestartPreventExitStatus = 1;
         };
       };
 

@@ -206,8 +206,7 @@ user service, without waiting for it:
 
 ```console
 $ journalctl --user -u luthier -f       # follow it
-$ systemctl --user status luthier       # running, done, or failed
-$ systemctl --user start luthier        # wait for it to finish
+$ systemctl --user status luthier       # running, waiting to try again, done, or failed
 ```
 
 The service runs only when there is something to do: the declaration (or
@@ -218,14 +217,17 @@ login: what finished stays installed, a download picks up where it stopped,
 and a package caught halfway into place is rolled back first. A run that
 failed is tried again a quarter of an hour later, three times — a network
 not up yet at login is the usual cause — and then at the next switch or
-login. Only one runs at a time. A switch while it runs leaves it to finish,
-and it then applies what that switch declared before it stops.
+login; a switch or login while it waits starts it at once. Only one runs
+at a time. A switch while it runs leaves it to finish, and it then applies
+what that switch declared before it stops.
 
 It tells you how it goes with desktop notifications (`notify`, on by
-default): once a run has taken a minute, again when it is done, and whenever
-it gives up. A run with nothing to download says nothing. A `luthier`
-command started meanwhile that would change the installation waits its turn:
-it says another Luthier process is running.
+default): once a run has taken a minute, then whether a try failed and when
+the next one is, when it is done, and when it gives up, which it always
+says. A run with nothing to download says nothing. While it runs, a
+`luthier` command that would change the installation is refused, saying
+another Luthier process is running; reading — `list`, `info`, `search` —
+works throughout.
 
 The state lives in `luthier/home-manager` under `xdg.stateHome`
 (`~/.local/state` unless you set it): `wanted` links to the script for the

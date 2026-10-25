@@ -239,13 +239,19 @@ the crate map keeps that out of `luthier-manifest`.
   (`X-SwitchMethod = keep-old`), and is started at login by
   `luthier-resume.service`, never wanted by a target itself — the login
   and sd-switch would wait for it. A failed run exits 75 and systemd
-  starts it again 15 minutes later (`Restart=on-failure`), three times,
-  counted per declaration in `attempts`; then it exits 1, which
-  `RestartPreventExitStatus` makes final, until a switch or login clears
-  the count. Unbounded, a download that keeps failing its checksum would
-  be fetched again every quarter of an hour. Notifications are on by
-  default and announce only a run that has taken a minute, so one with
-  nothing to download says nothing. The state directory is under
+  starts it again 15 minutes later (`RestartForceExitStatus`, never
+  `Restart=on-failure`, which would also restart a run the OOM killer
+  took, uncounted and without end), three times, counted per declaration
+  in `attempts`, replaced whole like `applied`; the fourth failure exits
+  1, deletes the count and says so, and nothing restarts it until a
+  switch or login, which also clear the count and use `restart` instead
+  of `start` while it waits (a `start` would queue behind the wait).
+  Unbounded, a download that keeps failing its checksum would be fetched
+  again every quarter of an hour. Notifications are on by default: a run
+  is announced once it has taken a minute, `announced` stays through the
+  retries so the try that succeeds says so however quick, and giving up
+  is always told. The runner's PATH is coreutils alone (no `sed`). The
+  state directory is under
   `xdg.stateHome`, fixed at build time: activation and the user manager
   need not share `$XDG_STATE_HOME`; for the same reason, with
   `xdg.enable`, `luthier` runs with Home Manager's `XDG_CONFIG_HOME`,
