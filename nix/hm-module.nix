@@ -245,9 +245,14 @@ let
     # How many tries of the declaration `wanted` names have failed since the
     # last login or switch: its first line names the declaration, so one a
     # switch replaced starts again from none.
+    # Read with the shell's own `read`: PATH holds coreutils alone.
     failures() {
-      if [ "$(sed -n 1p "$state/attempts" 2>/dev/null)" = "$wanted" ]; then
-        sed -n 2p "$state/attempts"
+      declaration= count=
+      if [ -f "$state/attempts" ]; then
+        { read -r declaration && read -r count; } < "$state/attempts"
+      fi
+      if [ "$declaration" = "$wanted" ] && [ -n "$count" ]; then
+        echo "$count"
       else
         echo 0
       fi
