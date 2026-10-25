@@ -24,3 +24,7 @@ report.json
 /luthier-*.rpm
 /install.sh
 /install.sh.*
+
+# What `nix build` links to its output.
+/result
+/result-*
