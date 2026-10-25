@@ -831,7 +831,14 @@ impl StateError {
         path.display()
       )),
       StateError::Locked => {
-        Some("Wait for it to finish, or remove the lock file if no process is running.".into())
+        // Not "remove the lock file": the lock is the file's, released when
+        // its holder exits, so a lock file left behind holds nothing, and
+        // removing a held one lets a second process write beside the first.
+        Some(
+          "Wait for it to finish. If the Home Manager module is applying your declaration, \
+           `journalctl --user -u luthier -f` follows it."
+            .into(),
+        )
       }
       StateError::StillRequired { dependents, .. } => Some(format!(
         "Remove {} first, or keep this package.",

@@ -82,6 +82,15 @@ check "luthier.service is wanted by no target" \
   lacks '^WantedBy=' "$units/luthier.service"
 check "luthier-resume.service starts at login" \
   grep -qx 'WantedBy=default.target' "$units/luthier-resume.service"
+check "a failed run is started again a quarter of an hour later" \
+  grep -qx 'Restart=on-failure' "$units/luthier.service"
+check "after 15 minutes" grep -qx 'RestartSec=15min' "$units/luthier.service"
+check "unless the runner says it is final" \
+  grep -qx 'RestartPreventExitStatus=1' "$units/luthier.service"
+check "a login starts it with every retry to come" \
+  grep -q 'attempts' "$(sed -n 's/^ExecStart=//p' "$units/luthier-resume.service")"
+check "notifications are on by default" \
+  grep -q 'notify-send' "$(sed -n 's/^ExecStart=//p' "$units/luthier.service")"
 
 echo "== XDG directories"
 apply=$(apply_script "$bg")
@@ -113,10 +122,20 @@ apply=$(apply_script "$ml")
 runner=$(sed -n 's/^ExecStart=//p' "$(unit_dir "$ml")/luthier.service")
 ln -sfn "$apply" "$state/wanted"
 status=$(run_service "$runner" "$T/log/missing")
-check "the run fails" test "$status" = 1
+check "the run fails and asks to be tried again" test "$status" = 75
 check "it says nothing is imported" grep -q 'nothing is imported' "$T/log/missing"
 check "and imports nothing" lacks 'Nothing to do' "$T/log/missing"
 check "it is not recorded as applied" test ! -e "$state/applied"
+check "the failed try is counted" test "$(sed -n 2p "$state/attempts" 2>/dev/null)" = 1
+
+# As systemd would start it again: two more retries, then one that gives up.
+run_service "$runner" "$T/log/retry2" >/dev/null
+status=$(run_service "$runner" "$T/log/retry3")
+check "the third retry still asks for another" test "$status" = 75
+status=$(run_service "$runner" "$T/log/retry4")
+check "the run after the third retry gives up" test "$status" = 1
+check "it says so" grep -q 'trying again at the next login or switch' "$T/log/retry4"
+check "and forgets the count" test ! -e "$state/attempts"
 
 mkdir "$T/samples"
 status=$(run_service "$runner" "$T/log/mounted")

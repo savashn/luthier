@@ -205,10 +205,53 @@ let
         Luthier ${escapeShellArg message} || true
     '';
 
+  # A run that fails is started again this long after, this many times,
+  # before it waits for the next login or switch: a network not up yet at
+  # login fails one, and a download that keeps failing its checksum should
+  # not be fetched again every quarter of an hour.
+  retryMinutes = 15;
+  retries = 3;
+  # The runner's status that asks systemd for another try (EX_TEMPFAIL);
+  # 1 is final.
+  retryStatus = 75;
+
+  # A run is announced once it has taken this long, so one with nothing to
+  # download says nothing, when it starts or when it is done.
+  announceAfterSeconds = 60;
+
   # Applies whatever the last switch declared, until nothing newer is.
   runner = pkgs.writeShellScript "luthier-home-manager" ''
     PATH=${lib.makeBinPath [ pkgs.coreutils ]}
     state=${stateDir}
+
+    # Left by the announcement, so the run knows to say how it ended.
+    rm -f "$state/announced"
+    ${optionalString cfg.notify ''
+      (
+        trap 'kill "$sleeper" 2>/dev/null; exit' TERM
+        sleep ${toString announceAfterSeconds} &
+        sleeper=$!
+        wait "$sleeper"
+        : > "$state/announced"
+        ${notifySend "normal" "Installing the declared packages in the background. You will be told when it is done; journalctl --user -u luthier -f follows it."}
+      ) &
+      announcer=$!
+      trap 'kill "$announcer" 2>/dev/null; rm -f "$state/announced"' EXIT
+    ''}
+    announced() {
+      [ -e "$state/announced" ]
+    }
+
+    # How many tries of the declaration `wanted` names have failed since the
+    # last login or switch: its first line names the declaration, so one a
+    # switch replaced starts again from none.
+    failures() {
+      if [ "$(sed -n 1p "$state/attempts" 2>/dev/null)" = "$wanted" ]; then
+        sed -n 2p "$state/attempts"
+      else
+        echo 0
+      fi
+    }
 
     while :; do
       wanted=$(readlink "$state/wanted") || exit 0
@@ -230,17 +273,39 @@ let
       if "$wanted"; then
         printf '%s\n' "$wanted" > "$state/applied.new"
         mv "$state/applied.new" "$state/applied"
+        rm -f "$state/attempts"
         if [ "$(readlink "$state/wanted")" = "$wanted" ]; then
           echo "The declared packages are installed."
-          ${notifySend "normal" "The declared packages are installed."}
+          if announced; then
+            ${notifySend "normal" "The declared packages are installed."}
+            :
+          fi
           exit 0
         fi
       elif [ "$(readlink "$state/wanted")" = "$wanted" ]; then
-        ${notifySend "critical" "Applying the declaration failed. journalctl --user -u luthier says why."}
+        tries=$(($(failures) + 1))
+        if [ "$tries" -le ${toString retries} ]; then
+          printf '%s\n%s\n' "$wanted" "$tries" > "$state/attempts"
+          echo "Applying failed; trying again in ${toString retryMinutes} minutes ($tries of ${toString retries})" >&2
+          if announced; then
+            ${notifySend "normal" "Some packages could not be installed yet; trying again in ${toString retryMinutes} minutes."}
+            :
+          fi
+          exit ${toString retryStatus}
+        fi
+        rm -f "$state/attempts"
+        echo "Applying failed again after ${toString retries} retries; trying again at the next login or switch" >&2
+        ${notifySend "critical" "Installing the declared packages failed. journalctl --user -u luthier says why."}
         exit 1
       fi
       # A switch declared something newer meanwhile.
     done
+  '';
+
+  # A login starts it afresh, with every retry to come.
+  resume = pkgs.writeShellScript "luthier-resume" ''
+    ${pkgs.coreutils}/bin/rm -f ${stateDir}/attempts
+    exec ${config.systemd.user.systemctlPath} --user start --no-block luthier.service
   '';
 
   background = cfg.apply == "background";
@@ -295,7 +360,8 @@ in
         : In `luthier.service`, a systemd user service the switch starts
           and does not wait for. It runs only when the declaration changed
           or the last run did not finish, one at a time, and after a login
-          if a run was cut short. Follow it with
+          if a run was cut short. A run that fails is tried again a quarter
+          of an hour later, three times. Follow it with
           `journalctl --user -u luthier -f`; `systemctl --user start luthier`
           waits for it.
 
@@ -309,10 +375,12 @@ in
 
     notify = mkOption {
       type = types.bool;
-      default = false;
+      default = true;
       description = ''
-        Send a desktop notification when `luthier.service` has applied the
-        declaration, or failed to. Only with `apply = "background"`.
+        Desktop notifications from `luthier.service`: once a run has taken a
+        minute, again when it is done, and whenever it gives up. A run with
+        nothing to download says nothing. Without a notification daemon
+        nothing is shown. Only with `apply = "background"`.
       '';
     };
 
@@ -390,7 +458,10 @@ in
           luthier = lib.hm.dag.entryAfter [ "reloadSystemd" ] ''
             if [ "$(readlink ${stateDir}/wanted)" = "$(cat ${stateDir}/applied 2>/dev/null)" ]; then
               verboseEcho "luthier: the declaration is already applied"
-            elif run ${systemctl} --user start --no-block luthier.service; then
+            # A switch starts it afresh, with every retry to come, and at
+            # once if it was waiting for one.
+            elif run rm -f ${stateDir}/attempts \
+              && run ${systemctl} --user start --no-block luthier.service; then
               echo "luthier: applying the declaration in the background;" \
                 "follow it with journalctl --user -u luthier -f"
             else
@@ -426,6 +497,11 @@ in
           # Downloading and unpacking gigabytes is not what the desktop
           # should wait behind.
           Nice = 10;
+          # The runner asks for another try with its own status, and ends
+          # with 1 once the tries are spent.
+          Restart = "on-failure";
+          RestartSec = "${toString retryMinutes}min";
+          RestartPreventExitStatus = 1;
         };
       };
 
@@ -437,7 +513,7 @@ in
         Unit.Description = "Finish installing what programs.luthier declares";
         Service = {
           Type = "oneshot";
-          ExecStart = "${config.systemd.user.systemctlPath} --user start --no-block luthier.service";
+          ExecStart = "${resume}";
         };
         Install.WantedBy = [ "default.target" ];
       };

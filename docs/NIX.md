@@ -101,7 +101,7 @@ from the list does **not** uninstall it until you turn on `prune`; see below.
 | `prune` | `false` | Remove installed packages the declaration does not list. |
 | `update` | `true` | Ask for the package list before applying. |
 | `apply` | `"background"` | Apply in a user service the switch does not wait for, or during the switch. |
-| `notify` | `false` | A desktop notification when the service finishes. |
+| `notify` | `true` | Desktop notifications from the service when a run is long, done, or given up. |
 | `systemPlugins` | `true` | Count plugins from nixpkgs or your distribution as engines. |
 | `locations.cache` | `null` | Where downloaded archives go. |
 | `locations.libraries` | `null` | Where sample libraries go. |
@@ -212,11 +212,20 @@ $ systemctl --user start luthier        # wait for it to finish
 
 The service runs only when there is something to do: the declaration (or
 the luthier package) changed, or the last run did not finish. Applying is
-recorded as done only once every step succeeded, so a run that failed or was
-cut short is tried again on the next switch, and at the next login. Only one
-runs at a time. A switch while it runs leaves it to finish, and it then
-applies what that switch declared before it stops. With `notify = true` it
-sends a desktop notification when it is done, or when it failed.
+recorded as done only once every step succeeded, so a run that was cut short
+— the machine shut down, the session ended — is tried again at the next
+login: what finished stays installed, a download picks up where it stopped,
+and a package caught halfway into place is rolled back first. A run that
+failed is tried again a quarter of an hour later, three times — a network
+not up yet at login is the usual cause — and then at the next switch or
+login. Only one runs at a time. A switch while it runs leaves it to finish,
+and it then applies what that switch declared before it stops.
+
+It tells you how it goes with desktop notifications (`notify`, on by
+default): once a run has taken a minute, again when it is done, and whenever
+it gives up. A run with nothing to download says nothing. A `luthier`
+command started meanwhile that would change the installation waits its turn:
+it says another Luthier process is running.
 
 The state lives in `luthier/home-manager` under `xdg.stateHome`
 (`~/.local/state` unless you set it): `wanted` links to the script for the

@@ -238,7 +238,14 @@ the crate map keeps that out of `luthier-manifest`.
   something newer meanwhile, is never restarted by sd-switch
   (`X-SwitchMethod = keep-old`), and is started at login by
   `luthier-resume.service`, never wanted by a target itself — the login
-  and sd-switch would wait for it. The state directory is under
+  and sd-switch would wait for it. A failed run exits 75 and systemd
+  starts it again 15 minutes later (`Restart=on-failure`), three times,
+  counted per declaration in `attempts`; then it exits 1, which
+  `RestartPreventExitStatus` makes final, until a switch or login clears
+  the count. Unbounded, a download that keeps failing its checksum would
+  be fetched again every quarter of an hour. Notifications are on by
+  default and announce only a run that has taken a minute, so one with
+  nothing to download says nothing. The state directory is under
   `xdg.stateHome`, fixed at build time: activation and the user manager
   need not share `$XDG_STATE_HOME`; for the same reason, with
   `xdg.enable`, `luthier` runs with Home Manager's `XDG_CONFIG_HOME`,

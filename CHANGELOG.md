@@ -46,8 +46,11 @@ about.
   `programs.luthier.apply = "background"`, the default, has the switch start
   `luthier.service`, a systemd user service, and not wait for it; it runs
   only when the declaration changed or the last run did not finish, and
-  picks up a switch made while it runs. `"activation"` keeps the old way.
-  `programs.luthier.notify` sends a desktop notification when it is done.
+  picks up a switch made while it runs. A run cut short resumes at the next
+  login, and one that failed is tried again a quarter of an hour later,
+  three times. Desktop notifications (`programs.luthier.notify`, on by
+  default) say when a run has taken a minute, when it is done, and when it
+  gives up. `"activation"` keeps the old way.
 
 ### Changed
 
