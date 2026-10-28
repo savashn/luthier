@@ -167,7 +167,10 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// rather than walking every system plugin directory for each plan.
 ///
 /// Each copy once, however many roots reach it: on Arch `/usr/lib64` is a
-/// link to `/usr/lib`. A system root that is the managed root for `format`
+/// link to `/usr/lib`. Told apart by the directory a copy sits in, not by
+/// what it links to: two Nix profiles each link a plugin into the same
+/// store path, and a host finds it through both. A system root that is the
+/// managed root for `format`
 /// is skipped — `LV2_PATH` often names `~/.lv2` — since what is there is
 /// this manager's own copy, or the unmanaged one `install::plan` refuses to
 /// overwrite.
@@ -182,7 +185,7 @@ pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
     // resolving paths is only worth it for the rare name that is there.
     .filter(|(_, path)| path.exists())
     .filter(|(root, _)| !managed.is_some_and(|managed| same_directory(managed, root)))
-    .filter(|(_, path)| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())))
+    .filter(|(root, _)| seen.insert(root.canonicalize().unwrap_or_else(|_| root.to_path_buf())))
     .map(|(_, path)| path)
     .collect()
 }
@@ -482,15 +485,21 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
 
   #[test]
   fn every_copy_is_found_and_each_only_once() {
-    // NixOS with the plugin in the system profile and in the user's: both
-    // are named, so removing one does not reveal the other a run later.
+    // NixOS with the plugin in the system profile and in the user's, each
+    // a link to the same store path: a host finds it through both, so both
+    // are named, and removing one does not reveal the other a run later.
     // Arch links /usr/lib64 to /usr/lib: one copy, however it is reached.
     let dir = tempfile::tempdir().unwrap();
     let layout = layout_with_plugins(dir.path());
+    let store = dir
+      .path()
+      .join("nix/store/abc-lsp-plugins/lib/lv2/lsp-plugins.lv2");
+    std::fs::create_dir_all(&store).unwrap();
     let system = dir.path().join("run/current-system/sw/lib/lv2");
     let profile = dir.path().join("nix-profile/lib/lv2");
     for root in [&system, &profile] {
-      std::fs::create_dir_all(root.join("lsp-plugins.lv2")).unwrap();
+      std::fs::create_dir_all(root).unwrap();
+      std::os::unix::fs::symlink(&store, root.join("lsp-plugins.lv2")).unwrap();
     }
     let link = dir.path().join("lib64-lv2");
     std::os::unix::fs::symlink(&system, &link).unwrap();
