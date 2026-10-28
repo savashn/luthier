@@ -300,6 +300,41 @@ impl Fixture {
     std::fs::write(self.registry().join(format!("plugins/{id}.toml")), manifest).unwrap();
   }
 
+  /// An `external` engine no source can install, present wherever an
+  /// `engine.clap` is found.
+  fn add_external_engine(&self) {
+    std::fs::write(
+      self.registry().join("plugins/engine.toml"),
+      concat!(
+        "schema = 1\n",
+        "id = \"engine\"\n",
+        "name = \"Engine\"\n",
+        "kind = \"external\"\n",
+        "category = \"instrument\"\n",
+        "license = { kind = \"open-source\", spdx = \"BSD-2-Clause\" }\n",
+        "description = \"An engine with no redistributable binary.\"\n",
+        "\n[[detect]]\n",
+        "format = \"clap\"\n",
+        "name = \"engine.clap\"\n",
+      ),
+    )
+    .unwrap();
+  }
+
+  /// Moves plugins to a directory of their own, as `location set plugins`
+  /// does, and returns it.
+  fn move_plugins(&self) -> PathBuf {
+    let disk = self.dir.path().join("external/plugins");
+    std::fs::create_dir_all(&disk).unwrap();
+    self
+      .luthier()
+      .args(["location", "set", "plugins"])
+      .arg(&disk)
+      .assert()
+      .success();
+    disk
+  }
+
   /// Overwrites a manifest's checksum, simulating a corrupted download.
   fn corrupt_checksum(&self, id: &str) {
     let path = self.registry().join(format!("plugins/{id}.toml"));
@@ -3057,22 +3092,7 @@ fn a_blocked_plan_reports_no_system_copy() {
   std::fs::write(system.join("clap/Needy.clap"), elf_shared_object()).unwrap();
   let artifact = fixture.make_artifact("Needy");
   fixture.add_plugin("needy", "1.0.0", &artifact, &["engine"]);
-  std::fs::write(
-    fixture.registry().join("plugins/engine.toml"),
-    concat!(
-      "schema = 1\n",
-      "id = \"engine\"\n",
-      "name = \"Engine\"\n",
-      "kind = \"external\"\n",
-      "category = \"instrument\"\n",
-      "license = { kind = \"open-source\", spdx = \"BSD-2-Clause\" }\n",
-      "description = \"An engine with no redistributable binary.\"\n",
-      "\n[[detect]]\n",
-      "format = \"clap\"\n",
-      "name = \"engine.clap\"\n",
-    ),
-  )
-  .unwrap();
+  fixture.add_external_engine();
 
   let output = fixture
     .luthier_seeing(&system)
@@ -3082,6 +3102,64 @@ fn a_blocked_plan_reports_no_system_copy() {
   assert_eq!(output.status.code(), Some(6));
   let stderr = String::from_utf8_lossy(&output.stderr);
   assert!(!stderr.contains("already holds"), "{stderr}");
+}
+
+#[test]
+fn a_copy_left_in_the_home_directory_is_a_second_one_once_plugins_move() {
+  // After `location set plugins`, a host still searches ~/.clap, and a
+  // copy put there by hand is found beside the one on the other disk.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(&system).unwrap();
+  let left = fixture.clap_dir().join("Moved.clap");
+  std::fs::create_dir_all(fixture.clap_dir()).unwrap();
+  std::fs::write(&left, elf_shared_object()).unwrap();
+  let disk = fixture.move_plugins();
+  let artifact = fixture.make_artifact("Moved");
+  fixture.add_plugin("moved", "1.0.0", &artifact, &[]);
+
+  let assert = fixture
+    .luthier_seeing(&system)
+    .args(["install", "moved"])
+    .assert()
+    .success();
+  let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+  let warning = format!(
+    "moved installs Moved.clap, which {} already holds",
+    fixture.clap_dir().display()
+  );
+  assert_eq!(stderr.matches(&warning).count(), 1, "{stderr}");
+  assert!(disk.join("clap/Moved.clap").is_file());
+  assert!(left.is_file(), "the copy that was there is left alone");
+}
+
+#[test]
+fn an_engine_left_in_the_home_directory_is_found_once_plugins_move() {
+  // An engine installed by hand in ~/.clap before plugins moved is still
+  // loaded from there, so what needs it installs.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(&system).unwrap();
+  std::fs::create_dir_all(fixture.clap_dir()).unwrap();
+  std::fs::write(fixture.clap_dir().join("engine.clap"), elf_shared_object()).unwrap();
+  fixture.move_plugins();
+  let artifact = fixture.make_artifact("Player");
+  fixture.add_plugin("player", "1.0.0", &artifact, &["engine"]);
+  fixture.add_external_engine();
+
+  fixture
+    .luthier_seeing(&system)
+    .args(["install", "player"])
+    .assert()
+    .success();
+
+  // Not seeing the system, the engine is missing, as it should be.
+  let output = fixture
+    .luthier()
+    .args(["install", "--force", "player"])
+    .output()
+    .unwrap();
+  assert_eq!(output.status.code(), Some(6));
 }
 
 #[test]

@@ -524,13 +524,20 @@ impl Layout {
     self
   }
 
-  /// Takes `<dir>/clap`, `<dir>/vst3` and `<dir>/lv2` as the only system
-  /// roots: a distribution's plugin directories, for a suite that must not
-  /// read the machine's own.
+  /// Takes `<dir>/clap`, `<dir>/vst3` and `<dir>/lv2` as a distribution's
+  /// plugin directories, for a suite that must not read the machine's own.
+  ///
+  /// After the layout's home plugin directories, as
+  /// [`Layout::default_system_roots`] lists them: for a layout whose
+  /// locations are not applied yet, which this is for, those are its
+  /// plugin roots, and they are what a relocation leaves behind.
   pub fn with_system_roots_in(self, dir: &Path) -> Self {
     let roots = Self::relocated_plugin_roots(dir)
       .into_iter()
-      .map(|(format, root)| (format, vec![root]))
+      .map(|(format, root)| {
+        let home = self.plugin_roots.get(&format).cloned();
+        (format, home.into_iter().chain([root]).collect())
+      })
       .collect();
     self.with_system_roots(roots)
   }
