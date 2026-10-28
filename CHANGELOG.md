@@ -15,6 +15,27 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **Installing a plugin a system directory already holds says so.** A
+  plugin from apt, dnf or Nix and the same one from here are both found
+  by a host, which lists it twice or loads whichever it reads first.
+  Where the manifest names the plugin, the plan says it before anything
+  is downloaded; where it is read from the archive, as for everything
+  from the Open Audio Stack registry, it is said once the package is
+  installed. It is a warning, never a refusal. `--json` lists them as
+  `on_system` in the outcome, for the packages that installed. Matched by
+  name, at the top of each directory: a copy named differently, or in a
+  vendor's subdirectory, goes unnoticed.
+
+### Changed
+
+- **Plugins moved with `location set plugins` leave `~/.clap`, `~/.vst3`
+  and `~/.lv2` searched as the system's**, since every host still looks
+  there. A copy put there by hand is reported as a second one, and an
+  engine or an `external` package installed there by hand is found, as
+  one in `/usr/lib` is. `--no-system-plugins` still sees none of them.
+
 ## [0.6.0] — 2026-10-25
 
 ### Added

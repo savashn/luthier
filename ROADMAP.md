@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 506 tests, fully offline. `update`, `search`, `info`, `install`,
+Four crates, 516 tests, fully offline. `update`, `search`, `info`, `install`,
 `list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
 `pin`/`unpin`, and `export`/`import` all work end to end against real
 packages; the verbs are apt's and Homebrew's (since 0.5: 0.4 called them
