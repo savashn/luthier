@@ -222,6 +222,9 @@ pub struct Session {
   /// was the first answer with more stat calls.
   detected_externals: std::sync::OnceLock<BTreeSet<PackageId>>,
   detected_engines: std::sync::OnceLock<BTreeSet<PackageId>>,
+  /// The plugins in the system roots, for telling a second copy; walked
+  /// once a plan or an install first asks, for the same reason.
+  system_plugins: std::sync::OnceLock<scan::SystemPlugins>,
 }
 
 impl Session {
@@ -243,6 +246,7 @@ impl Session {
       index: std::sync::OnceLock::new(),
       detected_externals: std::sync::OnceLock::new(),
       detected_engines: std::sync::OnceLock::new(),
+      system_plugins: std::sync::OnceLock::new(),
     })
   }
 
@@ -258,6 +262,21 @@ impl Session {
     self
       .detected_engines
       .get_or_init(|| scan::detect_engines(&self.layout, index))
+  }
+
+  /// What `rules` would place that a system directory already holds.
+  fn already_on_system(
+    &self,
+    id: &PackageId,
+    rules: &[luthier_manifest::InstallRule],
+  ) -> Vec<AlreadyOnSystem> {
+    if rules.is_empty() {
+      return Vec::new();
+    }
+    let plugins = self
+      .system_plugins
+      .get_or_init(|| scan::SystemPlugins::of(&self.layout));
+    AlreadyOnSystem::of(id, rules, plugins, &self.layout)
   }
 
   pub fn offline(mut self, offline: bool) -> Self {
@@ -747,7 +766,7 @@ impl Session {
       // The installer's own choice of rules: an artifact that defers to its
       // archive installs what the archive holds, whatever it declares.
       .filter(|(_, artifact)| !artifact.derive_install)
-      .flat_map(|(id, artifact)| AlreadyOnSystem::of(id, &artifact.install, &self.layout))
+      .flat_map(|(id, artifact)| self.already_on_system(id, &artifact.install))
       .collect()
   }
 
@@ -1347,7 +1366,7 @@ impl Session {
     // still report a second copy of what never arrived. Every rule, not
     // only those read from the archive: the plan's preview may be silent
     // (`--json`), or out of date by the time the user answered it.
-    let on_system = AlreadyOnSystem::of(package.id(), rules, &self.layout);
+    let on_system = self.already_on_system(package.id(), rules);
 
     let record = InstalledPackage {
       id: package.id().clone(),
@@ -3222,12 +3241,18 @@ pub struct AlreadyOnSystem {
 impl AlreadyOnSystem {
   /// What system directories hold of what `rules` install, one entry per
   /// copy.
-  fn of(id: &PackageId, rules: &[luthier_manifest::InstallRule], layout: &Layout) -> Vec<Self> {
+  fn of(
+    id: &PackageId,
+    rules: &[luthier_manifest::InstallRule],
+    plugins: &scan::SystemPlugins,
+    layout: &Layout,
+  ) -> Vec<Self> {
     rules
       .iter()
       .flat_map(|rule| {
         let plugin = rule.installed_name();
-        scan::on_system(layout, &rule.format, plugin)
+        plugins
+          .copies_of(layout, &rule.format, plugin)
           .into_iter()
           .map(move |path| Self {
             id: id.to_string(),

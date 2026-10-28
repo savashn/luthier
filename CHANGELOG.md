@@ -34,9 +34,9 @@ about.
   is downloaded; where it is read from the archive, as for everything
   from the Open Audio Stack registry, it is said once the package is
   installed. It is a warning, never a refusal. `--json` lists them as
-  `on_system` in the outcome, for the packages that installed. Matched by
-  name, at the top of each directory: a copy named differently, or in a
-  vendor's subdirectory, goes unnoticed.
+  `on_system` in the outcome, for the packages that installed. Found in a
+  vendor's folder below a CLAP or VST3 directory too, as a host finds it.
+  Matched by name: a copy named differently goes unnoticed.
 
 ## [0.6.0] — 2026-10-25
 

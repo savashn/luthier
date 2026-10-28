@@ -286,8 +286,11 @@ the outcome reports every one, for the packages that installed, since a rule
 read from an archive names nothing until the archive is open and the system
 may have changed while the user read the preview. A front end says what the
 outcome holds and its preview did not (`InstallOutcome::not_previewed`).
-Only the top of each system directory is looked at, though CLAP and VST3
-hosts search below it too: a copy in a subdirectory goes unnoticed.
+Below a CLAP or VST3 system directory, vendors' folders are followed a few
+levels down, as hosts search them (`scan::SystemPlugins`), never into a
+plugin; an LV2 host loads only the bundles at the top, and LV2 is searched
+only there. The system directories are walked once per command, when a plan
+or an install first asks.
 
 `~/.clap`, `~/.vst3` and `~/.lv2` are system roots as much as `/usr/lib/clap`
 is — `~/.lv2` only while `LV2_PATH` does not replace the default — because
