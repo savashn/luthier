@@ -15,19 +15,7 @@ about.
 
 ## [Unreleased]
 
-### Changed
-
-- **Plugins moved with `location set plugins` leave `~/.clap`, `~/.vst3`
-  and `~/.lv2` searched as the system's**, since every host still looks
-  there — `~/.lv2` only while `LV2_PATH` does not replace the default. A
-  copy put there by hand is reported as a second one, and an engine or an
-  `external` package installed there by hand is found, as one in
-  `/usr/lib` is. A link back to the copy Luthier installed is not a second
-  one. `--no-system-plugins` still sees none of them.
-- **An engine or an `external` package in a vendor's folder is found**
-  (`/usr/lib/vst3/<vendor>/sfizz.vst3`), as a CLAP or VST3 host finds it;
-  only the top of each directory was looked at. LV2 is still looked for
-  only at the top, which is all an LV2 host loads.
+## [0.7.0] — 2026-10-28
 
 ### Added
 
@@ -41,6 +29,20 @@ about.
   `on_system` in the outcome, for the packages that installed. Found in a
   vendor's folder below a CLAP or VST3 directory too, as a host finds it.
   Matched by name: a copy named differently goes unnoticed.
+
+### Changed
+
+- **Plugins moved with `location set plugins` leave `~/.clap`, `~/.vst3`
+  and `~/.lv2` searched as the system's**, since every host still looks
+  there — `~/.lv2` only while `LV2_PATH` does not replace the default. A
+  copy put there by hand is reported as a second one, and an engine or an
+  `external` package installed there by hand is found, as one in
+  `/usr/lib` is. A link back to the copy Luthier installed is not a second
+  one. `--no-system-plugins` still sees none of them.
+- **An engine or an `external` package in a vendor's folder is found**
+  (`/usr/lib/vst3/<vendor>/sfizz.vst3`), as a CLAP or VST3 host finds it;
+  only the top of each directory was looked at. LV2 is still looked for
+  only at the top, which is all an LV2 host loads.
 
 ## [0.6.0] — 2026-10-25
 
@@ -491,7 +493,8 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
-[Unreleased]: https://github.com/savashn/luthier/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/savashn/luthier/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/savashn/luthier/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/savashn/luthier/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/savashn/luthier/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/savashn/luthier/compare/v0.3.0...v0.4.0

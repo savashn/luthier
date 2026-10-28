@@ -42,7 +42,7 @@ extras exists to correct OAS, not to host collections of its own. Neither is
 signed: both are trusted on HTTPS and on GitHub, as the binary is. The release
 workflow attests the build provenance of everything it publishes.
 
-`v0.6.0` is the latest release: a static binary for Linux x86_64 and one for
+`v0.7.0` is the latest release: a static binary for Linux x86_64 and one for
 aarch64, each as a tarball, a .deb and an .rpm, an install script that picks the
 tarball for the machine, and extras, from the public repository at `savashn/luthier`,
 published straight from a `v*` tag. Phase 0 is done.
