@@ -111,10 +111,13 @@ pub struct Layout {
   /// Where each plugin format is installed. Keyed by format so adding one is
   /// a data change rather than a new field.
   plugin_roots: BTreeMap<Format, PathBuf>,
-  /// Read-only locations searched for software this manager does not install:
-  /// distribution packages, vendor installers, or whatever a container image
-  /// baked in. Never written to, never deleted from, and deliberately absent
-  /// from [`Layout::is_managed_location`].
+  /// Locations searched for software this manager did not install:
+  /// distribution packages, vendor installers, whatever a container image
+  /// baked in, and the home plugin directories a host searches first.
+  /// Being one says nothing about ownership: `~/.clap` is also the managed
+  /// root until plugins move elsewhere. What may be written or deleted is
+  /// [`Layout::is_managed_location`]'s to say, from the managed roots
+  /// alone, and nothing outside them ever is.
   system_roots: BTreeMap<Format, Vec<PathBuf>>,
   /// The user's choices this layout honours, kept so a command can refuse
   /// when one of them is not there.
@@ -221,9 +224,11 @@ impl Layout {
   /// [`Layout::rooted_at`], seeing the machine's plugins as `--root` does
   /// unless told not to: what writes stays confined, what is read is not.
   ///
-  /// The home plugin directories it searches are the root's own, not the
+  /// The home plugin directories it adds are the root's own, not the
   /// user's real `~/.clap`: that is another installation's managed root,
   /// and a copy there is not a second copy of anything this one installs.
+  /// A search path variable naming the real one is honoured all the same,
+  /// as everywhere: it says where the hosts on this machine look.
   pub fn rooted_seeing_the_machine(root: impl AsRef<Path>) -> Self {
     let root = root.as_ref();
     Self::rooted_at(root).with_system_roots(Self::default_system_roots(root))
@@ -535,8 +540,10 @@ impl Layout {
   /// The uninstaller consults this before deleting anything, so a corrupted
   /// or hand-edited state file still cannot make it remove `/etc/passwd`.
   ///
-  /// System roots are *not* managed locations. Detection may read
-  /// `/usr/lib/lv2`; nothing may ever write to or delete from it.
+  /// Only the managed roots count, never the system roots as such.
+  /// Detection may read `/usr/lib/lv2`; nothing may ever write to or delete
+  /// from it. A home plugin directory is both while it is the managed root,
+  /// and managed for that reason alone.
   ///
   /// The path must lie strictly *below* a root, by plain names only. A root
   /// itself is not a location: `~/.clap` holds plugins this manager never

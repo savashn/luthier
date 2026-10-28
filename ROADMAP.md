@@ -481,11 +481,15 @@ there is reported; a link into the managed root is not a second copy;
 calling `with_system_roots` after `with_locations` changes none of this; and
 the changelog says so under *Changed*.~~ Done: `system_roots_from` lists
 the layout's own home directories first, and `scan::on_system` skips a
-copy that really is the managed one when it finds it. Point 2 was done
-otherwise than it says: filtering the managed root out of the system
-roots in `Layout` resolved every root of every command up front and went
-stale in a long session; deciding where something is found needs
-neither, and has no order to get wrong.
+copy that really is the managed one when it finds it. Points 1 and 2 were
+done otherwise than they say. The home directories come from the
+layout's own home, not `$HOME`: a `--root` run that searched the user's
+real `~/.clap` called another installation's managed copies second ones
+and counted its engines, so it searches the root's (a search path
+variable naming the real one is still honoured). And filtering the
+managed root out of the system roots in `Layout` resolved every root of
+every command up front and went stale in a long session; deciding where
+something is found needs neither, and has no order to get wrong.
 
 ---
 

@@ -9,9 +9,10 @@
 //! They have two different scopes, which is why they have different
 //! functions. [`scan`] looks only at the roots this manager installs into,
 //! because that is the only place a destination collision can happen.
-//! [`detect_externals`] and [`detect_engines`] also search the read-only system
-//! roots, because an `external` package is by definition something the
-//! distribution or a container provided, and an engine very often is.
+//! [`detect_externals`] and [`detect_engines`] also search the system roots,
+//! which this module only reads, because an `external` package is by
+//! definition something the distribution or a container provided, and an
+//! engine very often is.
 //! [`on_system`] searches only those, for a second copy of a plugin about to
 //! be installed.
 
@@ -179,12 +180,17 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// something is found, by where it really is.
 pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
   let mut seen = BTreeSet::new();
+  let managed_root = layout.plugin_root(format);
   // Where the managed copy really is: resolved once something is found,
   // which is rarely, and then only once.
   let mut managed_copy = None;
   layout
     .system_roots(format)
     .iter()
+    // The managed root as the system roots spell it — `~/.clap` until
+    // plugins move — is decided by name, so its own copy is never called a
+    // second one because resolving a path happened to fail.
+    .filter(|root| Some(root.as_path()) != managed_root)
     .map(|root| (root, root.join(name)))
     // Existence first: it rules out nearly every root with one stat, and
     // resolving paths is only worth it for the rare name that is there.
