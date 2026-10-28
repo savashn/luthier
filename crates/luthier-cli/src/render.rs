@@ -301,7 +301,8 @@ impl Reporter {
     }
   }
 
-  pub fn install_outcome(&self, outcome: &InstallOutcome) {
+  /// What an install did, after `previewed`, the plan the preview showed.
+  pub fn install_outcome(&self, outcome: &InstallOutcome, previewed: &InstallPlan) {
     if self.json {
       return self.emit(outcome);
     }
@@ -311,9 +312,12 @@ impl Reporter {
     for warning in &outcome.warnings {
       self.warn(warning);
     }
-    // The preview said the rest.
-    for found in outcome.on_system.iter().filter(|found| !found.foreseen) {
-      self.warn(found.to_string());
+    // What the preview already said is not said twice; what changed
+    // since, or what only the archive named, is said now.
+    for found in &outcome.on_system {
+      if !previewed.on_system.contains(found) {
+        self.warn(found.to_string());
+      }
     }
     for package in &outcome.installed {
       if package.formats.is_empty() {
@@ -394,11 +398,11 @@ impl Reporter {
   }
 
   /// An import's result: one document under `--json`, whatever it did.
-  pub fn import_outcome(&self, outcome: &ImportOutcome) {
+  pub fn import_outcome(&self, outcome: &ImportOutcome, previewed: &InstallPlan) {
     if self.json {
       return self.emit(outcome);
     }
-    self.install_outcome(&outcome.installed);
+    self.install_outcome(&outcome.installed, previewed);
     for pin in &outcome.reapplied_pins {
       self.note(format!("Reapplied pin: {pin}"));
     }

@@ -681,7 +681,6 @@ impl Session {
       });
 
     Ok(InstallPlan {
-      blocked,
       steps: resolution
         .order
         .iter()
@@ -718,7 +717,12 @@ impl Session {
         .into_iter()
         .map(|found| self.describe_unplayable(found, index))
         .collect(),
-      on_system: self.on_system(&resolution),
+      on_system: if blocked.is_none() {
+        self.on_system(&resolution)
+      } else {
+        Vec::new()
+      },
+      blocked,
       space,
       marked_requested: requested_marks(&resolution, state, purpose, ids),
       kept: resolution.kept.iter().map(|kept| kept.id.clone()).collect(),
@@ -738,11 +742,12 @@ impl Session {
   /// archive is open; `install_package` checks every release there.
   fn on_system(&self, resolution: &Resolution<'_>) -> Vec<AlreadyOnSystem> {
     resolution
-      .order
-      .iter()
-      .filter(|package| package.disposition != Disposition::Satisfied)
+      .to_install()
       .filter_map(|package| Some((package.id(), package.artifact?)))
-      .flat_map(|(id, artifact)| AlreadyOnSystem::of(id, &artifact.install, true, &self.layout))
+      // The installer's own choice of rules: an artifact that defers to its
+      // archive installs what the archive holds, whatever it declares.
+      .filter(|(_, artifact)| !artifact.derive_install)
+      .flat_map(|(id, artifact)| AlreadyOnSystem::of(id, &artifact.install, &self.layout))
       .collect()
   }
 
@@ -1339,11 +1344,10 @@ impl Session {
     transaction.commit()?;
 
     // Only once it is installed, or a failure under `--keep-going` would
-    // still report a second copy of what never arrived. Rules read from the
-    // archive name their plugins only now; a manifest's own the plan
-    // could already report.
-    let on_system =
-      AlreadyOnSystem::of(package.id(), rules, !artifact.derive_install, &self.layout);
+    // still report a second copy of what never arrived. Every rule, not
+    // only those read from the archive: the plan's preview may be silent
+    // (`--json`), or out of date by the time the user answered it.
+    let on_system = AlreadyOnSystem::of(package.id(), rules, &self.layout);
 
     let record = InstalledPackage {
       id: package.id().clone(),
@@ -3205,7 +3209,7 @@ pub struct EngineChoice {
 ///
 /// Reported, never refused. The user may want the newer build, and removing
 /// the other copy is their package manager's job, not this one's.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AlreadyOnSystem {
   pub id: String,
   pub format: String,
@@ -3213,20 +3217,11 @@ pub struct AlreadyOnSystem {
   pub plugin: String,
   /// The copy already there.
   pub path: PathBuf,
-  /// Whether the plan already reported it, because the manifest names the
-  /// plugin. A front end that showed the plan need not say it again; one
-  /// that did not, under `--json` or reading only the outcome, has it here.
-  pub foreseen: bool,
 }
 
 impl AlreadyOnSystem {
   /// What a system directory holds of what `rules` install.
-  fn of(
-    id: &PackageId,
-    rules: &[luthier_manifest::InstallRule],
-    foreseen: bool,
-    layout: &Layout,
-  ) -> Vec<Self> {
+  fn of(id: &PackageId, rules: &[luthier_manifest::InstallRule], layout: &Layout) -> Vec<Self> {
     rules
       .iter()
       .filter_map(|rule| {
@@ -3237,7 +3232,6 @@ impl AlreadyOnSystem {
           format: rule.format.to_string(),
           plugin: plugin.to_string(),
           path,
-          foreseen,
         })
       })
       .collect()
@@ -3266,8 +3260,12 @@ pub struct InstallPlan {
   pub unplayable: Vec<UnplayableContent>,
   /// Plugins it installs that a system directory already holds. Only those
   /// a manifest names: a release whose rules are read from its archive
-  /// names nothing until the archive is open. [`InstallOutcome::on_system`]
-  /// has every one.
+  /// names nothing until the archive is open. Empty for a plan that is
+  /// blocked, which installs nothing.
+  ///
+  /// A preview. [`InstallOutcome::on_system`] has every one still true once
+  /// installed; a front end that showed this one need not repeat what
+  /// appears in both, but must say what appears only there.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub on_system: Vec<AlreadyOnSystem>,
   /// Why this plan cannot be carried out, if it cannot.
@@ -3411,7 +3409,7 @@ pub struct InstallOutcome {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub warnings: Vec<String>,
   /// Plugins installed that a system directory already holds, for the
-  /// packages that installed; each says whether the plan reported it.
+  /// packages that installed, whether or not the plan foresaw them.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub on_system: Vec<AlreadyOnSystem>,
   /// Packages an upgrade plan named that another command removed before

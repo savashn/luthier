@@ -14,7 +14,7 @@ use luthier_core::api::{Session, Storage};
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
-use luthier_manifest::{Format, PackageId};
+use luthier_manifest::PackageId;
 use progress::{BarProgress, Display};
 use render::Reporter;
 use std::io::{IsTerminal, Write};
@@ -110,37 +110,25 @@ fn init_logging(global: &GlobalArgs) {
 /// *seen*. They are orthogonal, so a rooted layout still sees the machine
 /// unless `--no-system-plugins` says otherwise. `Layout::rooted_at` itself
 /// stays hermetic, which is what keeps the library's own tests independent of
-/// the machine running them.
+/// the machine running them. The hidden `--system-plugins-in` replaces what
+/// is seen outright, for the suite.
 fn home_layout(global: &GlobalArgs) -> Result<Layout> {
-  if let Some(dir) = &global.system_plugins_in {
-    let layout = match &global.root {
-      Some(root) => Layout::rooted_at(root),
-      None => Layout::from_env()?,
-    };
-    return Ok(
-      layout.with_system_roots(
-        [
-          (Format::Clap, "clap"),
-          (Format::Vst3, "vst3"),
-          (Format::Lv2, "lv2"),
-        ]
-        .into_iter()
-        .map(|(format, name)| (format, vec![dir.join(name)]))
-        .collect(),
-      ),
-    );
-  }
-  Ok(match &global.root {
-    Some(root) => {
-      let layout = Layout::rooted_at(root);
-      if global.no_system_plugins {
-        layout
-      } else {
-        layout.with_system_roots(Layout::default_system_roots())
-      }
-    }
-    None if global.no_system_plugins => Layout::from_env()?.with_system_roots(Default::default()),
+  let layout = match &global.root {
+    Some(root) => Layout::rooted_at(root),
     None => Layout::from_env()?,
+  };
+  Ok(if let Some(dir) = &global.system_plugins_in {
+    // Absolute, as a search path entry must be: relative to wherever the
+    // command happened to start is no place to look for plugins.
+    let dir = std::path::absolute(dir)
+      .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
+    layout.with_system_roots_in(&dir)
+  } else if global.no_system_plugins {
+    layout.with_system_roots(Default::default())
+  } else if global.root.is_some() {
+    layout.with_system_roots(Layout::default_system_roots())
+  } else {
+    layout
   })
 }
 
@@ -391,7 +379,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
 
       let mut bar = progress(global);
       let outcome = session.import(&env_file, *prune, &plan, &mut bar).await?;
-      reporter.import_outcome(&outcome);
+      reporter.import_outcome(&outcome, &plan);
       if let Some(error) = outcome.installed.incomplete() {
         return Err(error);
       }
@@ -468,7 +456,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
 
       let mut bar = progress(global);
       let outcome = session.install(&ids, *force, &mut bar).await?;
-      reporter.install_outcome(&outcome);
+      reporter.install_outcome(&outcome, &plan);
       if let Some(error) = outcome.incomplete() {
         return Err(error);
       }
@@ -518,7 +506,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
       let mut bar = progress(global);
       let outcome = session.upgrade(&plan, &mut bar).await?;
-      reporter.install_outcome(&outcome);
+      reporter.install_outcome(&outcome, &plan);
       if let Some(error) = outcome.incomplete() {
         return Err(error);
       }
