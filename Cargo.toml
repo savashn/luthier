@@ -42,7 +42,7 @@ liblzma = { version = "0.4.9", features = ["static"] }
 # Deflate and BZip2 are the methods 7-Zip offers beside LZMA that Luthier
 # already carries a decoder for, through zip; FreePats publishes Deflate.
 sevenz-rust2 = { version = "0.24.1", default-features = false, features = ["deflate", "bzip2"] }
-tracing = "0.1.44"
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 indicatif = "0.18.6"
 jiff = { version = "0.2.38", features = ["serde"] }
