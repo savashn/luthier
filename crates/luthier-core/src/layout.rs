@@ -116,10 +116,6 @@ pub struct Layout {
   /// baked in. Never written to, never deleted from, and deliberately absent
   /// from [`Layout::is_managed_location`].
   system_roots: BTreeMap<Format, Vec<PathBuf>>,
-  /// `system_roots` less each format's managed root, by whatever spelling,
-  /// which is what is searched. Only `change_roots` writes either, and works
-  /// this out again, so no order of building a layout can leave it stale.
-  searched: BTreeMap<Format, Vec<PathBuf>>,
   /// The user's choices this layout honours, kept so a command can refuse
   /// when one of them is not there.
   locations: Locations,
@@ -149,25 +145,19 @@ impl Layout {
       }
     };
     let data = xdg("XDG_DATA_HOME", ".local/share").join("luthier");
-    let mut layout = Self {
+    Ok(Self {
       state: data.join("state"),
       libraries: data.join("libraries"),
       data,
       cache: xdg("XDG_CACHE_HOME", ".cache").join("luthier"),
       config: xdg("XDG_CONFIG_HOME", ".config").join("luthier"),
-      plugin_roots: BTreeMap::new(),
-      system_roots: BTreeMap::new(),
-      searched: BTreeMap::new(),
+      plugin_roots: Self::default_plugin_roots(&home),
+      // The home `dirs` found, also when `$HOME` is unset, so the home
+      // plugin directories are searched exactly where plugins are installed.
+      system_roots: Self::default_system_roots(&home),
       locations: Locations::default(),
       root: None,
-    };
-    // The home `dirs` found, also when `$HOME` is unset, so the home plugin
-    // directories are searched exactly where plugins are installed.
-    layout.change_roots(|plugins, system| {
-      *plugins = Self::default_plugin_roots(&home);
-      *system = Self::default_system_roots(&home);
-    });
-    Ok(layout)
+    })
   }
 
   /// Moves the parts `locations` names to where it says.
@@ -178,8 +168,8 @@ impl Layout {
     if let Some(libraries) = &locations.libraries {
       self.libraries = libraries.clone();
     }
-    if let Some(moved) = &locations.plugins {
-      self.change_roots(|plugins, _| *plugins = Self::relocated_plugin_roots(moved));
+    if let Some(plugins) = &locations.plugins {
+      self.plugin_roots = Self::relocated_plugin_roots(plugins);
     }
     self.locations = locations.clone();
     self
@@ -210,26 +200,33 @@ impl Layout {
   /// layout that points outside the root, so populating them would let a
   /// test's result depend on what the machine running it happens to have
   /// installed. A caller that wants them opts in with
-  /// [`Layout::with_system_roots`], and `Layout::default_system_roots(root)`
-  /// is the machine as seen from the root: its own home directories are
-  /// the root's, not the user's.
+  /// [`Layout::with_system_roots`], or with
+  /// [`Layout::rooted_seeing_the_machine`].
   pub fn rooted_at(root: impl AsRef<Path>) -> Self {
     let root = root.as_ref();
     let data = root.join("share/luthier");
-    let mut layout = Self {
+    Self {
       state: data.join("state"),
       libraries: data.join("libraries"),
       data,
       cache: root.join("cache/luthier"),
       config: root.join("config/luthier"),
-      plugin_roots: BTreeMap::new(),
+      plugin_roots: Self::default_plugin_roots(root),
       system_roots: BTreeMap::new(),
-      searched: BTreeMap::new(),
       locations: Locations::default(),
       root: Some(root.to_path_buf()),
-    };
-    layout.change_roots(|plugins, _| *plugins = Self::default_plugin_roots(root));
-    layout
+    }
+  }
+
+  /// [`Layout::rooted_at`], seeing the machine's plugins as `--root` does
+  /// unless told not to: what writes stays confined, what is read is not.
+  ///
+  /// The home plugin directories it searches are the root's own, not the
+  /// user's real `~/.clap`: that is another installation's managed root,
+  /// and a copy there is not a second copy of anything this one installs.
+  pub fn rooted_seeing_the_machine(root: impl AsRef<Path>) -> Self {
+    let root = root.as_ref();
+    Self::rooted_at(root).with_system_roots(Self::default_system_roots(root))
   }
 
   /// The directory `--root` confines everything to, if any.
@@ -250,9 +247,10 @@ impl Layout {
   ///
   /// The standard locations start with the plugin directories under
   /// `plugin_home` — `~/.clap`, `~/.vst3` and `~/.lv2`, as a host's do — so
-  /// `.lv2` only while `LV2_PATH` does not replace them, or names it. A
-  /// layout leaves out its own managed root ([`Layout::system_roots`]), so
-  /// these count only once plugins are installed elsewhere.
+  /// `.lv2` only while `LV2_PATH` does not replace them, or names it. Where
+  /// they are also the managed root, what is in them is this manager's
+  /// ([`Layout::system_roots`]), so they count only once plugins are
+  /// installed elsewhere.
   ///
   /// `plugin_home` is the home of the layout these are for, not `$HOME`:
   /// the home directory for [`Layout::from_env`], the root for `--root`,
@@ -310,7 +308,7 @@ impl Layout {
 
       let mut conventional = Vec::new();
       // The user's own directory, which every host searches first. It is
-      // where this manager installs, and is left out as the managed root
+      // where this manager installs, so what is in it is the managed copy
       // (`Layout::system_roots`) until `location set plugins` moves
       // plugins elsewhere; then whatever else is in it is a second copy.
       conventional.extend(
@@ -489,26 +487,27 @@ impl Layout {
 
   /// Overrides one plugin root. Used by `--install-root` and by tests.
   pub fn set_plugin_root(&mut self, format: Format, path: PathBuf) {
-    self.change_roots(|plugins, _| {
-      plugins.insert(format, path);
-    });
+    self.plugin_roots.insert(format, path);
   }
 
   /// Read-only system locations searched for `format`, in priority order.
   ///
-  /// Never the managed root for `format`, however it is spelt: `~/.clap`
-  /// is among the conventional locations, and so is any directory a search
-  /// path variable names, which may well be the managed one. What is
-  /// there is this manager's, or the unmanaged file `install::plan`
-  /// refuses to overwrite; it is not the system's.
+  /// May include the managed root, by any spelling: `~/.clap` is among the
+  /// conventional locations, and a search path variable may name it. What
+  /// is there is this manager's, so a reader decides when it finds
+  /// something whether that something is the managed copy — searching
+  /// managed roots first, as detection does, or comparing what it found
+  /// with the managed copy, as [`crate::scan::on_system`] does. Deciding
+  /// it here instead would mean resolving every root of every command
+  /// before knowing whether anything is there.
   pub fn system_roots(&self, format: &Format) -> &[PathBuf] {
-    self.searched.get(format).map_or(&[], Vec::as_slice)
+    self.system_roots.get(format).map_or(&[], Vec::as_slice)
   }
 
   /// Every system root, in a stable order.
   pub fn all_system_roots(&self) -> impl Iterator<Item = (&Format, &Path)> {
     self
-      .searched
+      .system_roots
       .iter()
       .flat_map(|(f, roots)| roots.iter().map(move |p| (f, p.as_path())))
   }
@@ -516,38 +515,8 @@ impl Layout {
   /// Replaces the system search paths. Used by tests and by callers that
   /// want a rooted layout to still see the machine.
   pub fn with_system_roots(mut self, roots: BTreeMap<Format, Vec<PathBuf>>) -> Self {
-    self.change_roots(|_, system| *system = roots);
+    self.system_roots = roots;
     self
-  }
-
-  /// The one way the plugin or system roots change, constructors included:
-  /// `searched` is worked out again after every change, so no order of
-  /// building a layout can leave it stale and no setter can forget to.
-  fn change_roots(
-    &mut self,
-    change: impl FnOnce(&mut BTreeMap<Format, PathBuf>, &mut BTreeMap<Format, Vec<PathBuf>>),
-  ) {
-    change(&mut self.plugin_roots, &mut self.system_roots);
-    self.searched = self
-      .system_roots
-      .iter()
-      .map(|(format, roots)| {
-        // Resolved once per format. A root not made yet resolves through
-        // the nearest directory that is, so `/home/u/.lv2` before the
-        // first install is still `/var/home/u/.lv2` where /home is a link.
-        let managed = self.plugin_roots.get(format).map(|root| resolved(root));
-        let kept = roots
-          .iter()
-          .filter(|root| {
-            managed
-              .as_ref()
-              .is_none_or(|managed| resolved(root) != *managed)
-          })
-          .cloned()
-          .collect();
-        (format.clone(), kept)
-      })
-      .collect();
   }
 
   /// Takes `<dir>/clap`, `<dir>/vst3` and `<dir>/lv2` as the only system
@@ -595,19 +564,6 @@ impl Layout {
       }
       Err(_) => false,
     })
-  }
-}
-
-/// `path` with every link resolved as far as it exists: a directory not
-/// made yet resolves through its nearest ancestor that is, so two
-/// spellings of it compare equal before it exists as after.
-fn resolved(path: &Path) -> PathBuf {
-  match path.canonicalize() {
-    Ok(resolved) => resolved,
-    Err(_) => match (path.parent(), path.file_name()) {
-      (Some(parent), Some(name)) => resolved(parent).join(name),
-      _ => path.to_path_buf(),
-    },
   }
 }
 
@@ -711,10 +667,12 @@ mod tests {
   fn system_roots_are_never_managed_locations() {
     // The uninstaller gates on is_managed_location. If a system root ever
     // counted as managed, a bad state file could delete a distribution's
-    // plugins out of /usr/lib.
-    let layout = Layout::rooted_at("/tmp/luthier-test-root").with_system_roots(
-      Layout::default_system_roots(Path::new("/tmp/luthier-test-root")),
-    );
+    // plugins out of /usr/lib. The home plugin directories are left out:
+    // they are the managed roots themselves until plugins move elsewhere,
+    // listed because hosts search them, and a copy there is told apart
+    // from the managed one where it is found (`scan::on_system`).
+    let layout = Layout::rooted_at("/tmp/luthier-test-root")
+      .with_system_roots(Layout::system_roots_from(|var| std::env::var_os(var), None));
     assert!(layout.all_system_roots().next().is_some());
     for (_, root) in layout.all_system_roots() {
       assert!(
@@ -950,56 +908,6 @@ mod tests {
     assert_eq!(replaced[&Format::Lv2], [PathBuf::from("/opt/lv2")]);
     let named = Layout::system_roots_from(env(&[("LV2_PATH", "/r/.lv2:/opt/lv2")]), home);
     assert_eq!(named[&Format::Lv2][0], Path::new("/r/.lv2"));
-  }
-
-  #[test]
-  fn the_managed_root_is_never_a_system_root_in_whatever_order() {
-    // `~/.clap` is the managed root until plugins move elsewhere, and a
-    // system root from then on. Which of the two calls comes first must
-    // not matter: one used to undo the other.
-    let dir = tempfile::tempdir().unwrap();
-    let home = dir.path().join("home");
-    let system = Layout::system_roots_from(env(&[]), Some(&home));
-    let elsewhere = Locations {
-      plugins: Some(dir.path().join("disk/plugins")),
-      ..Locations::default()
-    };
-    let clap = home.join(".clap");
-
-    let at_home = Layout::rooted_at(&home).with_system_roots(system.clone());
-    assert!(!at_home.system_roots(&Format::Clap).contains(&clap));
-
-    for moved in [
-      at_home.clone().with_locations(&elsewhere),
-      Layout::rooted_at(&home)
-        .with_locations(&elsewhere)
-        .with_system_roots(system.clone()),
-    ] {
-      assert_eq!(moved.system_roots(&Format::Clap)[0], clap);
-      // Still never somewhere a delete may reach.
-      assert!(!moved.is_managed_location(&clap.join("Surge XT.clap")));
-    }
-
-    // Seeing no system roots sees none of these either.
-    let bare = Layout::rooted_at(&home).with_locations(&elsewhere);
-    assert_eq!(bare.all_system_roots().count(), 0);
-  }
-
-  #[test]
-  fn the_managed_root_is_known_by_another_spelling_before_it_exists() {
-    // Silverblue links /home to /var/home: with LV2_PATH naming
-    // /home/u/.lv2 and HOME /var/home/u, the managed root is a system
-    // root by another spelling, and on a first run neither exists yet.
-    let dir = tempfile::tempdir().unwrap();
-    let real = dir.path().join("var/home/u");
-    std::fs::create_dir_all(&real).unwrap();
-    let alias = dir.path().join("home");
-    std::os::unix::fs::symlink(dir.path().join("var/home"), &alias).unwrap();
-
-    let layout = Layout::rooted_at(&real)
-      .with_system_roots(BTreeMap::from([(Format::Lv2, vec![alias.join("u/.lv2")])]));
-    assert!(!real.join(".lv2").exists());
-    assert!(layout.system_roots(&Format::Lv2).is_empty());
   }
 
   #[test]

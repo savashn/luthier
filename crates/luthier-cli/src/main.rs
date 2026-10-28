@@ -113,33 +113,23 @@ fn init_logging(global: &GlobalArgs) {
 /// the machine running them. The hidden `--system-plugins-in` replaces what
 /// is seen outright, for the suite.
 fn home_layout(global: &GlobalArgs) -> Result<Layout> {
-  let layout = match &global.root {
-    Some(root) => Layout::rooted_at(root),
-    None => Layout::from_env()?,
-  };
-  // A rooted layout starts seeing nothing of the machine, and one from the
-  // environment all of it; each flag moves the one it does not match.
-  Ok(
-    match (
-      &global.system_plugins_in,
-      global.no_system_plugins,
-      &global.root,
-    ) {
-      (Some(dir), _, _) => {
-        // Absolute, as a search path entry must be: relative to wherever
-        // the command happened to start is no place to look for plugins.
-        let dir = std::path::absolute(dir)
-          .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
-        layout.with_system_roots_in(&dir)
-      }
-      (None, true, None) => layout.with_system_roots(Default::default()),
-      // The machine as seen from the root: its home plugin directories are
-      // the root's, not the user's real ones, which another installation
-      // manages.
-      (None, false, Some(root)) => layout.with_system_roots(Layout::default_system_roots(root)),
-      (None, _, _) => layout,
-    },
-  )
+  if let Some(dir) = &global.system_plugins_in {
+    // Absolute, as a search path entry must be: relative to wherever the
+    // command happened to start is no place to look for plugins.
+    let dir = std::path::absolute(dir)
+      .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
+    let layout = match &global.root {
+      Some(root) => Layout::rooted_at(root),
+      None => Layout::from_env()?,
+    };
+    return Ok(layout.with_system_roots_in(&dir));
+  }
+  Ok(match (&global.root, global.no_system_plugins) {
+    (Some(root), true) => Layout::rooted_at(root),
+    (Some(root), false) => Layout::rooted_seeing_the_machine(root),
+    (None, true) => Layout::from_env()?.with_system_roots(Default::default()),
+    (None, false) => Layout::from_env()?,
+  })
 }
 
 /// The layout with the locations the configuration names applied.

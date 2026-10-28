@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 521 tests, fully offline. `update`, `search`, `info`, `install`,
+Four crates, 520 tests, fully offline. `update`, `search`, `info`, `install`,
 `list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
 `pin`/`unpin`, and `export`/`import` all work end to end against real
 packages; the verbs are apt's and Homebrew's (since 0.5: 0.4 called them
@@ -480,9 +480,12 @@ hand-installed `~/.clap/X.clap`; an engine or an `external` package in
 there is reported; a link into the managed root is not a second copy;
 calling `with_system_roots` after `with_locations` changes none of this; and
 the changelog says so under *Changed*.~~ Done: `system_roots_from` lists
-the home directories first, `Layout::change_roots` leaves the managed root out
-whenever either changes, and `scan::on_system` skips a link to the managed
-copy.
+the layout's own home directories first, and `scan::on_system` skips a
+copy that really is the managed one when it finds it. Point 2 was done
+otherwise than it says: filtering the managed root out of the system
+roots in `Layout` resolved every root of every command up front and went
+stale in a long session; deciding where something is found needs
+neither, and has no order to get wrong.
 
 ---
 

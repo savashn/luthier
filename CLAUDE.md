@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 521 tests, fully offline
+cargo test --workspace                     # 520 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -444,16 +444,19 @@ the crate map keeps that out of `luthier-manifest`.
   release. Shape is reported for *every* tree and acted on only where the
   artifact declares `library`; deriving content whenever no plugin turned up
   would install a broken plugin release as a folder of samples.
-- **The home plugin directories are system roots; the managed root never
-  is.** `system_roots_from` lists the layout's own `~/.clap`, `~/.vst3` and
+- **The home plugin directories are system roots, managed or not.**
+  `system_roots_from` lists the layout's own `~/.clap`, `~/.vst3` and
   `~/.lv2` first (`.lv2` only while `LV2_PATH` does not replace the
   default), because hosts search them: under `dirs::home_dir()` for
-  `from_env`, under the root for `--root` — never `$HOME`, which for a
-  rooted run is another installation's managed root. `Layout::change_roots`
-  is the only writer of the plugin and system roots, and drops each
-  format's managed root from what is searched, by any spelling, even one
-  not made yet (`resolved`) — so they count only once `location set
-  plugins` moved plugins elsewhere, whatever order a layout was built in.
+  `from_env`, under the root for `Layout::rooted_seeing_the_machine`
+  (`--root`), not `$HOME`'s, which for a rooted run is another
+  installation's managed root (a search path variable naming it is
+  still honoured: it says where hosts look). Nothing filters the managed
+  root out of the system roots up front — that resolved every root of
+  every command and went stale in a long session. A reader decides when
+  it finds something: detection searches managed roots first, and
+  `scan::on_system` skips a copy that really is the managed one, which
+  covers the managed root by any spelling and a link back to it.
 - **A chosen location is never created.** `location set` needs an existing
   directory and every write checks `unavailable_locations` first: creating
   the path of an unmounted disk fills the disk underneath. Moving libraries

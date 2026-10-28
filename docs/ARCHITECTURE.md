@@ -291,11 +291,13 @@ hosts search below it too: a copy in a subdirectory goes unnoticed.
 
 `~/.clap`, `~/.vst3` and `~/.lv2` are system roots as much as `/usr/lib/clap`
 is — `~/.lv2` only while `LV2_PATH` does not replace the default — because
-hosts search them first. A layout leaves its own managed root out of the
-system roots, by any spelling, and works that out again whenever either
-changes, so the home directories count only once `location set plugins` has
-moved plugins elsewhere, whatever order the layout was built in. A link to
-the managed copy is not a second one.
+hosts search them first. They stay system roots while they are also the
+managed root; whether a copy found there is the managed one is decided when
+it is found, by where it really is, so they count only once `location set
+plugins` has moved plugins elsewhere, whatever order the layout was built
+in, and a link back to the managed copy is not a second one. Deciding it up
+front would resolve every root for every command, and go stale in a long
+session.
 
 ### External packages
 

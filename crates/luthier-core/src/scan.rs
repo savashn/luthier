@@ -171,16 +171,17 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// what it links to: two Nix profiles each link a plugin into the same
 /// store path, and a host finds it through both.
 ///
-/// The managed root is never searched ([`Layout::system_roots`]), and a
-/// link to the managed copy is not a second one: plugins moved elsewhere
-/// with `location set plugins` are often linked back into `~/.clap` for a
-/// host that searches nowhere else.
+/// The managed copy is not a second one, however it is reached: through
+/// the managed root, which is among the system roots by default
+/// (`~/.clap`) or by a search path naming it, or through a link to it, as
+/// plugins moved with `location set plugins` are often linked back into
+/// `~/.clap` for a host that searches nowhere else. Decided here, when
+/// something is found, by where it really is.
 pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
   let mut seen = BTreeSet::new();
-  // Where the managed copy really is, when there is one.
-  let managed_copy = layout
-    .plugin_root(format)
-    .and_then(|root| root.join(name).canonicalize().ok());
+  // Where the managed copy really is: resolved once something is found,
+  // which is rarely, and then only once.
+  let mut managed_copy = None;
   layout
     .system_roots(format)
     .iter()
@@ -189,9 +190,15 @@ pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
     // resolving paths is only worth it for the rare name that is there.
     .filter(|(_, path)| path.exists())
     .filter(|(_, path)| {
-      managed_copy
-        .as_ref()
-        .is_none_or(|managed| path.canonicalize().ok().as_ref() != Some(managed))
+      let managed = managed_copy.get_or_insert_with(|| {
+        layout
+          .plugin_root(format)
+          .and_then(|root| root.join(name).canonicalize().ok())
+      });
+      match managed {
+        Some(managed) => path.canonicalize().ok().as_ref() != Some(managed),
+        None => true,
+      }
     })
     .filter(|(root, _)| seen.insert(root.canonicalize().unwrap_or_else(|_| root.to_path_buf())))
     .map(|(_, path)| path)
@@ -578,5 +585,42 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
       on_system(&layout, &Format::Clap, "Linked.clap"),
       [system.join("Linked.clap")]
     );
+  }
+
+  #[test]
+  fn a_copy_left_in_the_home_directory_is_second_once_plugins_move() {
+    // Before `location set plugins`, ~/.clap is where this manager
+    // installs and a copy there is its own; after, a host still finds it,
+    // beside the one on the other disk. Whichever order the layout was
+    // built in.
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let left = home.join(".clap/Left.clap");
+    std::fs::create_dir_all(left.parent().unwrap()).unwrap();
+    std::fs::write(&left, b"\x7fELF").unwrap();
+    let disk = dir.path().join("disk/plugins");
+    std::fs::create_dir_all(&disk).unwrap();
+    let system = BTreeMap::from([(Format::Clap, vec![home.join(".clap")])]);
+    let moved = crate::layout::Locations {
+      plugins: Some(disk),
+      ..Default::default()
+    };
+
+    let at_home = Layout::rooted_at(&home).with_system_roots(system.clone());
+    assert!(on_system(&at_home, &Format::Clap, "Left.clap").is_empty());
+
+    for layout in [
+      at_home.clone().with_locations(&moved),
+      Layout::rooted_at(&home)
+        .with_locations(&moved)
+        .with_system_roots(system.clone()),
+    ] {
+      assert_eq!(
+        on_system(&layout, &Format::Clap, "Left.clap"),
+        std::slice::from_ref(&left)
+      );
+      // Still never somewhere a delete may reach.
+      assert!(!layout.is_managed_location(&left));
+    }
   }
 }
