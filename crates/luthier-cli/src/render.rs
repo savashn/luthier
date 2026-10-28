@@ -249,6 +249,13 @@ impl Reporter {
       }
     }
 
+    if !plan.on_system.is_empty() && !self.quiet {
+      eprintln!();
+    }
+    for found in &plan.on_system {
+      self.warn(found.to_string());
+    }
+
     for found in &plan.unplayable {
       if self.quiet {
         break;

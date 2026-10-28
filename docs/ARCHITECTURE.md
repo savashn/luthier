@@ -105,12 +105,14 @@ luthier install surge
   ├─ resolve                      resolver::resolve      → ordered plan
   ├─ refuse missing externals     ResolveError::ExternalMissing
   ├─ report unplayable content    engine::unplayable     (scan::detect_engines)
+  ├─ report system copies         scan::on_system        (names a manifest gives)
   │
   └─ for each package, dependencies first:
        ├─ download                download::Downloader   → cache/<sha256>
        ├─ verify SHA-256          (streamed; abort on mismatch)
        ├─ extract                 archive::extract       → transaction workspace
        ├─ plan destinations       install::plan          → derived, never declared
+       ├─ report system copies    scan::on_system        (names read from the archive)
        ├─ validate                FormatInstaller::validate
        ├─ stage → rename          InstallTransaction::place  (journalled)
        └─ record                  state::StateGuard::commit
@@ -274,8 +276,13 @@ destination, so the final rename never crosses a disk.
 Ownership comes from the state file, never from scanning plugin directories. A
 plugin whose name resembles a package is not that package. Scanning answers
 different questions: whether an unmanaged file occupies a destination, whether
-an `external` dependency is present, and whether an engine for a library's
-content is.
+an `external` dependency is present, whether an engine for a library's
+content is, and whether a system directory already holds a plugin about to be
+installed. That last is a warning, never a refusal: a host would list the
+plugin twice, but the user may want the newer build, and the other copy
+belongs to the distribution's package manager. The plan reports it where a
+manifest names the plugin; where only the archive does, nothing names it
+before the archive is open, so the outcome reports it.
 
 ### External packages
 

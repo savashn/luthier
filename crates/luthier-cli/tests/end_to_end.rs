@@ -169,6 +169,26 @@ impl Fixture {
     command
   }
 
+  /// [`Fixture::luthier`], seeing `system/{clap,vst3,lv2}` as the plugin
+  /// directories a distribution fills. CLAP and VST3 still add the
+  /// conventional ones, which only ever reads them.
+  fn luthier_seeing(&self, system: &Path) -> Command {
+    let mut command = Command::cargo_bin("luthier").expect("the luthier binary is built");
+    command
+      .arg("--root")
+      .arg(self.root())
+      .arg("--registry-path")
+      .arg(self.registry())
+      .arg("--releases-api")
+      .arg("file:///nonexistent/luthier-release.json")
+      .arg("--yes")
+      .env("HOME", self.dir.path())
+      .env("CLAP_PATH", system.join("clap"))
+      .env("VST3_PATH", system.join("vst3"))
+      .env("LV2_PATH", system.join("lv2"));
+    command
+  }
+
   /// Builds a `.tar.gz` holding a CLAP file and a VST3 bundle, and returns
   /// its `file://` URL, SHA-256 and size.
   fn make_artifact(&self, name: &str) -> Artifact {
@@ -2912,6 +2932,82 @@ fn a_claim_the_archive_does_deliver_says_nothing() {
   let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
 
   assert!(!stderr.contains("claims to provide"), "{stderr}");
+}
+
+#[test]
+fn a_plugin_the_system_already_holds_is_reported_and_installed_anyway() {
+  // LSP Plugins from `apt` and from here: a host finds both. The manifest
+  // names the CLAP, so the plan says so before anything is downloaded.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(system.join("clap")).unwrap();
+  std::fs::write(system.join("clap/Twice.clap"), elf_shared_object()).unwrap();
+  let artifact = fixture.make_artifact("Twice");
+  fixture.add_plugin("twice", "1.0.0", &artifact, &[]);
+
+  let assert = fixture
+    .luthier_seeing(&system)
+    .args(["install", "twice"])
+    .assert()
+    .success();
+  let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+  let warning = format!(
+    "twice installs Twice.clap, which {} already holds",
+    system.join("clap").display()
+  );
+  assert_eq!(stderr.matches(&warning).count(), 1, "{stderr}");
+  assert!(!stderr.contains("Twice.vst3"), "{stderr}");
+  assert!(fixture.clap_dir().join("Twice.clap").is_file());
+}
+
+#[test]
+fn a_plugin_read_from_its_archive_is_checked_once_the_archive_is_open() {
+  // Everything from the Open Audio Stack registry: no rule names the
+  // VST3 until the archive is read, so the outcome says it.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(system.join("vst3/Found.vst3")).unwrap();
+  let artifact = fixture.make_artifact("Found");
+  fixture.add_plugin_derived("found", "1.0.0", &artifact);
+
+  let assert = fixture
+    .luthier_seeing(&system)
+    .args(["install", "found"])
+    .assert()
+    .success();
+  let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+  let warning = format!(
+    "found installs Found.vst3, which {} already holds",
+    system.join("vst3").display()
+  );
+  assert_eq!(stderr.matches(&warning).count(), 1, "{stderr}");
+  assert!(!stderr.contains("Found.clap"), "{stderr}");
+  assert!(fixture.vst3_dir().join("Found.vst3").is_dir());
+}
+
+#[test]
+fn a_managed_directory_on_the_search_path_is_not_a_second_copy() {
+  // `CLAP_PATH=~/.clap` names the directory this manager installs into:
+  // reinstalling finds its own copy there, which is not a duplicate.
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Own");
+  fixture.add_plugin("own", "1.0.0", &artifact, &[]);
+  fixture
+    .luthier()
+    .args(["install", "own"])
+    .assert()
+    .success();
+
+  let assert = fixture
+    .luthier_seeing(&fixture.dir.path().join("system"))
+    .env("CLAP_PATH", fixture.clap_dir())
+    .args(["install", "--force", "own"])
+    .assert()
+    .success();
+  let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+  assert!(!stderr.contains("already holds"), "{stderr}");
 }
 
 #[test]

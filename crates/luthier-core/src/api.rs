@@ -718,6 +718,7 @@ impl Session {
         .into_iter()
         .map(|found| self.describe_unplayable(found, index))
         .collect(),
+      on_system: self.on_system(&resolution),
       space,
       marked_requested: requested_marks(&resolution, state, purpose, ids),
       kept: resolution.kept.iter().map(|kept| kept.id.clone()).collect(),
@@ -728,6 +729,25 @@ impl Session {
       holding: purpose.held().clone(),
       held_back: Outdated::default(),
     })
+  }
+
+  /// The plugins `resolution` places whose names its manifests give, and
+  /// that a system directory already holds.
+  ///
+  /// A release whose rules come from its archive names nothing until the
+  /// archive is open; `install_package` checks those.
+  fn on_system(&self, resolution: &Resolution<'_>) -> Vec<AlreadyOnSystem> {
+    resolution
+      .order
+      .iter()
+      .filter(|package| package.disposition != Disposition::Satisfied)
+      .filter_map(|package| Some((package.id(), package.artifact?)))
+      .flat_map(|(id, artifact)| {
+        artifact.install.iter().filter_map(move |rule| {
+          AlreadyOnSystem::of(id, &rule.format, rule.installed_name(), &self.layout)
+        })
+      })
+      .collect()
   }
 
   /// The first package this resolution would replace whose files someone
@@ -1310,6 +1330,19 @@ impl Session {
         install::plan_content(&self.layout, &extract_root, content, package.id(), state)
           .map_err(named)?,
       );
+    }
+
+    // Rules read from the archive name their plugins only now, so the plan
+    // could not say this; a manifest's own rules were checked there.
+    if artifact.derive_install {
+      for item in &items {
+        let Some(name) = item.destination.file_name().and_then(|n| n.to_str()) else {
+          continue;
+        };
+        if let Some(found) = AlreadyOnSystem::of(package.id(), &item.format, name, &self.layout) {
+          warnings.push(found.to_string());
+        }
+      }
     }
 
     let mut files: Vec<InstalledEntry> = Vec::new();
@@ -3173,12 +3206,59 @@ pub struct EngineChoice {
   pub provisioning_hint: Option<String>,
 }
 
+/// A plugin an install places that a system plugin directory already holds
+/// under the same name: put there by the distribution, Nix or by hand.
+///
+/// Reported, never refused. The user may want the newer build, and removing
+/// the other copy is their package manager's job, not this one's.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlreadyOnSystem {
+  pub id: String,
+  pub format: String,
+  /// The file or bundle name both copies share, e.g. `lsp-plugins.lv2`.
+  pub plugin: String,
+  /// The copy already there.
+  pub path: PathBuf,
+}
+
+impl AlreadyOnSystem {
+  fn of(id: &PackageId, format: &Format, plugin: &str, layout: &Layout) -> Option<Self> {
+    let path = scan::on_system(layout, format, plugin)?;
+    Some(Self {
+      id: id.to_string(),
+      format: format.to_string(),
+      plugin: plugin.to_string(),
+      path,
+    })
+  }
+}
+
+impl std::fmt::Display for AlreadyOnSystem {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let directory = self.path.parent().unwrap_or(&self.path);
+    write!(
+      f,
+      "{} installs {}, which {} already holds; a host may list the plugin twice, or \
+       load whichever copy it finds first",
+      self.id,
+      self.plugin,
+      directory.display()
+    )
+  }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct InstallPlan {
   pub steps: Vec<InstallStep>,
   pub missing_externals: Vec<MissingExternal>,
   /// Installing is refused while this is non-empty.
   pub unplayable: Vec<UnplayableContent>,
+  /// Plugins it installs that a system directory already holds. Only those
+  /// a manifest names: a release whose rules are read from its archive is
+  /// checked once the archive is open, and reported in
+  /// [`InstallOutcome::warnings`].
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  pub on_system: Vec<AlreadyOnSystem>,
   /// Why this plan cannot be carried out, if it cannot.
   ///
   /// The lists above describe the obstacle for a reader; this carries the
@@ -3316,7 +3396,8 @@ pub struct InstallOutcome {
   pub installed: Vec<InstalledSummary>,
   pub skipped: Vec<InstalledSummary>,
   /// Things that were true but not fatal: upstream metadata that did not
-  /// match what the archive turned out to hold.
+  /// match what the archive turned out to hold, and a plugin read from an
+  /// archive that a system directory already holds ([`AlreadyOnSystem`]).
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub warnings: Vec<String>,
   /// Packages an upgrade plan named that another command removed before

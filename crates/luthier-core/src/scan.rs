@@ -20,7 +20,7 @@ use crate::state::State;
 use luthier_manifest::{DetectRule, Format, Manifest, PackageId, PackageKind};
 use semver::Version;
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Whether Luthier put a plugin where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,6 +152,36 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
     })
     .map(|engine| engine.package.clone())
     .collect()
+}
+
+/// Where a system root of `format` already holds a plugin named `name`.
+///
+/// A host searches those roots as well as the one this manager installs
+/// into, so a second copy there means the plugin is listed twice, or loaded
+/// from whichever the host reads first. Matched by name alone, as detection
+/// is: a distribution that names its bundle differently goes unnoticed.
+///
+/// A system root that is also a managed root is skipped — `LV2_PATH` often
+/// names `~/.lv2` — since what is there is this manager's own copy, or the
+/// unmanaged one `install::plan` refuses to overwrite.
+pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Option<PathBuf> {
+  let managed: Vec<&Path> = layout.plugin_roots().map(|(_, root)| root).collect();
+  layout
+    .system_roots(format)
+    .iter()
+    .filter(|root| !managed.iter().any(|m| same_directory(m, root)))
+    .map(|root| root.join(name))
+    .find(|path| path.exists())
+}
+
+/// Whether two paths name one directory, through a symlink or a trailing
+/// slash as much as by spelling.
+fn same_directory(a: &Path, b: &Path) -> bool {
+  a == b
+    || matches!(
+      (a.canonicalize(), b.canonicalize()),
+      (Ok(a), Ok(b)) if a == b
+    )
 }
 
 /// The first place any of `rules` matches, managed roots before system ones.
@@ -418,5 +448,39 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
 
     std::fs::create_dir_all(layout.plugin_root(&Format::Lv2).unwrap().join("sfizz.lv2")).unwrap();
     assert_eq!(detect_engines(&layout, &index).len(), 2);
+  }
+
+  #[test]
+  fn a_plugin_a_system_root_holds_is_found_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let system = dir.path().join("usr/lib/lv2");
+    std::fs::create_dir_all(system.join("lsp-plugins.lv2")).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(Format::Lv2, vec![system.clone()])]));
+
+    assert_eq!(
+      on_system(&layout, &Format::Lv2, "lsp-plugins.lv2"),
+      Some(system.join("lsp-plugins.lv2"))
+    );
+    assert_eq!(on_system(&layout, &Format::Lv2, "other.lv2"), None);
+    // Another format's roots are not searched for it.
+    assert_eq!(on_system(&layout, &Format::Clap, "lsp-plugins.lv2"), None);
+  }
+
+  #[test]
+  fn a_managed_root_on_the_search_path_is_not_the_system() {
+    // `LV2_PATH=~/.lv2:/usr/lib/lv2` is a common setting. The copy in
+    // `~/.lv2` is the one this manager installed, not a second one.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let managed = layout.plugin_root(&Format::Lv2).unwrap().to_path_buf();
+    std::fs::create_dir_all(managed.join("lsp-plugins.lv2")).unwrap();
+    // Spelt differently, through a symlink, which only canonical paths
+    // tell apart.
+    let alias = dir.path().join("lv2-alias");
+    std::os::unix::fs::symlink(&managed, &alias).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(Format::Lv2, vec![managed, alias])]));
+
+    assert_eq!(on_system(&layout, &Format::Lv2, "lsp-plugins.lv2"), None);
   }
 }
