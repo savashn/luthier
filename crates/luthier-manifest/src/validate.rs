@@ -712,8 +712,8 @@ install = [
     assert_eq!(report.warnings().count(), 0, "{:?}", report.diagnostics);
   }
 
-  fn errors_for(yaml: &str) -> Vec<String> {
-    validate(&manifest(yaml))
+  fn errors_for(text: &str) -> Vec<String> {
+    validate(&manifest(text))
       .errors()
       .map(|d| d.to_string())
       .collect()
@@ -724,8 +724,8 @@ install = [
     // LSP Plugins' real situation: Linux binaries ship only as 7z. This was
     // the rule's example of an archive that could not be opened until the
     // extractor learned the format.
-    let yaml = GOOD.replace("archive = \"zip\"", "archive = \"7z\"");
-    assert!(errors_for(&yaml).is_empty(), "{:?}", errors_for(&yaml));
+    let text = GOOD.replace("archive = \"zip\"", "archive = \"7z\"");
+    assert!(errors_for(&text).is_empty(), "{:?}", errors_for(&text));
   }
 
   #[test]
@@ -763,8 +763,8 @@ install = [
 
   #[test]
   fn a_bare_file_is_named_by_its_url_once_decoded() {
-    let yaml = bare("Dexed%20Synth.clap", "Dexed Synth.clap");
-    assert!(errors_for(&yaml).is_empty(), "{:?}", errors_for(&yaml));
+    let text = bare("Dexed%20Synth.clap", "Dexed Synth.clap");
+    assert!(errors_for(&text).is_empty(), "{:?}", errors_for(&text));
   }
 
   #[test]
@@ -780,8 +780,8 @@ install = [
 
   #[test]
   fn an_archive_declared_bare_is_flagged() {
-    let yaml = GOOD.replace("archive = \"zip\"", "archive = \"none\"");
-    let warnings: Vec<String> = validate(&manifest(&yaml))
+    let text = GOOD.replace("archive = \"zip\"", "archive = \"none\"");
+    let warnings: Vec<String> = validate(&manifest(&text))
       .warnings()
       .map(|d| d.to_string())
       .collect();
@@ -794,13 +794,13 @@ install = [
   #[test]
   fn rejects_a_format_whose_shape_is_wrong() {
     // A CLAP is a file; declaring it a bundle would only fail in a DAW.
-    let yaml = GOOD
+    let text = GOOD
       .replace("provides = [\"vst3\"]", "provides = [\"clap\"]")
       .replace(
         r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
         r#"{ format = "clap", source = "Dexed.clap", kind = "bundle" }"#,
       );
-    let errors = errors_for(&yaml);
+    let errors = errors_for(&text);
     assert!(
       errors
         .iter()
@@ -814,13 +814,13 @@ install = [
     // LV2 was this rule's example of an uninstallable format until the
     // installer landed. Keeping the case as a positive test means the
     // constant and the validator cannot quietly disagree again.
-    let yaml = GOOD
+    let text = GOOD
       .replace("provides = [\"vst3\"]", "provides = [\"lv2\"]")
       .replace(
         r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
         r#"{ format = "lv2", source = "Dexed.lv2", kind = "bundle" }"#,
       );
-    assert!(errors_for(&yaml).is_empty(), "{:?}", errors_for(&yaml));
+    assert!(errors_for(&text).is_empty(), "{:?}", errors_for(&text));
   }
 
   #[test]
@@ -829,11 +829,11 @@ install = [
     // reached through an unrecognised one. It still earns its place: it is
     // what stops a manifest naming a format this build would silently do
     // nothing with.
-    let yaml = GOOD.replace(
+    let text = GOOD.replace(
       r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
       r#"{ format = "ladspa", source = "Dexed.so", kind = "file" }"#,
     );
-    let errors = errors_for(&yaml);
+    let errors = errors_for(&text);
     assert!(
       errors.iter().any(|e| e.contains("unknown plugin format")),
       "{errors:?}"
@@ -842,8 +842,8 @@ install = [
 
   #[test]
   fn rejects_dishonest_open_source_claims() {
-    let yaml = GOOD.replace("spdx = \"GPL-3.0-or-later\"", "spdx = \"CC-BY-NC-4.0\"");
-    let errors = errors_for(&yaml);
+    let text = GOOD.replace("spdx = \"GPL-3.0-or-later\"", "spdx = \"CC-BY-NC-4.0\"");
+    let errors = errors_for(&text);
     assert!(
       errors
         .iter()
@@ -854,8 +854,8 @@ install = [
 
   #[test]
   fn rejects_duplicate_release_versions() {
-    let yaml = format!("{GOOD}\n[[releases]]\nversion = \"1.0.1\"\nartifacts = []\n");
-    let errors = errors_for(&yaml);
+    let text = format!("{GOOD}\n[[releases]]\nversion = \"1.0.1\"\nartifacts = []\n");
+    let errors = errors_for(&text);
     assert!(
       errors
         .iter()
@@ -866,7 +866,7 @@ install = [
 
   #[test]
   fn rejects_two_rules_writing_the_same_destination() {
-    let yaml = GOOD.replace(
+    let text = GOOD.replace(
       r#"  { format = "vst3", source = "Dexed.vst3", kind = "bundle" },"#,
       concat!(
         r#"  { format = "vst3", source = "Dexed.vst3", kind = "bundle" },"#,
@@ -874,7 +874,7 @@ install = [
         r#"  { format = "vst3", source = "other/Dexed.vst3", kind = "bundle" },"#,
       ),
     );
-    let errors = errors_for(&yaml);
+    let errors = errors_for(&text);
     assert!(
       errors.iter().any(|e| e.contains("two rules install")),
       "{errors:?}"
@@ -883,11 +883,11 @@ install = [
 
   #[test]
   fn rejects_self_dependency() {
-    let yaml = GOOD.replace(
+    let text = GOOD.replace(
       "version = \"1.0.1\"",
       "version = \"1.0.1\"\ndependencies = [\"dexed\"]",
     );
-    let errors = errors_for(&yaml);
+    let errors = errors_for(&text);
     assert!(
       errors.iter().any(|e| e.contains("cannot depend on itself")),
       "{errors:?}"
@@ -896,7 +896,7 @@ install = [
 
   #[test]
   fn external_packages_must_be_detectable_and_carry_no_artifacts() {
-    let yaml = r#"
+    let text = r#"
 schema = 1
 id = "sfizz"
 name = "sfizz"
@@ -905,7 +905,7 @@ category = "instrument"
 license = { kind = "open-source", spdx = "BSD-2-Clause" }
 description = "SFZ playback engine."
 "#;
-    let errors = errors_for(yaml);
+    let errors = errors_for(text);
     assert!(
       errors
         .iter()
@@ -914,7 +914,7 @@ description = "SFZ playback engine."
     );
 
     let with_detect = format!(
-      "{yaml}provisioning_hint = \"Install sfizz from your distribution.\"\n\n\
+      "{text}provisioning_hint = \"Install sfizz from your distribution.\"\n\n\
              [[detect]]\nformat = \"vst3\"\nname = \"sfizz.vst3\"\n"
     );
     let report = validate(&manifest(&with_detect));
@@ -923,7 +923,7 @@ description = "SFZ playback engine."
 
   #[test]
   fn packs_carry_dependencies_not_artifacts() {
-    let yaml = r#"
+    let text = r#"
 schema = 1
 id = "foss-studio"
 name = "FOSS Studio Pack"
@@ -936,7 +936,7 @@ license = { kind = "open-source", spdx = "CC0-1.0" }
 version = "1.0.0"
 dependencies = ["surge-xt", "dexed"]
 "#;
-    let report = validate(&manifest(yaml));
+    let report = validate(&manifest(text));
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
   }
 
@@ -949,13 +949,13 @@ dependencies = ["surge-xt", "dexed"]
 
   #[test]
   fn a_name_without_its_formats_extension_warns() {
-    let yaml = GOOD
+    let text = GOOD
       .replace("provides = [\"vst3\"]", "provides = [\"clap\"]")
       .replace(
         r#"  { format = "vst3", source = "Dexed.vst3", kind = "bundle" },"#,
         SIDECAR,
       );
-    let report = validate(&manifest(&yaml));
+    let report = validate(&manifest(&text));
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
     assert!(
       report
@@ -970,7 +970,7 @@ dependencies = ["surge-xt", "dexed"]
   fn a_rule_may_accept_that_warning_deliberately() {
     // Without this, the CI of extras, which runs --strict, is red on a
     // manifest that is correct.
-    let yaml = GOOD
+    let text = GOOD
       .replace("provides = [\"vst3\"]", "provides = [\"clap\"]")
       .replace(
         r#"  { format = "vst3", source = "Dexed.vst3", kind = "bundle" },"#,
@@ -979,7 +979,7 @@ dependencies = ["surge-xt", "dexed"]
           r#"source = "liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] }"#,
         ),
       );
-    let report = validate(&manifest(&yaml));
+    let report = validate(&manifest(&text));
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
     assert_eq!(report.warnings().count(), 0, "{:?}", report.diagnostics);
   }
@@ -988,11 +988,11 @@ dependencies = ["surge-xt", "dexed"]
   fn an_allowance_that_silences_nothing_is_reported() {
     // Otherwise an allowance outlives the thing it was written for and
     // quietly accepts a real warning years later.
-    let yaml = GOOD.replace(
+    let text = GOOD.replace(
       r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
       r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle", allow = ["file-extension"] }"#,
     );
-    let report = validate(&manifest(&yaml));
+    let report = validate(&manifest(&text));
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
     assert!(
       report
@@ -1005,23 +1005,23 @@ dependencies = ["surge-xt", "dexed"]
 
   #[test]
   fn an_unknown_allowance_is_an_error_not_a_silent_no_op() {
-    let yaml = GOOD.replace(
+    let text = GOOD.replace(
       r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle" }"#,
       r#"{ format = "vst3", source = "Dexed.vst3", kind = "bundle", allow = ["file-extensions"] }"#,
     );
     assert!(
-      errors_for(&yaml)
+      errors_for(&text)
         .iter()
         .any(|e| e.contains("unknown warning")),
       "{:?}",
-      errors_for(&yaml)
+      errors_for(&text)
     );
   }
 
   #[test]
   fn warns_when_provides_and_install_rules_disagree() {
-    let yaml = GOOD.replace("provides = [\"vst3\"]", "provides = [\"vst3\", \"clap\"]");
-    let report = validate(&manifest(&yaml));
+    let text = GOOD.replace("provides = [\"vst3\"]", "provides = [\"vst3\", \"clap\"]");
+    let report = validate(&manifest(&text));
     assert!(!report.has_errors(), "{:?}", report.diagnostics);
     assert!(
       report
@@ -1034,8 +1034,8 @@ dependencies = ["surge-xt", "dexed"]
 
   #[test]
   fn warns_when_the_url_disagrees_with_the_declared_container() {
-    let yaml = GOOD.replace("archive = \"zip\"", "archive = \"tar.gz\"");
-    let report = validate(&manifest(&yaml));
+    let text = GOOD.replace("archive = \"zip\"", "archive = \"tar.gz\"");
+    let report = validate(&manifest(&text));
     assert!(
       report
         .warnings()
