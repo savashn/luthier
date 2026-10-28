@@ -117,19 +117,23 @@ fn home_layout(global: &GlobalArgs) -> Result<Layout> {
     Some(root) => Layout::rooted_at(root),
     None => Layout::from_env()?,
   };
-  Ok(if let Some(dir) = &global.system_plugins_in {
-    // Absolute, as a search path entry must be: relative to wherever the
-    // command happened to start is no place to look for plugins.
-    let dir = std::path::absolute(dir)
-      .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
-    layout.with_system_roots_in(&dir)
-  } else if global.no_system_plugins {
-    layout.with_system_roots(Default::default())
-  } else if global.root.is_some() {
-    layout.with_system_roots(Layout::default_system_roots())
-  } else {
-    layout
-  })
+  // A rooted layout starts seeing nothing of the machine, and one from the
+  // environment all of it; each flag moves the one it does not match.
+  let rooted = global.root.is_some();
+  Ok(
+    match (&global.system_plugins_in, global.no_system_plugins) {
+      (Some(dir), _) => {
+        // Absolute, as a search path entry must be: relative to wherever
+        // the command happened to start is no place to look for plugins.
+        let dir = std::path::absolute(dir)
+          .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
+        layout.with_system_roots_in(&dir)
+      }
+      (None, true) if !rooted => layout.with_system_roots(Default::default()),
+      (None, false) if rooted => layout.with_system_roots(Layout::default_system_roots()),
+      (None, _) => layout,
+    },
+  )
 }
 
 /// The layout with the locations the configuration names applied.

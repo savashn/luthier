@@ -435,6 +435,52 @@ have any notion of a plugin *set* for a DAW to scan. That is the gap, and it
 is the same gap on every distribution; Nix is only where its absence is
 felt most, because everything else on that machine is already declared.
 
+### 3.6 The plugin directories a relocation leaves behind
+
+After `location set plugins`, Luthier installs under the directory chosen,
+but every host still searches `~/.clap` and `~/.vst3`, and `~/.lv2` unless
+`LV2_PATH` replaces the default search path. A plugin there — put there by
+hand, or left from before — is then neither managed nor in a system root,
+so nothing looks at it: not the warning about a second copy, and not
+`detect_externals` or `detect_engines` either, so an `external` sfizz in
+`~/.lv2` reads as missing. Tried on the branch that added the warning and
+withdrawn there, because three things have to hold at once:
+
+1. **Search where a host searches, and no more.** CLAP and VST3 hosts always
+   search `$HOME/.clap` and `$HOME/.vst3`; an LV2 host searches `$HOME/.lv2`
+   only when `LV2_PATH` does not replace the default, or when it lists it.
+   That belongs in `Layout::system_roots_from`, where the variables'
+   semantics already live: add the home directories there, from the `HOME`
+   lookup it already takes, `.lv2` on the conventional branch only. Not in
+   `with_locations`, which knows nothing of `LV2_PATH` — adding `~/.lv2`
+   there reported a bundle no host can see. A rooted layout given the
+   machine's roots (`--root` without `--no-system-plugins`) then sees the
+   real `~/.clap`, which is what seeing the machine means.
+2. **Whatever order the layout is built in.** Roots added in
+   `with_locations` were lost to a later `with_system_roots`. With 1 the
+   home directories are system roots from the start, and what is left is
+   to leave out a system root that is the managed root for its format, once,
+   in `Layout` — at query time in `system_roots`, or recomputed by both
+   `with_locations` and `with_system_roots` — rather than in each caller.
+   `scan::on_system`'s own skip then goes, and
+   `system_roots_are_never_managed_locations` keeps holding because the
+   managed root is filtered out rather than because it is never listed.
+3. **A link to the managed copy is the managed copy.** A user who links
+   `~/.clap/X.clap` to the relocated `…/clap/X.clap` so hosts find it must
+   not be told of a second copy: compare the found copy's canonical path
+   with the destination's (`plugin_root(format)` joined with the name), not
+   only the roots.
+
+`--no-system-plugins` still sees none of it, and `Layout::rooted_at` still
+has no system roots unless asked.
+
+**Done when:** after `location set plugins`, installing X reports a
+hand-installed `~/.clap/X.clap`; an engine or an `external` package in
+`~/.lv2` is detected; with `LV2_PATH` set and not naming `~/.lv2`, nothing
+there is reported; a link into the managed root is not a second copy;
+calling `with_system_roots` after `with_locations` changes none of this; and
+the changelog says so under *Changed*.
+
 ---
 
 ## Phase 4 — Other platforms

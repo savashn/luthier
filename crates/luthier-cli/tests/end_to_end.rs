@@ -3085,40 +3085,6 @@ fn a_blocked_plan_reports_no_system_copy() {
 }
 
 #[test]
-fn plugins_moved_elsewhere_leave_the_home_directory_a_host_still_searches() {
-  // After `location set plugins`, ~/.clap is no longer where this manager
-  // installs, and a copy put there by hand is a second one a host finds.
-  let fixture = Fixture::new();
-  let system = fixture.dir.path().join("system");
-  std::fs::create_dir_all(&system).unwrap();
-  std::fs::create_dir_all(fixture.clap_dir()).unwrap();
-  std::fs::write(fixture.clap_dir().join("Moved.clap"), elf_shared_object()).unwrap();
-  let disk = fixture.dir.path().join("external/plugins");
-  std::fs::create_dir_all(&disk).unwrap();
-  fixture
-    .luthier()
-    .args(["location", "set", "plugins"])
-    .arg(&disk)
-    .assert()
-    .success();
-  let artifact = fixture.make_artifact("Moved");
-  fixture.add_plugin("moved", "1.0.0", &artifact, &[]);
-
-  let assert = fixture
-    .luthier_seeing(&system)
-    .args(["install", "moved"])
-    .assert()
-    .success();
-  let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
-  let warning = format!(
-    "moved installs Moved.clap, which {} already holds",
-    fixture.clap_dir().display()
-  );
-  assert_eq!(stderr.matches(&warning).count(), 1, "{stderr}");
-  assert!(disk.join("clap/Moved.clap").is_file());
-}
-
-#[test]
 fn a_package_that_failed_reports_no_system_copy() {
   // Under `--keep-going` a package that did not install is in `failed`;
   // saying a second copy of it is now on the machine would be false.

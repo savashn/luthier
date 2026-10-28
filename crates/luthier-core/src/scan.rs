@@ -156,7 +156,7 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
     .collect()
 }
 
-/// Where a system root of `format` already holds a plugin named `name`.
+/// Every copy of a plugin named `name` the system roots of `format` hold.
 ///
 /// A host searches those roots as well as the one this manager installs
 /// into, so a second copy there means the plugin is listed twice, or loaded
@@ -166,23 +166,25 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// search below it: a copy in a vendor's subdirectory goes unnoticed too,
 /// rather than walking every system plugin directory for each plan.
 ///
-/// A system root that is also a managed root is skipped — `LV2_PATH` often
-/// names `~/.lv2` — since what is there is this manager's own copy, or the
-/// unmanaged one `install::plan` refuses to overwrite.
-pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Option<PathBuf> {
+/// Each copy once, however many roots reach it: on Arch `/usr/lib64` is a
+/// link to `/usr/lib`. A system root that is the managed root for `format`
+/// is skipped — `LV2_PATH` often names `~/.lv2` — since what is there is
+/// this manager's own copy, or the unmanaged one `install::plan` refuses to
+/// overwrite.
+pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
+  let managed = layout.plugin_root(format);
+  let mut seen = BTreeSet::new();
   layout
     .system_roots(format)
     .iter()
     .map(|root| (root, root.join(name)))
     // Existence first: it rules out nearly every root with one stat, and
-    // resolving roots is only worth it for the rare name that is there.
+    // resolving paths is only worth it for the rare name that is there.
     .filter(|(_, path)| path.exists())
-    .find(|(root, _)| {
-      !layout
-        .plugin_roots()
-        .any(|(_, managed)| same_directory(managed, root))
-    })
+    .filter(|(root, _)| !managed.is_some_and(|managed| same_directory(managed, root)))
+    .filter(|(_, path)| seen.insert(path.canonicalize().unwrap_or_else(|_| path.clone())))
     .map(|(_, path)| path)
+    .collect()
 }
 
 /// Whether two paths name one directory, through a symlink or a trailing
@@ -471,11 +473,39 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
 
     assert_eq!(
       on_system(&layout, &Format::Lv2, "lsp-plugins.lv2"),
-      Some(system.join("lsp-plugins.lv2"))
+      [system.join("lsp-plugins.lv2")]
     );
-    assert_eq!(on_system(&layout, &Format::Lv2, "other.lv2"), None);
+    assert!(on_system(&layout, &Format::Lv2, "other.lv2").is_empty());
     // Another format's roots are not searched for it.
-    assert_eq!(on_system(&layout, &Format::Clap, "lsp-plugins.lv2"), None);
+    assert!(on_system(&layout, &Format::Clap, "lsp-plugins.lv2").is_empty());
+  }
+
+  #[test]
+  fn every_copy_is_found_and_each_only_once() {
+    // NixOS with the plugin in the system profile and in the user's: both
+    // are named, so removing one does not reveal the other a run later.
+    // Arch links /usr/lib64 to /usr/lib: one copy, however it is reached.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let system = dir.path().join("run/current-system/sw/lib/lv2");
+    let profile = dir.path().join("nix-profile/lib/lv2");
+    for root in [&system, &profile] {
+      std::fs::create_dir_all(root.join("lsp-plugins.lv2")).unwrap();
+    }
+    let link = dir.path().join("lib64-lv2");
+    std::os::unix::fs::symlink(&system, &link).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(
+      Format::Lv2,
+      vec![system.clone(), link, profile.clone()],
+    )]));
+
+    assert_eq!(
+      on_system(&layout, &Format::Lv2, "lsp-plugins.lv2"),
+      [
+        system.join("lsp-plugins.lv2"),
+        profile.join("lsp-plugins.lv2")
+      ]
+    );
   }
 
   #[test]
@@ -492,6 +522,6 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
     std::os::unix::fs::symlink(&managed, &alias).unwrap();
     let layout = layout.with_system_roots(BTreeMap::from([(Format::Lv2, vec![managed, alias])]));
 
-    assert_eq!(on_system(&layout, &Format::Lv2, "lsp-plugins.lv2"), None);
+    assert!(on_system(&layout, &Format::Lv2, "lsp-plugins.lv2").is_empty());
   }
 }

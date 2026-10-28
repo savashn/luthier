@@ -285,11 +285,11 @@ manifest names the plugin, as a preview, and not at all when it is blocked;
 the outcome reports every one, for the packages that installed, since a rule
 read from an archive names nothing until the archive is open and the system
 may have changed while the user read the preview. A front end says what the
-outcome holds and its preview did not. Once `location set plugins` moves
-plugins elsewhere, `~/.clap`, `~/.vst3` and `~/.lv2` count as system
-directories, since every host still searches them. Only the top of each
-system directory is looked at, though CLAP and VST3 hosts search below it
-too: a copy in a subdirectory goes unnoticed.
+outcome holds and its preview did not (`InstallOutcome::not_previewed`).
+Only the top of each system directory is looked at, though CLAP and VST3
+hosts search below it too: a copy in a subdirectory goes unnoticed. Nor are
+`~/.clap`, `~/.vst3` and `~/.lv2` searched once `location set plugins` has
+moved plugins elsewhere, though hosts still search them (ROADMAP 3.6).
 
 ### External packages
 

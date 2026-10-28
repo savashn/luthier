@@ -159,12 +159,6 @@ impl Layout {
   }
 
   /// Moves the parts `locations` names to where it says.
-  ///
-  /// Plugins moved elsewhere leave `~/.clap`, `~/.vst3` and `~/.lv2` to
-  /// whatever else put a plugin there, and every host still searches them:
-  /// they become system roots, ahead of the rest. Not for a layout that sees
-  /// no system roots — `--no-system-plugins`, or one rooted without opting
-  /// in — which sees none of these either.
   pub fn with_locations(mut self, locations: &Locations) -> Self {
     if let Some(cache) = &locations.cache {
       self.cache = cache.clone();
@@ -173,17 +167,7 @@ impl Layout {
       self.libraries = libraries.clone();
     }
     if let Some(plugins) = &locations.plugins {
-      let left = std::mem::replace(
-        &mut self.plugin_roots,
-        Self::relocated_plugin_roots(plugins),
-      );
-      if !self.system_roots.is_empty() {
-        for (format, root) in left {
-          let roots = self.system_roots.entry(format).or_default();
-          roots.insert(0, root);
-          *roots = dedup_preserving_order(std::mem::take(roots));
-        }
-      }
+      self.plugin_roots = Self::relocated_plugin_roots(plugins);
     }
     self.locations = locations.clone();
     self
@@ -866,35 +850,6 @@ mod tests {
       "{}",
       set["LV2_PATH"]
     );
-  }
-
-  #[test]
-  fn plugin_directories_left_behind_become_system_roots() {
-    // Hosts still search ~/.clap once plugins live elsewhere, so a copy put
-    // there by hand is a second one; it is no longer this manager's to
-    // manage, which a system root never is.
-    let located = Layout::rooted_at("/home/u")
-      .with_system_roots(BTreeMap::from([(Format::Lv2, vec!["/usr/lib/lv2".into()])]))
-      .with_locations(&Locations {
-        plugins: Some("/mnt/ext/plugins".into()),
-        ..Locations::default()
-      });
-    assert_eq!(
-      located.system_roots(&Format::Clap),
-      [Path::new("/home/u/.clap")]
-    );
-    assert_eq!(
-      located.system_roots(&Format::Lv2),
-      [Path::new("/home/u/.lv2"), Path::new("/usr/lib/lv2")]
-    );
-    assert!(!located.is_managed_location(Path::new("/home/u/.clap/Surge XT.clap")));
-
-    // A layout that sees no system roots sees none of these either.
-    let bare = Layout::rooted_at("/home/u").with_locations(&Locations {
-      plugins: Some("/mnt/ext/plugins".into()),
-      ..Locations::default()
-    });
-    assert_eq!(bare.all_system_roots().count(), 0);
   }
 
   #[test]

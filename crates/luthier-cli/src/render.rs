@@ -312,12 +312,8 @@ impl Reporter {
     for warning in &outcome.warnings {
       self.warn(warning);
     }
-    // What the preview already said is not said twice; what changed
-    // since, or what only the archive named, is said now.
-    for found in &outcome.on_system {
-      if !previewed.on_system.contains(found) {
-        self.warn(found.to_string());
-      }
+    for found in outcome.not_previewed(previewed) {
+      self.warn(found.to_string());
     }
     for package in &outcome.installed {
       if package.formats.is_empty() {

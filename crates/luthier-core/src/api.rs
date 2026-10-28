@@ -3220,19 +3220,21 @@ pub struct AlreadyOnSystem {
 }
 
 impl AlreadyOnSystem {
-  /// What a system directory holds of what `rules` install.
+  /// What system directories hold of what `rules` install, one entry per
+  /// copy.
   fn of(id: &PackageId, rules: &[luthier_manifest::InstallRule], layout: &Layout) -> Vec<Self> {
     rules
       .iter()
-      .filter_map(|rule| {
+      .flat_map(|rule| {
         let plugin = rule.installed_name();
-        let path = scan::on_system(layout, &rule.format, plugin)?;
-        Some(Self {
-          id: id.to_string(),
-          format: rule.format.to_string(),
-          plugin: plugin.to_string(),
-          path,
-        })
+        scan::on_system(layout, &rule.format, plugin)
+          .into_iter()
+          .map(move |path| Self {
+            id: id.to_string(),
+            format: rule.format.to_string(),
+            plugin: plugin.to_string(),
+            path,
+          })
       })
       .collect()
   }
@@ -3264,8 +3266,8 @@ pub struct InstallPlan {
   /// blocked, which installs nothing.
   ///
   /// A preview. [`InstallOutcome::on_system`] has every one still true once
-  /// installed; a front end that showed this one need not repeat what
-  /// appears in both, but must say what appears only there.
+  /// installed, and [`InstallOutcome::not_previewed`] those this did not
+  /// show, which a front end that showed it says next.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub on_system: Vec<AlreadyOnSystem>,
   /// Why this plan cannot be carried out, if it cannot.
@@ -3426,6 +3428,21 @@ pub struct InstallOutcome {
 }
 
 impl InstallOutcome {
+  /// The system copies `previewed` — the plan the user was shown before
+  /// answering — did not name: one only the archive named, or one that
+  /// appeared while the user read the plan. A front end that showed the
+  /// preview says these, and only these, so nothing is said twice and
+  /// nothing not at all.
+  pub fn not_previewed<'a>(
+    &'a self,
+    previewed: &'a InstallPlan,
+  ) -> impl Iterator<Item = &'a AlreadyOnSystem> {
+    self
+      .on_system
+      .iter()
+      .filter(|found| !previewed.on_system.contains(found))
+  }
+
   /// The error the command ends with when a package failed: the outcome
   /// is reported first, then this decides the exit status.
   pub fn incomplete(&self) -> Option<Error> {
@@ -4065,5 +4082,30 @@ mod tests {
     }
     .into();
     assert!(failure_text(&id, &version, &changed).starts_with("kit has changed"));
+  }
+
+  #[test]
+  fn what_the_preview_did_not_show_is_said_after_and_nothing_twice() {
+    // A copy that appeared while the user read the plan is in the outcome
+    // and not in the preview; the one the preview showed is in both.
+    let copy = |plugin: &str| AlreadyOnSystem {
+      id: "twice".into(),
+      format: "clap".into(),
+      plugin: plugin.into(),
+      path: PathBuf::from("/usr/lib/clap").join(plugin),
+    };
+    let previewed = InstallPlan {
+      on_system: vec![copy("Shown.clap")],
+      ..InstallPlan::default()
+    };
+    let outcome = InstallOutcome {
+      on_system: vec![copy("Shown.clap"), copy("Appeared.clap")],
+      ..InstallOutcome::default()
+    };
+    let said: Vec<&str> = outcome
+      .not_previewed(&previewed)
+      .map(|found| found.plugin.as_str())
+      .collect();
+    assert_eq!(said, ["Appeared.clap"]);
   }
 }
