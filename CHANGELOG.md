@@ -24,6 +24,10 @@ about.
   `external` package installed there by hand is found, as one in
   `/usr/lib` is. A link back to the copy Luthier installed is not a second
   one. `--no-system-plugins` still sees none of them.
+- **An engine or an `external` package in a vendor's folder is found**
+  (`/usr/lib/vst3/<vendor>/sfizz.vst3`), as a CLAP or VST3 host finds it;
+  only the top of each directory was looked at. LV2 is still looked for
+  only at the top, which is all an LV2 host loads.
 
 ### Added
 

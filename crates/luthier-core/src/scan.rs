@@ -106,29 +106,38 @@ pub fn scan(layout: &Layout, state: &State) -> Result<Vec<DetectedPlugin>> {
 ///
 /// A package is satisfied when any one of its detect rules matches, which
 /// covers software shipping in several formats where only one may be installed.
-pub fn detect_externals(layout: &Layout, index: &RegistryIndex) -> BTreeSet<PackageId> {
+pub fn detect_externals(
+  layout: &Layout,
+  plugins: &SystemPlugins,
+  index: &RegistryIndex,
+) -> BTreeSet<PackageId> {
   index
     .packages
     .values()
     .map(|entry| &entry.manifest)
     .filter(|manifest| manifest.kind == PackageKind::External)
-    .filter(|manifest| locate_external(layout, manifest).is_some())
+    .filter(|manifest| locate_external(layout, plugins, manifest).is_some())
     .map(|manifest| manifest.id.clone())
     .collect()
 }
 
 /// Where an `external` package was found, if it is present.
 ///
-/// Searched in order: the roots this manager installs into, then the read-only
-/// system roots. The managed root comes first so a user who installed a build
-/// by hand into `~/.lv2` sees that one reported rather than a distribution copy.
+/// Searched in order: the roots this manager installs into, then the system
+/// roots, vendors' folders included, as `plugins` walked them. The managed
+/// root comes first so a user who installed a build by hand into `~/.lv2`
+/// sees that one reported rather than a distribution copy.
 ///
 /// Searching the system roots is the whole point for this package kind. sfizz's
 /// own manifest tells the user to install it with their distribution's package
 /// manager; looking only under `$HOME` would mean never finding what that
 /// instruction produces.
-pub fn locate_external(layout: &Layout, manifest: &Manifest) -> Option<PathBuf> {
-  locate(layout, &manifest.detect)
+pub fn locate_external(
+  layout: &Layout,
+  plugins: &SystemPlugins,
+  manifest: &Manifest,
+) -> Option<PathBuf> {
+  locate(layout, plugins, &manifest.detect)
 }
 
 /// Engines the merged index knows — the built-in list plus any source's
@@ -139,7 +148,11 @@ pub fn locate_external(layout: &Layout, manifest: &Manifest) -> Option<PathBuf> 
 /// carries: sfizz's live in `sfizz.toml`, while DrumCraker's registry has no
 /// field for them. A copy this manager installed needs no rule at all — the
 /// caller already knows it from the state file.
-pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<PackageId> {
+pub fn detect_engines(
+  layout: &Layout,
+  plugins: &SystemPlugins,
+  index: &RegistryIndex,
+) -> BTreeSet<PackageId> {
   index
     .engines
     .iter()
@@ -149,8 +162,8 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
         .get(&engine.package)
         .map(|entry| entry.manifest.detect.as_slice())
         .unwrap_or_default();
-      locate(layout, &engine.detect)
-        .or_else(|| locate(layout, from_manifest))
+      locate(layout, plugins, &engine.detect)
+        .or_else(|| locate(layout, plugins, from_manifest))
         .is_some()
     })
     .map(|engine| engine.package.clone())
@@ -256,6 +269,19 @@ impl SystemPlugins {
       .map(|found| found.path.clone())
       .collect()
   }
+
+  /// The first copy of a plugin named `name` the walk found that is still
+  /// there, in the order of the system roots and then of names: what
+  /// detection asks, for which the managed copy counts as much as any.
+  pub fn any_copy(&self, format: &Format, name: &str) -> Option<PathBuf> {
+    self
+      .found
+      .get(&(format.clone(), name.to_string()))?
+      .iter()
+      .map(|found| &found.path)
+      .find(|path| path.exists())
+      .cloned()
+  }
 }
 
 /// One plugin a walk found, and the system root it was found under.
@@ -316,17 +342,18 @@ fn walk(
 }
 
 /// The first place any of `rules` matches, managed roots before system ones.
-fn locate(layout: &Layout, rules: &[DetectRule]) -> Option<PathBuf> {
+///
+/// The system roots as `plugins` walked them, so an engine a distribution
+/// put in a vendor's folder is found, as the warning about a second copy
+/// finds a plugin there: one command must not hold a plugin present for
+/// one question and absent for the other.
+fn locate(layout: &Layout, plugins: &SystemPlugins, rules: &[DetectRule]) -> Option<PathBuf> {
   rules.iter().find_map(|rule| {
-    let managed = layout
+    layout
       .plugin_root(&rule.format)
-      .map(|root| root.join(rule.name.as_str()));
-    let system = layout
-      .system_roots(&rule.format)
-      .iter()
-      .map(|root| root.join(rule.name.as_str()));
-
-    managed.into_iter().chain(system).find(|path| path.exists())
+      .map(|root| root.join(rule.name.as_str()))
+      .filter(|managed| managed.exists())
+      .or_else(|| plugins.any_copy(&rule.format, rule.name.as_str()))
   })
 }
 
@@ -336,6 +363,17 @@ mod tests {
   use crate::state::{InstallReason, InstalledEntry, InstalledPackage};
   use luthier_manifest::{ParseMode, Sha256Hash};
   use std::collections::BTreeMap;
+
+  /// [`detect_externals`] against the system as it is now: tests change it
+  /// between questions, where a session would ask once.
+  fn externals(layout: &Layout, index: &RegistryIndex) -> BTreeSet<PackageId> {
+    detect_externals(layout, &SystemPlugins::of(layout), index)
+  }
+
+  /// [`detect_engines`], likewise.
+  fn engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<PackageId> {
+    detect_engines(layout, &SystemPlugins::of(layout), index)
+  }
 
   fn layout_with_plugins(dir: &std::path::Path) -> Layout {
     let layout = Layout::rooted_at(dir);
@@ -467,12 +505,12 @@ mod tests {
     let layout = layout.with_system_roots(BTreeMap::from([(Format::Lv2, vec![system.clone()])]));
 
     assert!(
-      detect_externals(&layout, &index).is_empty(),
+      externals(&layout, &index).is_empty(),
       "nothing is installed yet"
     );
 
     std::fs::create_dir_all(system.join("sfizz.lv2")).unwrap();
-    assert!(detect_externals(&layout, &index).contains(&PackageId::new("sfizz").unwrap()));
+    assert!(externals(&layout, &index).contains(&PackageId::new("sfizz").unwrap()));
   }
 
   #[test]
@@ -489,7 +527,10 @@ mod tests {
     std::fs::create_dir_all(&managed).unwrap();
 
     let manifest = &index.packages[&PackageId::new("sfizz").unwrap()].manifest;
-    assert_eq!(locate_external(&layout, manifest), Some(managed));
+    assert_eq!(
+      locate_external(&layout, &SystemPlugins::of(&layout), manifest),
+      Some(managed)
+    );
   }
 
   #[test]
@@ -536,11 +577,11 @@ mod tests {
     let index = index.load_index().unwrap();
     let _ = ParseMode::Lenient;
 
-    assert!(detect_externals(&layout, &index).is_empty());
+    assert!(externals(&layout, &index).is_empty());
 
     // Only the LV2 build is installed; one matching rule is enough.
     std::fs::create_dir_all(layout.plugin_root(&Format::Lv2).unwrap().join("sfizz.lv2")).unwrap();
-    let detected = detect_externals(&layout, &index);
+    let detected = externals(&layout, &index);
     assert_eq!(detected.len(), 1);
     assert!(detected.contains(&PackageId::new("sfizz").unwrap()));
   }
@@ -567,18 +608,18 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
     .unwrap()
     .entries;
 
-    assert!(detect_engines(&layout, &index).is_empty());
+    assert!(engines(&layout, &index).is_empty());
 
     let system = dir.path().join("usr/lib/vst3");
     std::fs::create_dir_all(system.join("DrumCraker.vst3")).unwrap();
     let layout = layout.with_system_roots(BTreeMap::from([(Format::Vst3, vec![system])]));
     assert_eq!(
-      detect_engines(&layout, &index),
+      engines(&layout, &index),
       BTreeSet::from([PackageId::new("drumcraker").unwrap()])
     );
 
     std::fs::create_dir_all(layout.plugin_root(&Format::Lv2).unwrap().join("sfizz.lv2")).unwrap();
-    assert_eq!(detect_engines(&layout, &index).len(), 2);
+    assert_eq!(engines(&layout, &index).len(), 2);
   }
 
   #[test]
@@ -667,7 +708,7 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
         plugins: Some(disk),
         ..Default::default()
       });
-    assert!(detect_externals(&moved, &index).contains(&PackageId::new("sfizz").unwrap()));
+    assert!(externals(&moved, &index).contains(&PackageId::new("sfizz").unwrap()));
   }
 
   #[test]
@@ -841,6 +882,32 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
       walked
         .copies_of(&layout, &Format::Clap, "Gone.clap")
         .is_empty()
+    );
+  }
+
+  #[test]
+  fn an_engine_in_a_vendor_s_folder_is_present_for_detection_too() {
+    // The warning about a second copy finds a plugin in a vendor's folder;
+    // detection must find an engine there too, or one command calls the
+    // same bundle present and missing.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let index = external_registry(dir.path());
+    let system = dir.path().join("usr/lib/lv2");
+    std::fs::create_dir_all(&system).unwrap();
+    let vst3 = dir.path().join("usr/lib/vst3");
+    std::fs::create_dir_all(vst3.join("SFZTools/sfizz.vst3")).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([
+      (Format::Lv2, vec![system]),
+      (Format::Vst3, vec![vst3.clone()]),
+    ]));
+
+    let walked = SystemPlugins::of(&layout);
+    assert!(detect_externals(&layout, &walked, &index).contains(&PackageId::new("sfizz").unwrap()));
+    let manifest = &index.packages[&PackageId::new("sfizz").unwrap()].manifest;
+    assert_eq!(
+      locate_external(&layout, &walked, manifest),
+      Some(vst3.join("SFZTools/sfizz.vst3"))
     );
   }
 }

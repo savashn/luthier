@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 527 tests, fully offline
+cargo test --workspace                     # 528 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -543,7 +543,8 @@ LV2 and sample libraries install; 7z extracts; a bare CLAP or SoundFont installs
 as copies; `external` detection searches the system plugin directories as well
 as the managed roots: `~/.clap`, `~/.vst3` and `~/.lv2` once plugins live
 elsewhere, `/usr/lib`, the Debian multiarch directory,
-`/usr/lib64` (Fedora, openSUSE) and the Nix profiles.
+`/usr/lib64` (Fedora, openSUSE) and the Nix profiles, with vendors' folders
+below CLAP and VST3 ones (`scan::SystemPlugins`).
 
 A `library` declares `content` (`sfz`, `sf2`, `drumgizmo`);
 `builtin_engines()` maps content to engine package IDs, and an `engines.toml`

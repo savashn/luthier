@@ -222,11 +222,11 @@ pub struct Session {
   /// was the first answer with more stat calls.
   detected_externals: std::sync::OnceLock<BTreeSet<PackageId>>,
   detected_engines: std::sync::OnceLock<BTreeSet<PackageId>>,
-  /// The plugins in the system roots, for telling a second copy: walked
-  /// once when a plan first asks, and once more when an install does. Not
+  /// The plugins in the system roots: walked once when detection or a plan
+  /// first asks, and once more when an install reports second copies. Not
   /// one walk for both — the user answers the plan in between, and the
   /// outcome reports what is there once installed, not what the preview
-  /// saw.
+  /// saw. Detection keeps to the first, as its answers are memoised above.
   planned_against: std::sync::OnceLock<scan::SystemPlugins>,
   installed_against: std::sync::OnceLock<scan::SystemPlugins>,
 }
@@ -259,14 +259,23 @@ impl Session {
   fn externals_present(&self, index: &RegistryIndex) -> &BTreeSet<PackageId> {
     self
       .detected_externals
-      .get_or_init(|| scan::detect_externals(&self.layout, index))
+      .get_or_init(|| scan::detect_externals(&self.layout, self.walked(), index))
   }
 
   /// Engines the machine already provides.
   fn engines_present(&self, index: &RegistryIndex) -> &BTreeSet<PackageId> {
     self
       .detected_engines
-      .get_or_init(|| scan::detect_engines(&self.layout, index))
+      .get_or_init(|| scan::detect_engines(&self.layout, self.walked(), index))
+  }
+
+  /// The session's first walk of the system roots, which detection and the
+  /// plan both read, so one command holds a plugin present for both or for
+  /// neither.
+  fn walked(&self) -> &scan::SystemPlugins {
+    self
+      .planned_against
+      .get_or_init(|| scan::SystemPlugins::of(&self.layout))
   }
 
   /// What `rules` would place that a system directory already holds.
@@ -506,7 +515,8 @@ impl Session {
       // An `external` package is never installed *by us*, so
       // `installed_version` is permanently None for it and reporting only
       // that would say "no" about software sitting in /usr/lib.
-      detected_at: scan::locate_external(&self.layout, manifest).map(|p| p.display().to_string()),
+      detected_at: scan::locate_external(&self.layout, self.walked(), manifest)
+        .map(|p| p.display().to_string()),
       pinned: installed.and_then(|p| p.pin.as_ref().map(ToString::to_string)),
       dependencies: manifest
         .latest_release()
