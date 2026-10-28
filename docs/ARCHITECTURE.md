@@ -291,8 +291,9 @@ levels down, as hosts search them (`scan::SystemPlugins`), never into a
 plugin; an LV2 host loads only the bundles at the top, and LV2 is searched
 only there. The system directories are walked when a plan first asks, and
 again when an install does: the user answers the plan in between. Engine
-and `external` detection reads the first walk, so a plugin in a vendor's
-folder is present for detection exactly as for the warning.
+and `external` detection looks at the top of each root first, by the
+rule's name, and only on a miss reads the first walk, so a plugin in a
+vendor's folder is present for detection as for the warning.
 
 `~/.clap`, `~/.vst3` and `~/.lv2` are system roots as much as `/usr/lib/clap`
 is — `~/.lv2` only while `LV2_PATH` does not replace the default — because

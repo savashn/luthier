@@ -227,8 +227,8 @@ pub struct Session {
   /// one walk for both — the user answers the plan in between, and the
   /// outcome reports what is there once installed, not what the preview
   /// saw. Detection keeps to the first, as its answers are memoised above.
-  planned_against: std::sync::OnceLock<scan::SystemPlugins>,
-  installed_against: std::sync::OnceLock<scan::SystemPlugins>,
+  first_walk: std::sync::OnceLock<scan::SystemPlugins>,
+  walk_after_install: std::sync::OnceLock<scan::SystemPlugins>,
 }
 
 impl Session {
@@ -250,8 +250,8 @@ impl Session {
       index: std::sync::OnceLock::new(),
       detected_externals: std::sync::OnceLock::new(),
       detected_engines: std::sync::OnceLock::new(),
-      planned_against: std::sync::OnceLock::new(),
-      installed_against: std::sync::OnceLock::new(),
+      first_walk: std::sync::OnceLock::new(),
+      walk_after_install: std::sync::OnceLock::new(),
     })
   }
 
@@ -259,29 +259,36 @@ impl Session {
   fn externals_present(&self, index: &RegistryIndex) -> &BTreeSet<PackageId> {
     self
       .detected_externals
-      .get_or_init(|| scan::detect_externals(&self.layout, self.walked(), index))
+      .get_or_init(|| scan::detect_externals(&self.layout, &|| self.walked(), index))
   }
 
   /// Engines the machine already provides.
   fn engines_present(&self, index: &RegistryIndex) -> &BTreeSet<PackageId> {
     self
       .detected_engines
-      .get_or_init(|| scan::detect_engines(&self.layout, self.walked(), index))
+      .get_or_init(|| scan::detect_engines(&self.layout, &|| self.walked(), index))
   }
 
   /// The session's first walk of the system roots, which detection and the
   /// plan both read, so one command holds a plugin present for both or for
   /// neither.
   fn walked(&self) -> &scan::SystemPlugins {
-    self
-      .planned_against
-      .get_or_init(|| scan::SystemPlugins::of(&self.layout))
+    self.walk(&self.first_walk)
+  }
+
+  /// `walk`, walked the first time it is asked for: the one place either
+  /// walk is made, so no caller can make a third.
+  fn walk<'a>(
+    &self,
+    walk: &'a std::sync::OnceLock<scan::SystemPlugins>,
+  ) -> &'a scan::SystemPlugins {
+    walk.get_or_init(|| scan::SystemPlugins::of(&self.layout))
   }
 
   /// What `rules` would place that a system directory already holds.
   ///
-  /// `against` is which walk to ask, `planned_against` or
-  /// `installed_against`. Nothing is walked for rules that place no plugin
+  /// `against` is which walk to ask, `first_walk` or
+  /// `walk_after_install`. Nothing is walked for rules that place no plugin
   /// — a sample library's — since no system root holds one.
   fn already_on_system(
     &self,
@@ -292,8 +299,7 @@ impl Session {
     if !rules.iter().any(|rule| rule.format.extension().is_some()) {
       return Vec::new();
     }
-    let plugins = against.get_or_init(|| scan::SystemPlugins::of(&self.layout));
-    AlreadyOnSystem::of(id, rules, plugins, &self.layout)
+    AlreadyOnSystem::of(id, rules, self.walk(against), &self.layout)
   }
 
   pub fn offline(mut self, offline: bool) -> Self {
@@ -515,7 +521,7 @@ impl Session {
       // An `external` package is never installed *by us*, so
       // `installed_version` is permanently None for it and reporting only
       // that would say "no" about software sitting in /usr/lib.
-      detected_at: scan::locate_external(&self.layout, self.walked(), manifest)
+      detected_at: scan::locate_external(&self.layout, &|| self.walked(), manifest)
         .map(|p| p.display().to_string()),
       pinned: installed.and_then(|p| p.pin.as_ref().map(ToString::to_string)),
       dependencies: manifest
@@ -784,9 +790,7 @@ impl Session {
       // The installer's own choice of rules: an artifact that defers to its
       // archive installs what the archive holds, whatever it declares.
       .filter(|(_, artifact)| !artifact.derive_install)
-      .flat_map(|(id, artifact)| {
-        self.already_on_system(&self.planned_against, id, &artifact.install)
-      })
+      .flat_map(|(id, artifact)| self.already_on_system(&self.first_walk, id, &artifact.install))
       .collect()
   }
 
@@ -1386,7 +1390,7 @@ impl Session {
     // still report a second copy of what never arrived. Every rule, not
     // only those read from the archive: the plan's preview may be silent
     // (`--json`), or out of date by the time the user answered it.
-    let on_system = self.already_on_system(&self.installed_against, package.id(), rules);
+    let on_system = self.already_on_system(&self.walk_after_install, package.id(), rules);
 
     let record = InstalledPackage {
       id: package.id().clone(),
