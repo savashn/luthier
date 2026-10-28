@@ -38,3 +38,17 @@ provides = ["library"]
 install = [
   { format = "library", source = "MuldjordKit3", kind = "bundle" },
 ]
+
+# The same archive for aarch64: samples and an XML file, the same on
+# every architecture. Listed once per target, as the Open Audio Stack
+# translator files platform-neutral content.
+[[releases.artifacts]]
+target = { os = "linux", arch = "aarch64" }
+source = { type = "http", url = "https://drumgizmo.org/kits/MuldjordKit/MuldjordKit3.zip" }
+archive = "zip"
+size = 2536576789
+checksum = { sha256 = "db94f910913185ee17c5abb77d285a27476dee979db0ccebdc7ed68404514c96" }
+provides = ["library"]
+install = [
+  { format = "library", source = "MuldjordKit3", kind = "bundle" },
+]

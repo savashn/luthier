@@ -371,8 +371,9 @@ Concrete content gaps, in order of how visible they are:
 - **Few aarch64 artifacts.** From 0.4.0 on, releases ship an aarch64 build, and some 65
   Open Audio Stack packages publish a Linux archive for aarch64, against some
   330 for x86_64 (2026-10; counted before translation, unlike the 299 above);
-  the manifests in extras list x86_64 only, the three DrumGizmo kits among
-  them although a kit is the same on every architecture.
+  the two plugins in extras list x86_64 only. The three DrumGizmo kits list
+  both, the same archive for each, since a kit is the same on every
+  architecture.
 - **Only two packages are `external`, and both are engines.** That is the point
   now: extras carries what OAS cannot, and `check-updates` is what will
   notice when an upstream starts publishing binaries.

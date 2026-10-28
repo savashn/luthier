@@ -66,7 +66,8 @@ download is checked against the SHA-256 GitHub publishes for it.
 On ARM, Luthier installs what is published for ARM, and most Linux audio
 software is published for x86_64 only: some 65 of the Open Audio Stack
 registry's packages publish a Linux archive for aarch64, against some 330 for
-x86_64, and the packages in extras are x86_64 only. `luthier search` shows everything;
+x86_64, and the two plugins in extras are x86_64 only (its DrumGizmo kits
+install anywhere). `luthier search` shows everything;
 installing a package with no build for your machine says so before anything
 is downloaded. The ARM build is for a 64-bit system: a 32-bit one on a 64-bit
 kernel, such as 32-bit Raspberry Pi OS on a Pi 4 or 5, reports `aarch64` too,
