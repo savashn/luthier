@@ -119,19 +119,25 @@ fn home_layout(global: &GlobalArgs) -> Result<Layout> {
   };
   // A rooted layout starts seeing nothing of the machine, and one from the
   // environment all of it; each flag moves the one it does not match.
-  let rooted = global.root.is_some();
   Ok(
-    match (&global.system_plugins_in, global.no_system_plugins) {
-      (Some(dir), _) => {
+    match (
+      &global.system_plugins_in,
+      global.no_system_plugins,
+      &global.root,
+    ) {
+      (Some(dir), _, _) => {
         // Absolute, as a search path entry must be: relative to wherever
         // the command happened to start is no place to look for plugins.
         let dir = std::path::absolute(dir)
           .map_err(|e| Error::io("resolve the system plugin directory", dir, e))?;
         layout.with_system_roots_in(&dir)
       }
-      (None, true) if !rooted => layout.with_system_roots(Default::default()),
-      (None, false) if rooted => layout.with_system_roots(Layout::default_system_roots()),
-      (None, _) => layout,
+      (None, true, None) => layout.with_system_roots(Default::default()),
+      // The machine as seen from the root: its home plugin directories are
+      // the root's, not the user's real ones, which another installation
+      // manages.
+      (None, false, Some(root)) => layout.with_system_roots(Layout::default_system_roots(root)),
+      (None, _, _) => layout,
     },
   )
 }

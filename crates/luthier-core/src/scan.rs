@@ -177,7 +177,10 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// host that searches nowhere else.
 pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
   let mut seen = BTreeSet::new();
-  let mut managed = None;
+  // Where the managed copy really is, when there is one.
+  let managed_copy = layout
+    .plugin_root(format)
+    .and_then(|root| root.join(name).canonicalize().ok());
   layout
     .system_roots(format)
     .iter()
@@ -186,12 +189,9 @@ pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
     // resolving paths is only worth it for the rare name that is there.
     .filter(|(_, path)| path.exists())
     .filter(|(_, path)| {
-      let managed = managed.get_or_insert_with(|| {
-        layout
-          .plugin_root(format)
-          .and_then(|root| root.join(name).canonicalize().ok())
-      });
-      managed.is_none() || path.canonicalize().ok() != *managed
+      managed_copy
+        .as_ref()
+        .is_none_or(|managed| path.canonicalize().ok().as_ref() != Some(managed))
     })
     .filter(|(root, _)| seen.insert(root.canonicalize().unwrap_or_else(|_| root.to_path_buf())))
     .map(|(_, path)| path)
