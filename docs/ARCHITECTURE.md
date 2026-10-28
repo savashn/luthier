@@ -289,8 +289,8 @@ outcome holds and its preview did not (`InstallOutcome::not_previewed`).
 Below a CLAP or VST3 system directory, vendors' folders are followed a few
 levels down, as hosts search them (`scan::SystemPlugins`), never into a
 plugin; an LV2 host loads only the bundles at the top, and LV2 is searched
-only there. The system directories are walked once per command, when a plan
-or an install first asks.
+only there. The system directories are walked when a plan first asks, and
+again when an install does: the user answers the plan in between.
 
 `~/.clap`, `~/.vst3` and `~/.lv2` are system roots as much as `/usr/lib/clap`
 is — `~/.lv2` only while `LV2_PATH` does not replace the default — because

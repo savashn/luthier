@@ -222,9 +222,13 @@ pub struct Session {
   /// was the first answer with more stat calls.
   detected_externals: std::sync::OnceLock<BTreeSet<PackageId>>,
   detected_engines: std::sync::OnceLock<BTreeSet<PackageId>>,
-  /// The plugins in the system roots, for telling a second copy; walked
-  /// once a plan or an install first asks, for the same reason.
-  system_plugins: std::sync::OnceLock<scan::SystemPlugins>,
+  /// The plugins in the system roots, for telling a second copy: walked
+  /// once when a plan first asks, and once more when an install does. Not
+  /// one walk for both — the user answers the plan in between, and the
+  /// outcome reports what is there once installed, not what the preview
+  /// saw.
+  planned_against: std::sync::OnceLock<scan::SystemPlugins>,
+  installed_against: std::sync::OnceLock<scan::SystemPlugins>,
 }
 
 impl Session {
@@ -246,7 +250,8 @@ impl Session {
       index: std::sync::OnceLock::new(),
       detected_externals: std::sync::OnceLock::new(),
       detected_engines: std::sync::OnceLock::new(),
-      system_plugins: std::sync::OnceLock::new(),
+      planned_against: std::sync::OnceLock::new(),
+      installed_against: std::sync::OnceLock::new(),
     })
   }
 
@@ -265,17 +270,20 @@ impl Session {
   }
 
   /// What `rules` would place that a system directory already holds.
+  ///
+  /// `against` is which walk to ask, `planned_against` or
+  /// `installed_against`. Nothing is walked for rules that place no plugin
+  /// — a sample library's — since no system root holds one.
   fn already_on_system(
     &self,
+    against: &std::sync::OnceLock<scan::SystemPlugins>,
     id: &PackageId,
     rules: &[luthier_manifest::InstallRule],
   ) -> Vec<AlreadyOnSystem> {
-    if rules.is_empty() {
+    if !rules.iter().any(|rule| rule.format.extension().is_some()) {
       return Vec::new();
     }
-    let plugins = self
-      .system_plugins
-      .get_or_init(|| scan::SystemPlugins::of(&self.layout));
+    let plugins = against.get_or_init(|| scan::SystemPlugins::of(&self.layout));
     AlreadyOnSystem::of(id, rules, plugins, &self.layout)
   }
 
@@ -766,7 +774,9 @@ impl Session {
       // The installer's own choice of rules: an artifact that defers to its
       // archive installs what the archive holds, whatever it declares.
       .filter(|(_, artifact)| !artifact.derive_install)
-      .flat_map(|(id, artifact)| self.already_on_system(id, &artifact.install))
+      .flat_map(|(id, artifact)| {
+        self.already_on_system(&self.planned_against, id, &artifact.install)
+      })
       .collect()
   }
 
@@ -1366,7 +1376,7 @@ impl Session {
     // still report a second copy of what never arrived. Every rule, not
     // only those read from the archive: the plan's preview may be silent
     // (`--json`), or out of date by the time the user answered it.
-    let on_system = self.already_on_system(package.id(), rules);
+    let on_system = self.already_on_system(&self.installed_against, package.id(), rules);
 
     let record = InstalledPackage {
       id: package.id().clone(),

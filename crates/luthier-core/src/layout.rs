@@ -502,9 +502,9 @@ impl Layout {
   /// is there is this manager's, so a reader decides when it finds
   /// something whether that something is the managed copy — searching
   /// managed roots first, as detection does, or comparing what it found
-  /// with the managed copy, as [`crate::scan::on_system`] does. Deciding
-  /// it here instead would mean resolving every root of every command
-  /// before knowing whether anything is there.
+  /// with the managed copy, as [`crate::scan::SystemPlugins::copies_of`]
+  /// does. Deciding it here instead would mean resolving every root of
+  /// every command before knowing whether anything is there.
   pub fn system_roots(&self, format: &Format) -> &[PathBuf] {
     self.system_roots.get(format).map_or(&[], Vec::as_slice)
   }

@@ -169,7 +169,7 @@ const VENDOR_DEPTH: usize = 3;
 /// in a vendor's folder as readily as at the top.
 #[derive(Debug, Default)]
 pub struct SystemPlugins {
-  found: BTreeMap<(Format, String), Vec<PathBuf>>,
+  found: BTreeMap<(Format, String), Vec<Found>>,
 }
 
 impl SystemPlugins {
@@ -178,30 +178,30 @@ impl SystemPlugins {
   /// Below each CLAP and VST3 root, plain folders are followed
   /// [`VENDOR_DEPTH`] deep, never into a plugin, which is a file or a
   /// bundle; an LV2 host loads only the bundles directly in each directory,
-  /// so nothing below them is a plugin it finds. The managed root as the
-  /// system roots spell it — `~/.clap` until plugins move — is not walked:
-  /// what is in it is this manager's, or the unmanaged file `install::plan`
-  /// refuses to overwrite.
+  /// so nothing below them is a plugin it finds. The managed root is walked
+  /// too, where it is a system root (`~/.clap` until plugins move): a
+  /// vendor's installer puts its own folder in `~/.vst3`, which a host
+  /// searches like any other.
   pub fn of(layout: &Layout) -> Self {
-    let mut found: BTreeMap<(Format, String), Vec<PathBuf>> = BTreeMap::new();
+    let mut found: BTreeMap<(Format, String), Vec<Found>> = BTreeMap::new();
     for (format, root) in layout.all_system_roots() {
       let Some(extension) = format.extension() else {
         continue;
       };
-      if layout.plugin_root(format) == Some(root) {
-        continue;
-      }
       let depth = if *format == Format::Lv2 {
         0
       } else {
         VENDOR_DEPTH
       };
-      walk(root, extension, depth, &mut |path| {
+      walk(root, extension, depth, &mut BTreeSet::new(), &mut |path| {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
           found
             .entry((format.clone(), name.to_string()))
             .or_default()
-            .push(path);
+            .push(Found {
+              root: root.to_path_buf(),
+              path,
+            });
         }
       });
     }
@@ -214,56 +214,82 @@ impl SystemPlugins {
   /// into, so a second copy there means the plugin is listed twice, or
   /// loaded from whichever the host reads first. Matched by name alone, as
   /// detection is: a distribution that names its bundle differently goes
-  /// unnoticed.
+  /// unnoticed. A copy gone since the walk is not reported.
   ///
   /// Each copy once, however many roots reach it: on Arch `/usr/lib64` is a
-  /// link to `/usr/lib`. Told apart by the directory a copy sits in, not by
-  /// what it links to: two Nix profiles each link a plugin into the same
-  /// store path, and a host finds it through both.
+  /// link to `/usr/lib`. Told apart by the root it was found under, resolved,
+  /// and where below it, not by what it links to: two Nix profiles each link
+  /// a plugin, or a vendor's folder of them, into the same store path, and
+  /// a host finds it through both.
   ///
-  /// The managed copy is not a second one, however it is reached: through
-  /// a search path naming the managed root by another spelling, or through
-  /// a link to it, as plugins moved with `location set plugins` are often
-  /// linked back into `~/.clap` for a host that searches nowhere else.
-  /// Decided when asked, by where it really is, so a copy this manager has
-  /// just placed is known for its own.
+  /// The managed copy is not a second one, however it is reached: at the
+  /// top of the managed root, decided by name so a path that fails to
+  /// resolve cannot make it one; through a search path naming the managed
+  /// root by another spelling; or through a link to it, as plugins moved
+  /// with `location set plugins` are often linked back into `~/.clap` for a
+  /// host that searches nowhere else. Decided when asked, by where it really
+  /// is, so a copy this manager has just placed is known for its own.
   pub fn copies_of(&self, layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
     let Some(found) = self.found.get(&(format.clone(), name.to_string())) else {
       return Vec::new();
     };
-    let managed_copy = layout
-      .plugin_root(format)
-      .and_then(|root| root.join(name).canonicalize().ok());
+    let managed = layout.plugin_root(format).map(|root| root.join(name));
+    let managed_copy = managed.as_ref().and_then(|path| path.canonicalize().ok());
     let mut seen = BTreeSet::new();
     found
       .iter()
-      .filter(|path| {
+      .filter(|found| found.path.exists())
+      .filter(|found| managed.as_ref() != Some(&found.path))
+      .filter(|found| {
         managed_copy
           .as_ref()
-          .is_none_or(|managed| path.canonicalize().ok().as_ref() != Some(managed))
+          .is_none_or(|managed| found.path.canonicalize().ok().as_ref() != Some(managed))
       })
-      .filter(|path| {
-        let folder = path.parent().unwrap_or(path);
-        seen.insert(
-          folder
-            .canonicalize()
-            .unwrap_or_else(|_| folder.to_path_buf()),
-        )
+      .filter(|found| {
+        let root = found
+          .root
+          .canonicalize()
+          .unwrap_or_else(|_| found.root.clone());
+        let below = found.path.strip_prefix(&found.root).unwrap_or(&found.path);
+        seen.insert(root.join(below))
       })
-      .cloned()
+      .map(|found| found.path.clone())
       .collect()
   }
 }
 
+/// One plugin a walk found, and the system root it was found under.
+#[derive(Debug)]
+struct Found {
+  root: PathBuf,
+  path: PathBuf,
+}
+
 /// Every copy of a plugin named `name` the system roots of `format` hold;
-/// [`SystemPlugins::copies_of`], for one question.
-pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
+/// [`SystemPlugins::copies_of`], for one question. A walk of every root
+/// for each, so for tests: a command asks the session's `SystemPlugins`.
+#[cfg(test)]
+fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
   SystemPlugins::of(layout).copies_of(layout, format, name)
 }
 
 /// Calls `found` for each plugin under `dir` with `extension`, in name
 /// order, following plain folders `depth` levels down.
-fn walk(dir: &Path, extension: &str, depth: usize, found: &mut impl FnMut(PathBuf)) {
+///
+/// Links are followed, since a Nix profile is made of them, but no folder
+/// twice: `visited` holds where each one really is, so a link back up the
+/// tree ends at once instead of at the depth. One set per root — two roots
+/// reaching one folder are two places a host finds what is in it.
+fn walk(
+  dir: &Path,
+  extension: &str,
+  depth: usize,
+  visited: &mut BTreeSet<PathBuf>,
+  found: &mut impl FnMut(PathBuf),
+) {
+  if !visited.insert(dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf())) {
+    return;
+  }
   let Ok(entries) = std::fs::read_dir(dir) else {
     return;
   };
@@ -284,7 +310,7 @@ fn walk(dir: &Path, extension: &str, depth: usize, found: &mut impl FnMut(PathBu
         found(path);
       }
     } else if depth > 0 && path.is_dir() {
-      walk(&path, extension, depth - 1, found);
+      walk(&path, extension, depth - 1, visited, found);
     }
   }
 }
@@ -751,5 +777,70 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
     );
     assert!(on_system(&layout, &Format::Vst3, "Inner.vst3").is_empty());
     assert!(on_system(&layout, &Format::Vst3, "TooDeep.vst3").is_empty());
+  }
+
+  #[test]
+  fn a_vendor_s_folder_in_the_managed_root_is_searched_too() {
+    // A vendor's installer puts its folder in ~/.vst3, which a host
+    // searches; the bundle this manager placed at the top is its own.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let managed = layout.plugin_root(&Format::Vst3).unwrap().to_path_buf();
+    std::fs::create_dir_all(managed.join("Diva.vst3")).unwrap();
+    std::fs::create_dir_all(managed.join("u-he/Diva.vst3")).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(Format::Vst3, vec![managed.clone()])]));
+
+    assert_eq!(
+      on_system(&layout, &Format::Vst3, "Diva.vst3"),
+      [managed.join("u-he/Diva.vst3")]
+    );
+  }
+
+  #[test]
+  fn two_profiles_linking_one_vendor_folder_are_two_copies() {
+    // Nix links a vendor's folder, not each bundle, into every profile
+    // that has the package: a host finds the plugin through each.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let store = dir.path().join("nix/store/abc-suite/lib/vst3/Vendor");
+    std::fs::create_dir_all(store.join("Suite.vst3")).unwrap();
+    let system = dir.path().join("run/current-system/sw/lib/vst3");
+    let profile = dir.path().join("nix-profile/lib/vst3");
+    for root in [&system, &profile] {
+      std::fs::create_dir_all(root).unwrap();
+      std::os::unix::fs::symlink(&store, root.join("Vendor")).unwrap();
+    }
+    let layout = layout.with_system_roots(BTreeMap::from([(
+      Format::Vst3,
+      vec![system.clone(), profile.clone()],
+    )]));
+
+    assert_eq!(
+      on_system(&layout, &Format::Vst3, "Suite.vst3"),
+      [
+        system.join("Vendor/Suite.vst3"),
+        profile.join("Vendor/Suite.vst3")
+      ]
+    );
+  }
+
+  #[test]
+  fn a_copy_gone_since_the_walk_is_not_reported() {
+    // The walk is the session's; a copy removed while the user read the
+    // plan — `pacman -R` in another terminal — is no longer there to name.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let system = dir.path().join("usr/lib/clap");
+    std::fs::create_dir_all(&system).unwrap();
+    std::fs::write(system.join("Gone.clap"), b"\x7fELF").unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(Format::Clap, vec![system.clone()])]));
+
+    let walked = SystemPlugins::of(&layout);
+    std::fs::remove_file(system.join("Gone.clap")).unwrap();
+    assert!(
+      walked
+        .copies_of(&layout, &Format::Clap, "Gone.clap")
+        .is_empty()
+    );
   }
 }
