@@ -4,9 +4,17 @@
 # published against an unchanged lock file still surfaces.
 
 [graph]
-# The only target anything is built for. Without this, licences and
-# advisories of Windows- and macOS-only crates would gate a Linux tool.
-targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
+# The targets anything is built for: glibc for development and the Nix
+# package, musl for the static release binaries, on both architectures a
+# release ships. Without this, licences and advisories of Windows- and
+# macOS-only crates would gate a Linux tool; without aarch64, a crate only
+# an ARM build pulls in would ship unchecked.
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-gnu",
+  "aarch64-unknown-linux-musl",
+]
 all-features = true
 
 [advisories]
