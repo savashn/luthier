@@ -12,6 +12,8 @@
 //! [`detect_externals`] and [`detect_engines`] also search the read-only system
 //! roots, because an `external` package is by definition something the
 //! distribution or a container provided, and an engine very often is.
+//! [`on_system`] searches only those, for a second copy of a plugin about to
+//! be installed.
 
 use crate::error::{Error, Result};
 use crate::layout::Layout;
@@ -160,18 +162,27 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// into, so a second copy there means the plugin is listed twice, or loaded
 /// from whichever the host reads first. Matched by name alone, as detection
 /// is: a distribution that names its bundle differently goes unnoticed.
+/// Only the top of each root is looked at, though CLAP and VST3 hosts also
+/// search below it: a copy in a vendor's subdirectory goes unnoticed too,
+/// rather than walking every system plugin directory for each plan.
 ///
 /// A system root that is also a managed root is skipped — `LV2_PATH` often
 /// names `~/.lv2` — since what is there is this manager's own copy, or the
 /// unmanaged one `install::plan` refuses to overwrite.
 pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Option<PathBuf> {
-  let managed: Vec<&Path> = layout.plugin_roots().map(|(_, root)| root).collect();
   layout
     .system_roots(format)
     .iter()
-    .filter(|root| !managed.iter().any(|m| same_directory(m, root)))
-    .map(|root| root.join(name))
-    .find(|path| path.exists())
+    .map(|root| (root, root.join(name)))
+    // Existence first: it rules out nearly every root with one stat, and
+    // resolving roots is only worth it for the rare name that is there.
+    .filter(|(_, path)| path.exists())
+    .find(|(root, _)| {
+      !layout
+        .plugin_roots()
+        .any(|(_, managed)| same_directory(managed, root))
+    })
+    .map(|(_, path)| path)
 }
 
 /// Whether two paths name one directory, through a symlink or a trailing

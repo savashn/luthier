@@ -14,7 +14,7 @@ use luthier_core::api::{Session, Storage};
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
-use luthier_manifest::PackageId;
+use luthier_manifest::{Format, PackageId};
 use progress::{BarProgress, Display};
 use render::Reporter;
 use std::io::{IsTerminal, Write};
@@ -112,6 +112,24 @@ fn init_logging(global: &GlobalArgs) {
 /// stays hermetic, which is what keeps the library's own tests independent of
 /// the machine running them.
 fn home_layout(global: &GlobalArgs) -> Result<Layout> {
+  if let Some(dir) = &global.system_plugins_in {
+    let layout = match &global.root {
+      Some(root) => Layout::rooted_at(root),
+      None => Layout::from_env()?,
+    };
+    return Ok(
+      layout.with_system_roots(
+        [
+          (Format::Clap, "clap"),
+          (Format::Vst3, "vst3"),
+          (Format::Lv2, "lv2"),
+        ]
+        .into_iter()
+        .map(|(format, name)| (format, vec![dir.join(name)]))
+        .collect(),
+      ),
+    );
+  }
   Ok(match &global.root {
     Some(root) => {
       let layout = Layout::rooted_at(root);

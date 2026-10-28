@@ -112,9 +112,9 @@ luthier install surge
        ├─ verify SHA-256          (streamed; abort on mismatch)
        ├─ extract                 archive::extract       → transaction workspace
        ├─ plan destinations       install::plan          → derived, never declared
-       ├─ report system copies    scan::on_system        (names read from the archive)
        ├─ validate                FormatInstaller::validate
        ├─ stage → rename          InstallTransaction::place  (journalled)
+       ├─ report system copies    scan::on_system        (every rule, once placed)
        └─ record                  state::StateGuard::commit
 ```
 
@@ -281,8 +281,11 @@ content is, and whether a system directory already holds a plugin about to be
 installed. That last is a warning, never a refusal: a host would list the
 plugin twice, but the user may want the newer build, and the other copy
 belongs to the distribution's package manager. The plan reports it where a
-manifest names the plugin; where only the archive does, nothing names it
-before the archive is open, so the outcome reports it.
+manifest names the plugin, as a preview; the outcome reports every one, for
+the packages that installed, each marked with whether the plan foresaw it,
+since a rule read from an archive names nothing until the archive is open.
+Only the top of each system directory is looked at, though CLAP and VST3
+hosts search below it too: a copy in a subdirectory goes unnoticed.
 
 ### External packages
 

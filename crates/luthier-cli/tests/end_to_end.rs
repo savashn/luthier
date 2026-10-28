@@ -153,14 +153,30 @@ impl Fixture {
     std::fs::write(self.registry().join(format!("plugins/{id}.toml")), manifest).unwrap();
   }
 
+  /// The binary confined to this fixture, seeing no plugin it did not
+  /// install.
   fn luthier(&self) -> Command {
+    let mut command = self.confined();
+    command.arg("--no-system-plugins");
+    command
+  }
+
+  /// [`Fixture::luthier`], seeing `system/{clap,vst3,lv2}` as the plugin
+  /// directories a distribution fills, and no others.
+  fn luthier_seeing(&self, system: &Path) -> Command {
+    let mut command = self.confined();
+    command.arg("--system-plugins-in").arg(system);
+    command
+  }
+
+  /// What every run shares, whatever it sees of the system.
+  fn confined(&self) -> Command {
     let mut command = Command::cargo_bin("luthier").expect("the luthier binary is built");
     command
       .arg("--root")
       .arg(self.root())
       .arg("--registry-path")
       .arg(self.registry())
-      .arg("--no-system-plugins")
       // `update` and `outdated` ask whether a newer Luthier is out; the suite
       // never reaches GitHub, so the question goes nowhere and is dropped.
       .arg("--releases-api")
@@ -169,33 +185,17 @@ impl Fixture {
     command
   }
 
-  /// [`Fixture::luthier`], seeing `system/{clap,vst3,lv2}` as the plugin
-  /// directories a distribution fills. CLAP and VST3 still add the
-  /// conventional ones, which only ever reads them.
-  fn luthier_seeing(&self, system: &Path) -> Command {
-    let mut command = Command::cargo_bin("luthier").expect("the luthier binary is built");
-    command
-      .arg("--root")
-      .arg(self.root())
-      .arg("--registry-path")
-      .arg(self.registry())
-      .arg("--releases-api")
-      .arg("file:///nonexistent/luthier-release.json")
-      .arg("--yes")
-      .env("HOME", self.dir.path())
-      .env("CLAP_PATH", system.join("clap"))
-      .env("VST3_PATH", system.join("vst3"))
-      .env("LV2_PATH", system.join("lv2"));
-    command
-  }
-
   /// Builds a `.tar.gz` holding a CLAP file and a VST3 bundle, and returns
   /// its `file://` URL, SHA-256 and size.
   fn make_artifact(&self, name: &str) -> Artifact {
+    self.make_artifact_with_clap(name, &elf_shared_object())
+  }
+
+  /// [`Fixture::make_artifact`], with `clap` as the CLAP's bytes.
+  fn make_artifact_with_clap(&self, name: &str, clap: &[u8]) -> Artifact {
     let mut builder = tar::Builder::new(Vec::new());
 
-    let clap = elf_shared_object();
-    append(&mut builder, &format!("{name}.clap"), &clap, 0o755);
+    append(&mut builder, &format!("{name}.clap"), clap, 0o755);
     append(
       &mut builder,
       &format!("{name}.vst3/Contents/{ARCH}-linux/{name}.so"),
@@ -2937,7 +2937,8 @@ fn a_claim_the_archive_does_deliver_says_nothing() {
 #[test]
 fn a_plugin_the_system_already_holds_is_reported_and_installed_anyway() {
   // LSP Plugins from `apt` and from here: a host finds both. The manifest
-  // names the CLAP, so the plan says so before anything is downloaded.
+  // names the CLAP, so the plan says so before anything is downloaded, and
+  // the outcome does not say it again.
   let fixture = Fixture::new();
   let system = fixture.dir.path().join("system");
   std::fs::create_dir_all(system.join("clap")).unwrap();
@@ -2990,7 +2991,8 @@ fn a_plugin_read_from_its_archive_is_checked_once_the_archive_is_open() {
 #[test]
 fn a_managed_directory_on_the_search_path_is_not_a_second_copy() {
   // `CLAP_PATH=~/.clap` names the directory this manager installs into:
-  // reinstalling finds its own copy there, which is not a duplicate.
+  // reinstalling finds its own copy there, which is not a duplicate. Here
+  // through a symlink, the spelling only a resolved path sees through.
   let fixture = Fixture::new();
   let artifact = fixture.make_artifact("Own");
   fixture.add_plugin("own", "1.0.0", &artifact, &[]);
@@ -2999,15 +3001,82 @@ fn a_managed_directory_on_the_search_path_is_not_a_second_copy() {
     .args(["install", "own"])
     .assert()
     .success();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(&system).unwrap();
+  std::os::unix::fs::symlink(fixture.clap_dir(), system.join("clap")).unwrap();
 
   let assert = fixture
-    .luthier_seeing(&fixture.dir.path().join("system"))
-    .env("CLAP_PATH", fixture.clap_dir())
+    .luthier_seeing(&system)
     .args(["install", "--force", "own"])
     .assert()
     .success();
   let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
   assert!(!stderr.contains("already holds"), "{stderr}");
+}
+
+#[test]
+fn under_json_the_outcome_names_every_system_copy() {
+  // The preview is silent under `--json`, so the one the plan foresaw is
+  // in the outcome too, marked so, beside the one only the archive named.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(system.join("clap")).unwrap();
+  std::fs::write(system.join("clap/Named.clap"), elf_shared_object()).unwrap();
+  std::fs::create_dir_all(system.join("vst3/Derived.vst3")).unwrap();
+  let named = fixture.make_artifact("Named");
+  fixture.add_plugin("named", "1.0.0", &named, &[]);
+  let derived = fixture.make_artifact("Derived");
+  fixture.add_plugin_derived("derived", "1.0.0", &derived);
+
+  let output = fixture
+    .luthier_seeing(&system)
+    .args(["--json", "install", "named", "derived"])
+    .output()
+    .unwrap();
+  assert!(output.status.success(), "{output:?}");
+  let outcome: serde_json::Value = serde_json::from_str(&stdout_of(&output)).unwrap();
+  let found: Vec<(String, String, bool)> = outcome["on_system"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|f| {
+      (
+        f["id"].as_str().unwrap().to_string(),
+        f["plugin"].as_str().unwrap().to_string(),
+        f["foreseen"].as_bool().unwrap(),
+      )
+    })
+    .collect();
+  assert_eq!(
+    found,
+    [
+      ("derived".into(), "Derived.vst3".into(), false),
+      ("named".into(), "Named.clap".into(), true),
+    ]
+  );
+}
+
+#[test]
+fn a_package_that_failed_reports_no_system_copy() {
+  // Under `--keep-going` a package that did not install is in `failed`;
+  // saying a second copy of it is now on the machine would be false.
+  let fixture = Fixture::new();
+  let system = fixture.dir.path().join("system");
+  std::fs::create_dir_all(system.join("clap")).unwrap();
+  std::fs::write(system.join("clap/Bad.clap"), elf_shared_object()).unwrap();
+  // Named by its rules, so it reaches placing, which refuses it.
+  let artifact = fixture.make_artifact_with_clap("Bad", b"not a shared object");
+  fixture.add_plugin("bad", "1.0.0", &artifact, &[]);
+
+  let output = fixture
+    .luthier_seeing(&system)
+    .args(["--json", "install", "--keep-going", "bad"])
+    .output()
+    .unwrap();
+  assert!(!output.status.success());
+  let outcome: serde_json::Value = serde_json::from_str(&stdout_of(&output)).unwrap();
+  assert_eq!(outcome["failed"][0]["id"], "bad", "{outcome}");
+  assert!(outcome.get("on_system").is_none(), "{outcome}");
 }
 
 #[test]

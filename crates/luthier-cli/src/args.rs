@@ -73,6 +73,20 @@ pub struct GlobalArgs {
   #[arg(long, global = true)]
   pub no_system_plugins: bool,
 
+  /// Take `<DIR>/clap`, `<DIR>/vst3` and `<DIR>/lv2` as the only system
+  /// plugin directories.
+  ///
+  /// Hidden: for the suite, which needs a distribution's plugins without
+  /// reading the machine's own, as `CLAP_PATH` and `VST3_PATH` only add to.
+  #[arg(
+    long,
+    global = true,
+    value_name = "DIR",
+    hide = true,
+    conflicts_with = "no_system_plugins"
+  )]
+  pub system_plugins_in: Option<PathBuf>,
+
   /// Where the latest Luthier release is described, in place of GitHub's API.
   ///
   /// Hidden: for the suite, which serves a release over `file://` so that

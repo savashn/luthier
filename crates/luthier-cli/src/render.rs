@@ -311,6 +311,10 @@ impl Reporter {
     for warning in &outcome.warnings {
       self.warn(warning);
     }
+    // The preview said the rest.
+    for found in outcome.on_system.iter().filter(|found| !found.foreseen) {
+      self.warn(found.to_string());
+    }
     for package in &outcome.installed {
       if package.formats.is_empty() {
         // A pack installs no files of its own.

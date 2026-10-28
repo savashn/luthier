@@ -735,18 +735,14 @@ impl Session {
   /// that a system directory already holds.
   ///
   /// A release whose rules come from its archive names nothing until the
-  /// archive is open; `install_package` checks those.
+  /// archive is open; `install_package` checks every release there.
   fn on_system(&self, resolution: &Resolution<'_>) -> Vec<AlreadyOnSystem> {
     resolution
       .order
       .iter()
       .filter(|package| package.disposition != Disposition::Satisfied)
       .filter_map(|package| Some((package.id(), package.artifact?)))
-      .flat_map(|(id, artifact)| {
-        artifact.install.iter().filter_map(move |rule| {
-          AlreadyOnSystem::of(id, &rule.format, rule.installed_name(), &self.layout)
-        })
-      })
+      .flat_map(|(id, artifact)| AlreadyOnSystem::of(id, &artifact.install, true, &self.layout))
       .collect()
   }
 
@@ -1076,6 +1072,7 @@ impl Session {
     let mut installed = Vec::new();
     let mut skipped = Vec::new();
     let mut warnings = Vec::new();
+    let mut on_system = Vec::new();
     let mut unsaved = false;
     let mut failed = Vec::new();
     let mut not_attempted = Vec::new();
@@ -1167,7 +1164,7 @@ impl Session {
         continue;
       };
 
-      let record = match self
+      let (record, found) = match self
         .install_package(
           package,
           artifact,
@@ -1178,7 +1175,7 @@ impl Session {
         )
         .await
       {
-        Ok(record) => record,
+        Ok(installed) => installed,
         // Under `--keep-going` a package's own failure is said and the
         // rest go ahead. The Home Manager module applies a declaration
         // unattended, and one archive that could not be read kept
@@ -1199,6 +1196,7 @@ impl Session {
       };
 
       installed.push(InstalledSummary::from(&record));
+      on_system.extend(found);
       guard
         .state_mut()
         .packages
@@ -1224,6 +1222,7 @@ impl Session {
       installed,
       skipped,
       warnings,
+      on_system,
       no_longer_installed: no_longer_installed
         .iter()
         .map(ToString::to_string)
@@ -1234,9 +1233,10 @@ impl Session {
   }
 
   /// Fetches, unpacks and places one package in a transaction of its own,
-  /// and returns what to record. What fails in here fails for this package
-  /// alone — the transaction leaves it as it was — which is what lets
-  /// `--keep-going` carry on past it.
+  /// and returns what to record, with what of it a system directory already
+  /// holds. What fails in here fails for this package alone — the
+  /// transaction leaves it as it was — which is what lets `--keep-going`
+  /// carry on past it.
   async fn install_package(
     &self,
     package: &resolver::ResolvedPackage<'_>,
@@ -1245,7 +1245,7 @@ impl Session {
     downloader: &Downloader,
     progress: &mut dyn Progress,
     warnings: &mut Vec<String>,
-  ) -> Result<InstalledPackage> {
+  ) -> Result<(InstalledPackage, Vec<AlreadyOnSystem>)> {
     let fetched = downloader
       .fetch(
         &artifact.source.url,
@@ -1332,24 +1332,18 @@ impl Session {
       );
     }
 
-    // Rules read from the archive name their plugins only now, so the plan
-    // could not say this; a manifest's own rules were checked there.
-    if artifact.derive_install {
-      for item in &items {
-        let Some(name) = item.destination.file_name().and_then(|n| n.to_str()) else {
-          continue;
-        };
-        if let Some(found) = AlreadyOnSystem::of(package.id(), &item.format, name, &self.layout) {
-          warnings.push(found.to_string());
-        }
-      }
-    }
-
     let mut files: Vec<InstalledEntry> = Vec::new();
     for item in &items {
       files.push(transaction.place(item)?);
     }
     transaction.commit()?;
+
+    // Only once it is installed, or a failure under `--keep-going` would
+    // still report a second copy of what never arrived. Rules read from the
+    // archive name their plugins only now; a manifest's own the plan
+    // could already report.
+    let on_system =
+      AlreadyOnSystem::of(package.id(), rules, !artifact.derive_install, &self.layout);
 
     let record = InstalledPackage {
       id: package.id().clone(),
@@ -1376,7 +1370,7 @@ impl Session {
       dependencies: package.dependencies.clone(),
       files,
     };
-    Ok(record)
+    Ok((record, on_system))
   }
 
   // --------------------------------------------------------------- remove --
@@ -3219,17 +3213,34 @@ pub struct AlreadyOnSystem {
   pub plugin: String,
   /// The copy already there.
   pub path: PathBuf,
+  /// Whether the plan already reported it, because the manifest names the
+  /// plugin. A front end that showed the plan need not say it again; one
+  /// that did not, under `--json` or reading only the outcome, has it here.
+  pub foreseen: bool,
 }
 
 impl AlreadyOnSystem {
-  fn of(id: &PackageId, format: &Format, plugin: &str, layout: &Layout) -> Option<Self> {
-    let path = scan::on_system(layout, format, plugin)?;
-    Some(Self {
-      id: id.to_string(),
-      format: format.to_string(),
-      plugin: plugin.to_string(),
-      path,
-    })
+  /// What a system directory holds of what `rules` install.
+  fn of(
+    id: &PackageId,
+    rules: &[luthier_manifest::InstallRule],
+    foreseen: bool,
+    layout: &Layout,
+  ) -> Vec<Self> {
+    rules
+      .iter()
+      .filter_map(|rule| {
+        let plugin = rule.installed_name();
+        let path = scan::on_system(layout, &rule.format, plugin)?;
+        Some(Self {
+          id: id.to_string(),
+          format: rule.format.to_string(),
+          plugin: plugin.to_string(),
+          path,
+          foreseen,
+        })
+      })
+      .collect()
   }
 }
 
@@ -3254,9 +3265,9 @@ pub struct InstallPlan {
   /// Installing is refused while this is non-empty.
   pub unplayable: Vec<UnplayableContent>,
   /// Plugins it installs that a system directory already holds. Only those
-  /// a manifest names: a release whose rules are read from its archive is
-  /// checked once the archive is open, and reported in
-  /// [`InstallOutcome::warnings`].
+  /// a manifest names: a release whose rules are read from its archive
+  /// names nothing until the archive is open. [`InstallOutcome::on_system`]
+  /// has every one.
   #[serde(skip_serializing_if = "Vec::is_empty")]
   pub on_system: Vec<AlreadyOnSystem>,
   /// Why this plan cannot be carried out, if it cannot.
@@ -3396,10 +3407,13 @@ pub struct InstallOutcome {
   pub installed: Vec<InstalledSummary>,
   pub skipped: Vec<InstalledSummary>,
   /// Things that were true but not fatal: upstream metadata that did not
-  /// match what the archive turned out to hold, and a plugin read from an
-  /// archive that a system directory already holds ([`AlreadyOnSystem`]).
+  /// match what the archive turned out to hold.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub warnings: Vec<String>,
+  /// Plugins installed that a system directory already holds, for the
+  /// packages that installed; each says whether the plan reported it.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub on_system: Vec<AlreadyOnSystem>,
   /// Packages an upgrade plan named that another command removed before
   /// the user answered, and that were therefore not upgraded.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
