@@ -12,7 +12,9 @@ plays the separately distributed DrumGizmo kits, routing each microphone to \
 its own output."""
 
 homepage = "https://drumgizmo.org/"
-repository = "https://github.com/drumgizmo/drumgizmo"
+# Plain http: the TLS certificate covers only
+# drumgizmo.org, so https fails on this host.
+repository = "http://cgit.drumgizmo.org/drumgizmo.git/"
 
 authors = ["The DrumGizmo project"]
 
@@ -24,7 +26,8 @@ Debian or Ubuntu, or `pacman -S drumgizmo` on Arch."""
 kind = "open-source"
 spdx = "LGPL-3.0-or-later"
 
-# Published as source only; every distribution packages it. Detection name was
+# Published for Linux as source only (upstream builds just Windows and macOS
+# VSTs); every distribution packages it. Detection name was
 # read from the files the Debian package installs.
 [[detect]]
 format = "lv2"
