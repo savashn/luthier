@@ -15,6 +15,16 @@ about.
 
 ## [Unreleased]
 
+### Changed
+
+- **Plugins moved with `location set plugins` leave `~/.clap`, `~/.vst3`
+  and `~/.lv2` searched as the system's**, since every host still looks
+  there — `~/.lv2` only while `LV2_PATH` does not replace the default. A
+  copy put there by hand is reported as a second one, and an engine or an
+  `external` package installed there by hand is found, as one in
+  `/usr/lib` is. A link back to the copy Luthier installed is not a second
+  one. `--no-system-plugins` still sees none of them.
+
 ### Added
 
 - **Installing a plugin a system directory already holds says so.** A

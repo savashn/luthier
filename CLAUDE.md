@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 516 tests, fully offline
+cargo test --workspace                     # 520 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -444,6 +444,13 @@ the crate map keeps that out of `luthier-manifest`.
   release. Shape is reported for *every* tree and acted on only where the
   artifact declares `library`; deriving content whenever no plugin turned up
   would install a broken plugin release as a folder of samples.
+- **The home plugin directories are system roots; the managed root never
+  is.** `system_roots_from` lists `~/.clap`, `~/.vst3` and `~/.lv2` first
+  (`~/.lv2` only while `LV2_PATH` does not replace the default), because
+  hosts search them, and `Layout::settle` drops each format's managed root,
+  by any spelling, whenever the plugin or system roots change — so they
+  count only once `location set plugins` moved plugins elsewhere, whatever
+  order a layout was built in. A new `Layout` setter must call `settle`.
 - **A chosen location is never created.** `location set` needs an existing
   directory and every write checks `unavailable_locations` first: creating
   the path of an unmounted disk fills the disk underneath. Moving libraries

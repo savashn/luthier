@@ -9,7 +9,7 @@ has decided not to do, recorded so the decision does not have to be re-argued.
 
 ## Where it is today
 
-Four crates, 516 tests, fully offline. `update`, `search`, `info`, `install`,
+Four crates, 520 tests, fully offline. `update`, `search`, `info`, `install`,
 `list`, `verify`, `outdated`, `upgrade`, `remove`, `autoremove`,
 `pin`/`unpin`, and `export`/`import` all work end to end against real
 packages; the verbs are apt's and Homebrew's (since 0.5: 0.4 called them
@@ -435,7 +435,7 @@ have any notion of a plugin *set* for a DAW to scan. That is the gap, and it
 is the same gap on every distribution; Nix is only where its absence is
 felt most, because everything else on that machine is already declared.
 
-### 3.6 The plugin directories a relocation leaves behind
+### 3.6 The plugin directories a relocation leaves behind — done
 
 After `location set plugins`, Luthier installs under the directory chosen,
 but every host still searches `~/.clap` and `~/.vst3`, and `~/.lv2` unless
@@ -443,8 +443,8 @@ but every host still searches `~/.clap` and `~/.vst3`, and `~/.lv2` unless
 hand, or left from before — is then neither managed nor in a system root,
 so nothing looks at it: not the warning about a second copy, and not
 `detect_externals` or `detect_engines` either, so an `external` sfizz in
-`~/.lv2` reads as missing. Tried on the branch that added the warning and
-withdrawn there, because three things have to hold at once:
+`~/.lv2` read as missing. Tried on the branch that added the warning and
+withdrawn there, because three things had to hold at once:
 
 1. **Search where a host searches, and no more.** CLAP and VST3 hosts always
    search `$HOME/.clap` and `$HOME/.vst3`; an LV2 host searches `$HOME/.lv2`
@@ -474,12 +474,15 @@ withdrawn there, because three things have to hold at once:
 `--no-system-plugins` still sees none of it, and `Layout::rooted_at` still
 has no system roots unless asked.
 
-**Done when:** after `location set plugins`, installing X reports a
+**Done when:** ~~after `location set plugins`, installing X reports a
 hand-installed `~/.clap/X.clap`; an engine or an `external` package in
 `~/.lv2` is detected; with `LV2_PATH` set and not naming `~/.lv2`, nothing
 there is reported; a link into the managed root is not a second copy;
 calling `with_system_roots` after `with_locations` changes none of this; and
-the changelog says so under *Changed*.
+the changelog says so under *Changed*.~~ Done: `system_roots_from` lists
+the home directories first, `Layout::settle` leaves the managed root out
+whenever either changes, and `scan::on_system` skips a link to the managed
+copy.
 
 ---
 

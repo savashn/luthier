@@ -287,9 +287,15 @@ read from an archive names nothing until the archive is open and the system
 may have changed while the user read the preview. A front end says what the
 outcome holds and its preview did not (`InstallOutcome::not_previewed`).
 Only the top of each system directory is looked at, though CLAP and VST3
-hosts search below it too: a copy in a subdirectory goes unnoticed. Nor are
-`~/.clap`, `~/.vst3` and `~/.lv2` searched once `location set plugins` has
-moved plugins elsewhere, though hosts still search them (ROADMAP 3.6).
+hosts search below it too: a copy in a subdirectory goes unnoticed.
+
+`~/.clap`, `~/.vst3` and `~/.lv2` are system roots as much as `/usr/lib/clap`
+is — `~/.lv2` only while `LV2_PATH` does not replace the default — because
+hosts search them first. A layout leaves its own managed root out of the
+system roots, by any spelling, and works that out again whenever either
+changes, so the home directories count only once `location set plugins` has
+moved plugins elsewhere, whatever order the layout was built in. A link to
+the managed copy is not a second one.
 
 ### External packages
 

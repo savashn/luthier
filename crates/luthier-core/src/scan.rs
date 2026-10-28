@@ -22,7 +22,7 @@ use crate::state::State;
 use luthier_manifest::{DetectRule, Format, Manifest, PackageId, PackageKind};
 use semver::Version;
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Whether Luthier put a plugin where it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,14 +169,15 @@ pub fn detect_engines(layout: &Layout, index: &RegistryIndex) -> BTreeSet<Packag
 /// Each copy once, however many roots reach it: on Arch `/usr/lib64` is a
 /// link to `/usr/lib`. Told apart by the directory a copy sits in, not by
 /// what it links to: two Nix profiles each link a plugin into the same
-/// store path, and a host finds it through both. A system root that is the
-/// managed root for `format`
-/// is skipped — `LV2_PATH` often names `~/.lv2` — since what is there is
-/// this manager's own copy, or the unmanaged one `install::plan` refuses to
-/// overwrite.
+/// store path, and a host finds it through both.
+///
+/// The managed root is never searched ([`Layout::system_roots`]), and a
+/// link to the managed copy is not a second one: plugins moved elsewhere
+/// with `location set plugins` are often linked back into `~/.clap` for a
+/// host that searches nowhere else.
 pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
-  let managed = layout.plugin_root(format);
   let mut seen = BTreeSet::new();
+  let mut managed = None;
   layout
     .system_roots(format)
     .iter()
@@ -184,20 +185,17 @@ pub fn on_system(layout: &Layout, format: &Format, name: &str) -> Vec<PathBuf> {
     // Existence first: it rules out nearly every root with one stat, and
     // resolving paths is only worth it for the rare name that is there.
     .filter(|(_, path)| path.exists())
-    .filter(|(root, _)| !managed.is_some_and(|managed| same_directory(managed, root)))
+    .filter(|(_, path)| {
+      let managed = managed.get_or_insert_with(|| {
+        layout
+          .plugin_root(format)
+          .and_then(|root| root.join(name).canonicalize().ok())
+      });
+      managed.is_none() || path.canonicalize().ok() != *managed
+    })
     .filter(|(root, _)| seen.insert(root.canonicalize().unwrap_or_else(|_| root.to_path_buf())))
     .map(|(_, path)| path)
     .collect()
-}
-
-/// Whether two paths name one directory, through a symlink or a trailing
-/// slash as much as by spelling.
-fn same_directory(a: &Path, b: &Path) -> bool {
-  a == b
-    || matches!(
-      (a.canonicalize(), b.canonicalize()),
-      (Ok(a), Ok(b)) if a == b
-    )
 }
 
 /// The first place any of `rules` matches, managed roots before system ones.
@@ -532,5 +530,53 @@ detect = [{ format = "vst3", name = "DrumCraker.vst3" }]
     let layout = layout.with_system_roots(BTreeMap::from([(Format::Lv2, vec![managed, alias])]));
 
     assert!(on_system(&layout, &Format::Lv2, "lsp-plugins.lv2").is_empty());
+  }
+
+  #[test]
+  fn an_external_left_in_the_home_directory_is_found_once_plugins_move() {
+    // sfizz installed by hand in ~/.lv2, then `location set plugins`: a
+    // host still loads it from there, so it is still present.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let index = external_registry(dir.path());
+    let home_lv2 = layout.plugin_root(&Format::Lv2).unwrap().to_path_buf();
+    std::fs::create_dir_all(home_lv2.join("sfizz.lv2")).unwrap();
+    let disk = dir.path().join("disk");
+    std::fs::create_dir_all(&disk).unwrap();
+
+    let moved = layout
+      .with_system_roots(BTreeMap::from([(Format::Lv2, vec![home_lv2])]))
+      .with_locations(&crate::layout::Locations {
+        plugins: Some(disk),
+        ..Default::default()
+      });
+    assert!(detect_externals(&moved, &index).contains(&PackageId::new("sfizz").unwrap()));
+  }
+
+  #[test]
+  fn a_link_to_the_managed_copy_is_not_a_second_one() {
+    // Plugins moved to another disk, linked back into ~/.clap for a host
+    // that looks nowhere else: one copy, reached twice.
+    let dir = tempfile::tempdir().unwrap();
+    let layout = layout_with_plugins(dir.path());
+    let managed = layout
+      .plugin_root(&Format::Clap)
+      .unwrap()
+      .join("Linked.clap");
+    std::fs::write(&managed, b"\x7fELF").unwrap();
+    let system = dir.path().join("home-clap");
+    std::fs::create_dir_all(&system).unwrap();
+    std::os::unix::fs::symlink(&managed, system.join("Linked.clap")).unwrap();
+    let layout = layout.with_system_roots(BTreeMap::from([(Format::Clap, vec![system.clone()])]));
+
+    assert!(on_system(&layout, &Format::Clap, "Linked.clap").is_empty());
+
+    // A file of its own there is a second copy.
+    std::fs::remove_file(system.join("Linked.clap")).unwrap();
+    std::fs::write(system.join("Linked.clap"), b"\x7fELF").unwrap();
+    assert_eq!(
+      on_system(&layout, &Format::Clap, "Linked.clap"),
+      [system.join("Linked.clap")]
+    );
   }
 }
