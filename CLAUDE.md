@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 530 tests, fully offline
+cargo test --workspace                     # 532 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -103,7 +103,9 @@ the crate map keeps that out of `luthier-manifest`.
    cannot return a file that failed its checksum. One level up,
    `OasRegistry::fetch` (and `HttpSnapshotRegistry::refresh`, which no
    default source uses now) parses a snapshot fully before it replaces the
-   one on disk, so a broken snapshot never replaces a good one.
+   one on disk, so a broken snapshot never replaces a good one. For OAS, one
+   that yields no package counts as broken: every field of a file is optional
+   to the parser, so a reshaped index reads as an empty one.
 5. **`Layout` is injected everywhere.** Nothing deep in the call graph reads
    `$HOME` or calls `dirs::home_dir()`. This is what makes the suite hermetic.
 6. **State is authoritative for ownership; scanning is advisory.** Never delete

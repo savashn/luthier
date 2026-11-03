@@ -135,6 +135,20 @@ impl OasRegistry {
     // response leaves the previous one in place rather than costing the
     // user every command until the next refresh.
     let index = index_from_json(&self.name, &body)?;
+    // Parsing is not enough. Every field of a file is optional to the
+    // parser and an entry that cannot be used is skipped, so an index
+    // reshaped this way reads as an index of nothing, and would cost the
+    // user every package. It counts as asking: the answer will be the same
+    // tomorrow, and each command would otherwise download it again.
+    if index.packages.is_empty() {
+      provenance::record_checked(self.registries_dir(), &self.name);
+      return Err(Error::Registry(RegistryError::Malformed {
+        registry: self.name.clone(),
+        reason: "it holds no package this build can install, so nothing here was replaced; \
+                 a newer release of Luthier may read it"
+          .to_owned(),
+      }));
+    }
     let sha256 = {
       use sha2::{Digest, Sha256};
       Sha256Hash::from_bytes(Sha256::digest(&body).into())
@@ -505,6 +519,71 @@ mod tests {
     // No retries for a refresh nobody asked for.
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
     assert_eq!(registry.load_index().unwrap().len(), 2);
+  }
+
+  /// A listing with `url` and `sha256` gone from every file, as
+  /// open-audio-stack-registry#933 proposes: the right shape to the parser,
+  /// and not one package this build can install.
+  const NOTHING_TO_INSTALL: &str = r#"{
+      "distrho/mverb": { "slug": "distrho/mverb", "version": "1.0.0", "versions": { "1.0.0": {
+        "name": "MVerb", "author": "DISTRHO", "description": "Reverb.",
+        "license": "gpl-3.0", "type": "effect", "tags": ["reverb"],
+        "url": "https://example.invalid/a",
+        "files": [{ "systems": [{"type":"linux"}], "architectures": ["x64"],
+          "contains": ["lv2"], "type": "archive", "size": 100 }] }}}
+    }"#;
+
+  #[tokio::test]
+  async fn an_index_with_nothing_to_install_leaves_the_one_on_disk() {
+    use wiremock::matchers::method;
+    use wiremock::{Mock, ResponseTemplate};
+
+    for unusable in [NOTHING_TO_INSTALL, "{}"] {
+      let dir = tempfile::tempdir().unwrap();
+      let (server, registry) = served(dir.path(), TWO_ORGS).await;
+      registry.refresh().await.unwrap();
+      let before = std::fs::read(registry.snapshot_path()).unwrap();
+      server.reset().await;
+      Mock::given(method("GET"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("etag", "\"v2\"")
+            .set_body_string(unusable),
+        )
+        .mount(&server)
+        .await;
+
+      let error = registry.refresh().await.unwrap_err();
+      assert!(error.to_string().contains("no package"), "{error}");
+      assert_eq!(std::fs::read(registry.snapshot_path()).unwrap(), before);
+      assert_eq!(registry.load_index().unwrap().len(), 2);
+
+      // Asked once a day rather than by every command ...
+      let day = SignedDuration::from_hours(24);
+      backdate(dir.path(), SignedDuration::from_hours(48), None);
+      assert!(registry.refresh_if_due(day).await.unwrap().is_err());
+      assert!(registry.refresh_if_due(day).await.is_none());
+
+      // ... while `update` still asks, about the copy that is still here.
+      assert!(registry.refresh().await.is_err());
+      assert_eq!(
+        named(&server).await.last().unwrap().as_deref(),
+        Some("\"v1\"")
+      );
+    }
+  }
+
+  #[tokio::test]
+  async fn an_index_with_nothing_to_install_is_not_written_the_first_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, registry) = served(dir.path(), NOTHING_TO_INSTALL).await;
+
+    assert!(registry.refresh().await.is_err());
+    assert!(!registry.snapshot_path().exists());
+    assert!(matches!(
+      registry.load_index(),
+      Err(Error::Registry(RegistryError::NotFetched(_)))
+    ));
   }
 
   #[test]

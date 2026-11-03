@@ -178,6 +178,16 @@ async fn a_refresh_that_updated_nothing_at_all_is_an_error() {
 
 // -------------------------------------------------------- refresh when due --
 
+/// The least an index can hold and still be taken for one.
+const ONE_PACKAGE: &str = r#"{
+  "distrho/mverb": { "slug": "distrho/mverb", "version": "1.0.0", "versions": { "1.0.0": {
+    "name": "MVerb", "license": "gpl-3.0", "type": "effect",
+    "files": [{ "systems": [{"type":"linux"}], "architectures": ["x64"],
+      "contains": ["lv2"], "type": "archive", "size": 100,
+      "sha256": "8c79675a4379125e894416430cde82ec81734512b8b0e55c8745c939e24ddd25",
+      "url": "https://example.invalid/a.tar.xz" }] }}}
+}"#;
+
 /// An Open Audio Stack site in a directory, served over `file://`.
 fn oas_site(index: &str) -> (tempfile::TempDir, Url) {
   let dir = tempfile::tempdir().unwrap();
@@ -224,7 +234,7 @@ fn two_days_pass(client: &Client, name: &str) {
 
 #[tokio::test]
 async fn a_command_fetches_a_package_list_it_has_never_had() {
-  let (_site, url) = oas_site("{}");
+  let (_site, url) = oas_site(ONE_PACKAGE);
   let client = Client::new();
 
   // Offline, nothing is fetched, and there is nothing to read.
@@ -272,7 +282,7 @@ async fn a_snapshot_is_not_refreshed_on_its_own() {
 
 #[tokio::test]
 async fn a_list_that_cannot_be_fetched_is_reported_and_the_one_here_kept() {
-  let (site, url) = oas_site("{}");
+  let (site, url) = oas_site(ONE_PACKAGE);
   let client = Client::new();
   reading(&client, oas(&url), false).refresh_due().await;
 
@@ -292,7 +302,7 @@ async fn a_list_that_cannot_be_fetched_is_reported_and_the_one_here_kept() {
 
 #[tokio::test]
 async fn a_list_another_luthier_is_refreshing_is_left_to_it() {
-  let (_site, url) = oas_site("{}");
+  let (_site, url) = oas_site(ONE_PACKAGE);
   let client = Client::new();
 
   // A refresh running in another terminal.
@@ -312,7 +322,7 @@ async fn a_list_another_luthier_is_refreshing_is_left_to_it() {
 
 #[tokio::test]
 async fn refreshing_the_list_does_not_hold_up_an_install() {
-  let (_site, url) = oas_site("{}");
+  let (_site, url) = oas_site(ONE_PACKAGE);
   let client = Client::new();
 
   // An install running in another terminal does not stop the refresh ...
@@ -341,7 +351,7 @@ fn extras_then(
 
 #[tokio::test]
 async fn refresh_has_nothing_to_say_about_the_built_in_extras() {
-  let (_site, url) = oas_site("{}");
+  let (_site, url) = oas_site(ONE_PACKAGE);
   let client = Client::new();
 
   // What 0.4 fetched them as is left alone: a 0.4 still installed, or

@@ -44,6 +44,14 @@ about.
   only the top of each directory was looked at. LV2 is still looked for
   only at the top, which is all an LV2 host loads.
 
+### Fixed
+
+- **An Open Audio Stack index with nothing to install no longer replaces the
+  one on disk.** It parsed, so a reshaped index would have emptied the package
+  list and said nothing. It is now reported as a failed refresh, and the
+  packages already here stay; a command asks again a day later, `update`
+  whenever it runs.
+
 ## [0.6.0] — 2026-10-25
 
 ### Added
