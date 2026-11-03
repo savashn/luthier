@@ -215,6 +215,12 @@ real file, so `hash-url` remains a human step. `--exit-code` makes a stale
 package fail the run; without it the command succeeds, which is what the
 weekly CI job wants so it can file an issue instead of going red.
 
+A new version goes above the old one and does not replace it. `export` pins
+every version it writes, a pin names one, and an import fails when the version
+it asks for is gone, with nothing in `validate` or the suite to notice. Give an
+old release the same targets as the new one where upstream publishes them, or
+the same file stops importing on the other architecture.
+
 Set `GITHUB_TOKEN` to raise the API rate limit from 60 requests an hour to
 5000. GitHub is asked for `releases/latest` and falls back to `tags` for a
 project that only tags.

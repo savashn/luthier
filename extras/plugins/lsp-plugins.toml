@@ -112,3 +112,18 @@ install = [
   { format = "vst3", source = "lsp-plugins-1.2.35-Linux-x86_64/VST3/lsp-plugins.vst3", kind = "bundle" },
   { format = "lv2", source = "lsp-plugins-1.2.35-Linux-x86_64/LV2/lsp-plugins.lv2", kind = "bundle" },
 ]
+
+[[releases.artifacts]]
+target = { os = "linux", arch = "aarch64" }
+source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.35/lsp-plugins-1.2.35-Linux-aarch64.7z" }
+archive = "7z"
+size = 35839682
+checksum = { sha256 = "045d15f8a2f2b9c020cada7c22ed8d62f8d65bf665c4f271626817bd68d036c3" }
+provides = ["clap", "vst3", "lv2"]
+install = [
+  { format = "clap", source = "lsp-plugins-1.2.35-Linux-aarch64/CLAP/lsp-plugins.clap", kind = "file" },
+  # See the rule above.
+  { format = "clap", source = "lsp-plugins-1.2.35-Linux-aarch64/CLAP/liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] },
+  { format = "vst3", source = "lsp-plugins-1.2.35-Linux-aarch64/VST3/lsp-plugins.vst3", kind = "bundle" },
+  { format = "lv2", source = "lsp-plugins-1.2.35-Linux-aarch64/LV2/lsp-plugins.lv2", kind = "bundle" },
+]
