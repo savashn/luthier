@@ -1,5 +1,5 @@
-# SHADOW — OAS carries lsp-plugins/lsp-plugins at this version, and this
-# manifest wins the collision.
+# SHADOW — OAS carries lsp-plugins/lsp-plugins too, and this manifest wins the
+# collision.
 #
 # Reason: one install rule cannot be derived. Deriving from the archive finds
 # the CLAP, the VST3 and the LV2, but not liblsp-r3d-glx-lib.so beside the
@@ -13,7 +13,8 @@
 # except the 3D scene view, which only room_builder draws. The LV2 and VST3
 # builds are unaffected — each carries its own copy of the library inside
 # the bundle. What the shadow costs: OAS carries nine versions of this
-# package and extras wins the collision, so only this one is offered.
+# package and extras wins the collision, so only the releases below are
+# offered.
 #
 # Permanent, unless upstream stops shipping the library separately.
 schema = 1
@@ -42,19 +43,19 @@ kind = "open-source"
 spdx = "LGPL-3.0-only"
 
 [[releases]]
-version = "1.2.35"
-release_notes = "https://github.com/lsp-plugins/lsp-plugins/releases/tag/1.2.35"
+version = "1.2.37"
+release_notes = "https://github.com/lsp-plugins/lsp-plugins/releases/tag/1.2.37"
 
 # The only container upstream publishes Linux binaries in.
 [[releases.artifacts]]
 target = { os = "linux", arch = "x86_64" }
-source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.35/lsp-plugins-1.2.35-Linux-x86_64.7z" }
+source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.37/lsp-plugins-1.2.37-Linux-x86_64.7z" }
 archive = "7z"
-size = 38793460
-checksum = { sha256 = "4ef3b2f63b29a522fdaf3a18f879c1c85c82f0bdd1e0b3c849a5f3c4b08d2550" }
+size = 38726486
+checksum = { sha256 = "bbdfbfce4591ea07e7ac9dac0b1aca8ea7ccf9d850aafbf9ac0a347a1340ee55" }
 provides = ["clap", "vst3", "lv2"]
 install = [
-  { format = "clap", source = "lsp-plugins-1.2.35-Linux-x86_64/CLAP/lsp-plugins.clap", kind = "file" },
+  { format = "clap", source = "lsp-plugins-1.2.37-Linux-x86_64/CLAP/lsp-plugins.clap", kind = "file" },
   # The 3D rendering library the CLAP loads at runtime. Where it goes is
   # not our judgement — the archive's INSTALL.txt says it:
   #
@@ -72,6 +73,41 @@ install = [
   # directory invites. The VST3 and LV2 bundles carry their own copy
   # inside, which is why only the CLAP needs this; a host scanning for
   # *.clap ignores it.
+  { format = "clap", source = "lsp-plugins-1.2.37-Linux-x86_64/CLAP/liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] },
+  { format = "vst3", source = "lsp-plugins-1.2.37-Linux-x86_64/VST3/lsp-plugins.vst3", kind = "bundle" },
+  { format = "lv2", source = "lsp-plugins-1.2.37-Linux-x86_64/LV2/lsp-plugins.lv2", kind = "bundle" },
+]
+
+[[releases.artifacts]]
+target = { os = "linux", arch = "aarch64" }
+source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.37/lsp-plugins-1.2.37-Linux-aarch64.7z" }
+archive = "7z"
+size = 35810437
+checksum = { sha256 = "d0fc5c5600bee23eb088f99f899b7dd0bae6da43dc12e020df3ad56e3e0ed15a" }
+provides = ["clap", "vst3", "lv2"]
+install = [
+  { format = "clap", source = "lsp-plugins-1.2.37-Linux-aarch64/CLAP/lsp-plugins.clap", kind = "file" },
+  # See the rule above.
+  { format = "clap", source = "lsp-plugins-1.2.37-Linux-aarch64/CLAP/liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] },
+  { format = "vst3", source = "lsp-plugins-1.2.37-Linux-aarch64/VST3/lsp-plugins.vst3", kind = "bundle" },
+  { format = "lv2", source = "lsp-plugins-1.2.37-Linux-aarch64/LV2/lsp-plugins.lv2", kind = "bundle" },
+]
+
+# Kept so that a file from `luthier export`, or a pin, naming it still imports.
+[[releases]]
+version = "1.2.35"
+release_notes = "https://github.com/lsp-plugins/lsp-plugins/releases/tag/1.2.35"
+
+[[releases.artifacts]]
+target = { os = "linux", arch = "x86_64" }
+source = { type = "http", url = "https://github.com/lsp-plugins/lsp-plugins/releases/download/1.2.35/lsp-plugins-1.2.35-Linux-x86_64.7z" }
+archive = "7z"
+size = 38793460
+checksum = { sha256 = "4ef3b2f63b29a522fdaf3a18f879c1c85c82f0bdd1e0b3c849a5f3c4b08d2550" }
+provides = ["clap", "vst3", "lv2"]
+install = [
+  { format = "clap", source = "lsp-plugins-1.2.35-Linux-x86_64/CLAP/lsp-plugins.clap", kind = "file" },
+  # See the rule above.
   { format = "clap", source = "lsp-plugins-1.2.35-Linux-x86_64/CLAP/liblsp-r3d-glx-lib.so", kind = "file", allow = ["file-extension"] },
   { format = "vst3", source = "lsp-plugins-1.2.35-Linux-x86_64/VST3/lsp-plugins.vst3", kind = "bundle" },
   { format = "lv2", source = "lsp-plugins-1.2.35-Linux-x86_64/LV2/lsp-plugins.lv2", kind = "bundle" },

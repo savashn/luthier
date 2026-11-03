@@ -631,8 +631,8 @@ Deferred, roughly in order of value: macOS and
 Windows layouts (the schema and resolver already model them; `Layout` and the
 installers are Linux-only); reading OAS's `presets/` and
 `projects/` indexes, which is blocked on deciding where a preset installs
-given that a manifest may not name a destination; aarch64 builds of the
-plugins in extras, which list x86_64 only (the kits list both); a
+given that a manifest may not name a destination; an aarch64 build of
+matsuri, which lists x86_64 only (the other plugin and the kits list both); a
 `GitRegistry` backend.
 
 Vocabulary: a *source* is where Luthier reads package manifests from, and
