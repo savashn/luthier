@@ -101,8 +101,8 @@ impl OasRegistry {
   }
 
   /// Asks for the index, sending what names the copy on disk, and replaces
-  /// that copy only with one that parses. `impatient` for a refresh no one
-  /// asked for.
+  /// that copy only with one that parses and holds a package. `impatient` for
+  /// a refresh no one asked for.
   async fn fetch(&self, impatient: bool) -> Result<RefreshOutcome> {
     let url = self.index_url()?;
     // Where 0.4 and earlier downloaded it, twice; one interrupted left this.
@@ -138,10 +138,9 @@ impl OasRegistry {
     // Parsing is not enough. Every field of a file is optional to the
     // parser and an entry that cannot be used is skipped, so an index
     // reshaped this way reads as an index of nothing, and would cost the
-    // user every package. It counts as asking: the answer will be the same
-    // tomorrow, and each command would otherwise download it again.
+    // user every package. Not recorded as asked, like any failed fetch: a
+    // newer build must read it at once, and every command should say so.
     if index.packages.is_empty() {
-      provenance::record_checked(self.registries_dir(), &self.name);
       return Err(Error::Registry(RegistryError::Malformed {
         registry: self.name.clone(),
         reason: "it holds no package this build can install, so nothing here was replaced; \
@@ -558,14 +557,14 @@ mod tests {
       assert_eq!(std::fs::read(registry.snapshot_path()).unwrap(), before);
       assert_eq!(registry.load_index().unwrap().len(), 2);
 
-      // Asked once a day rather than by every command ...
+      // Every command asks again, as after any failed fetch, or a build that
+      // can read it would wait a day to find out ...
       let day = SignedDuration::from_hours(24);
       backdate(dir.path(), SignedDuration::from_hours(48), None);
       assert!(registry.refresh_if_due(day).await.unwrap().is_err());
-      assert!(registry.refresh_if_due(day).await.is_none());
+      assert!(registry.refresh_if_due(day).await.unwrap().is_err());
 
-      // ... while `update` still asks, about the copy that is still here.
-      assert!(registry.refresh().await.is_err());
+      // ... and about the copy that is still here.
       assert_eq!(
         named(&server).await.last().unwrap().as_deref(),
         Some("\"v1\"")
