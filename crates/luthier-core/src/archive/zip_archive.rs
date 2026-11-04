@@ -8,7 +8,7 @@ use crate::error::{ArchiveError, UnsafeEntry};
 use std::collections::HashSet;
 use std::io::{self, Read, Seek, SeekFrom};
 use zip::result::ZipError;
-use zip::{CompressionMethod, ZipArchive, ZipReadOptions};
+use zip::{CompressionMethod, SUPPORTED_COMPRESSION_METHODS, ZipArchive, ZipReadOptions};
 
 /// The signature that opens each record of a zip's central directory.
 const CENTRAL_RECORD: u32 = 0x0201_4b50;
@@ -65,10 +65,35 @@ pub fn extract<R: Read + Seek>(
     if file.is_dir() {
       extractor.directory(&name)?;
     } else {
+      // Since zip 9.2 an entry opens whatever its method, and one with no
+      // decoder fails on the first read, after the file exists. A directory
+      // is never read, so whatever it claims does not matter.
+      let method = file.compression();
+      if !SUPPORTED_COMPRESSION_METHODS.contains(&method) {
+        return Err(unsupported_method(method));
+      }
       extractor.file(&name, mode, &mut file)?;
     }
   }
   Ok(())
+}
+
+/// A method this build has no decoder for. The crate has no other way to give
+/// the number of a method it does not know than the deprecated variant.
+fn unsupported_method(method: CompressionMethod) -> ArchiveError {
+  #[allow(deprecated)]
+  let method = match method {
+    CompressionMethod::Unsupported(id) => method_name(id),
+    other => format!("{other:?}"),
+  };
+  ArchiveError::UnsupportedMethod { method }
+}
+
+fn method_name(id: u16) -> String {
+  match CompressionMethod::name_from_u16(id) {
+    "Unknown" => format!("method {id}"),
+    name => name.to_owned(),
+  }
 }
 
 /// Why entry `index` could not be opened. A method the crate has no decoder
@@ -76,10 +101,7 @@ pub fn extract<R: Read + Seek>(
 fn entry_error(index: usize, error: ZipError) -> ArchiveError {
   match error {
     ZipError::CompressionMethodNotSupported(id) => ArchiveError::UnsupportedMethod {
-      method: match CompressionMethod::name_from_u16(id) {
-        "Unknown" => format!("method {id}"),
-        name => name.to_owned(),
-      },
+      method: method_name(id),
     },
     other => ArchiveError::Corrupt(format!("cannot read zip entry {index}: {other}")),
   }
