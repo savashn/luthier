@@ -8,8 +8,8 @@
   lib,
   rustPlatform,
   installShellFiles,
-  cmake,
-  perl,
+  pkg-config,
+  aws-lc,
   cacert,
 }:
 
@@ -37,17 +37,17 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ../Cargo.lock;
 
-  # aws-lc-sys, under rustls, builds its C with cmake and generates some of
-  # it with perl.
+  # aws-lc-sys, under rustls, links nixpkgs' AWS-LC rather than building its
+  # own copy. Since 2026-11 nixpkgs exports AWS_LC_SYS_USE_SYSTEM=1 for every
+  # Rust package (`cargoUseSystemLibs`), so without one here the build fails
+  # outright instead of falling back to the vendored C. aws-lc-sys finds it
+  # through pkg-config, and a system install needs no bindgen. The release
+  # binaries are built outside Nix and still compile the vendored copy.
   nativeBuildInputs = [
     installShellFiles
-    cmake
-    perl
+    pkg-config
   ];
-  # cmake is a build tool for a dependency here, not this package's build
-  # system; without this the cmake setup hook would try to configure the
-  # workspace itself.
-  dontUseCmakeConfigure = true;
+  buildInputs = [ aws-lc ];
 
   # The suite's local HTTP server is plain HTTP, but building a client at
   # all needs a CA store, and the sandbox has none.
