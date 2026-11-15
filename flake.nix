@@ -33,11 +33,15 @@
       };
 
       # `nix develop`, or `use flake` through direnv. The package's own inputs
-      # (rustc, cargo, and the cmake and perl aws-lc-sys needs) come from
+      # (rustc, cargo, pkg-config and the AWS-LC aws-lc-sys links) come from
       # `inputsFrom`, so the shell cannot drift from what the build uses.
+      # AWS_LC_SYS_USE_SYSTEM is set as the build's hook sets it, so a shell
+      # that cannot find AWS-LC fails instead of quietly compiling the
+      # vendored copy.
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           inputsFrom = [ self.packages.${pkgs.stdenv.hostPlatform.system}.luthier ];
+          env.AWS_LC_SYS_USE_SYSTEM = "1";
           packages = with pkgs; [
             clippy
             rustfmt
