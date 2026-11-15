@@ -830,28 +830,139 @@ fn a_7z_compressed_with_deflate_or_bzip2_extracts_intact() {
   }
 }
 
-#[test]
-fn a_zip_method_without_a_decoder_is_unsupported_and_not_corrupt() {
-  // Deflate64, which this build cannot decode. The writer will not produce
-  // it, so the method is patched into both headers of a stored entry.
-  let original = build_zip(&[ZipEntry::file("kit.sfz", b"<region>")]);
-  let mut bytes = original.clone();
-  for (signature, offset) in [(&b"PK\x03\x04"[..], 8), (&b"PK\x01\x02"[..], 10)] {
-    let at = original
-      .windows(4)
-      .position(|w| w == signature)
+/// The zip of `entries` with the entry `name` claiming Deflate64, which this
+/// build cannot decode. The writer will not produce it, so the method is
+/// patched into both headers of a stored entry.
+fn zip_with_deflate64_entry(entries: &[ZipEntry], name: &str) -> Vec<u8> {
+  let mut bytes = build_zip(entries);
+  for (signature, method_at, name_at) in [(&b"PK\x03\x04"[..], 8, 30), (&b"PK\x01\x02"[..], 10, 46)]
+  {
+    let at = (0..bytes.len())
+      .find(|&at| {
+        bytes[at..].starts_with(signature) && bytes[at + name_at..].starts_with(name.as_bytes())
+      })
       .expect("header present");
-    bytes[at + offset..at + offset + 2].copy_from_slice(&9u16.to_le_bytes());
+    bytes[at + method_at..at + method_at + 2].copy_from_slice(&9u16.to_le_bytes());
   }
+  bytes
+}
 
-  let sandbox = Sandbox::new();
-  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
-  match sandbox.run(&archive, ArchiveFormat::Zip) {
+fn assert_deflate64_unsupported(result: Result<(), ArchiveError>) {
+  match result {
     Err(ArchiveError::UnsupportedMethod { method }) => assert_eq!(method, "Deflate64"),
     other => panic!("expected an unsupported method, got {other:?}"),
   }
+}
+
+#[test]
+fn a_zip_method_without_a_decoder_is_unsupported_and_not_corrupt() {
+  let bytes = zip_with_deflate64_entry(&[ZipEntry::file("kit.sfz", b"<region>")], "kit.sfz");
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  assert_deflate64_unsupported(sandbox.run(&archive, ArchiveFormat::Zip));
   assert!(list_tree(&sandbox.dest).is_empty());
   sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_zip_link_with_no_decoder_is_refused_as_a_link() {
+  // The type is checked first, so a link does not get to say that nothing
+  // is wrong with the archive but a missing decoder.
+  let bytes = zip_with_deflate64_entry(&[ZipEntry::symlink("link", "/etc/passwd")], "link");
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  assert_unsafe(
+    sandbox.run(&archive, ArchiveFormat::Zip),
+    UnsafeEntry::Symlink,
+  );
+  assert!(list_tree(&sandbox.dest).is_empty());
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_zip_traversal_with_no_decoder_writes_nothing() {
+  // The name is judged only when the file is created, which never happens
+  // here, so this is reported as the method. Refused either way.
+  let name = "../../evil";
+  let bytes = zip_with_deflate64_entry(&[ZipEntry::file(name, b"pwned")], name);
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  assert_deflate64_unsupported(sandbox.run(&archive, ArchiveFormat::Zip));
+  assert!(list_tree(&sandbox.dest).is_empty());
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_zip_directory_needs_no_decoder() {
+  // A directory is never read, so what it claims to be compressed with
+  // cannot be a reason to refuse the files beside it.
+  let bytes = zip_with_deflate64_entry(
+    &[
+      ZipEntry::dir("Samples/"),
+      ZipEntry::file("Samples/kit.sfz", b"<region>"),
+    ],
+    "Samples/",
+  );
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  sandbox
+    .run(&archive, ArchiveFormat::Zip)
+    .expect("a directory is not decoded");
+  assert_eq!(
+    std::fs::read(sandbox.dest.join("Samples/kit.sfz")).unwrap(),
+    b"<region>"
+  );
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_zip_entry_with_no_decoder_after_a_good_one_creates_no_file() {
+  let bytes = zip_with_deflate64_entry(
+    &[
+      ZipEntry::file("good.sfz", b"<region>"),
+      ZipEntry::file("bad.sfz", b"<region>"),
+    ],
+    "bad.sfz",
+  );
+  let sandbox = Sandbox::new();
+  let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+  assert_deflate64_unsupported(sandbox.run(&archive, ArchiveFormat::Zip));
+  assert!(!sandbox.dest.join("bad.sfz").exists());
+  sandbox.assert_nothing_escaped();
+}
+
+#[test]
+fn a_zip_method_with_a_decoder_is_extracted() {
+  // The other side of asking the crate's list: every method this build
+  // decodes has to be on it, or a good archive would be turned down.
+  use std::io::Write as _;
+  use zip::write::SimpleFileOptions;
+
+  for method in [
+    zip::CompressionMethod::Stored,
+    zip::CompressionMethod::Deflated,
+    zip::CompressionMethod::Bzip2,
+  ] {
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer
+      .start_file(
+        "kit.sfz",
+        SimpleFileOptions::default().compression_method(method),
+      )
+      .expect("start file");
+    writer.write_all(b"<region>").expect("write zip entry");
+    let bytes = writer.finish().expect("finish zip").into_inner();
+
+    let sandbox = Sandbox::new();
+    let archive = write_file(&sandbox.archives, "payload.zip", &bytes);
+    sandbox
+      .run(&archive, ArchiveFormat::Zip)
+      .unwrap_or_else(|e| panic!("{method:?} should extract: {e}"));
+    assert_eq!(
+      std::fs::read(sandbox.dest.join("kit.sfz")).unwrap(),
+      b"<region>"
+    );
+  }
 }
 
 // ------------------------------------------------------------- bare files --

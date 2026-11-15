@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 532 tests, fully offline
+cargo test --workspace                     # 537 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -142,14 +142,20 @@ the crate map keeps that out of `luthier-manifest`.
   `zip_archive.rs` reads the mode from the upper half of the external
   attributes itself, as zip 8 did, and 7z reads the type there whether or
   not bit 15 is set (`safe::claimed_mode`; one type check for both,
-  `SafeExtractor::check_type`). A name the central directory lists twice
-  is `Duplicate`, found by reading the records, since the crate keeps one
-  entry per name; a local header that disagrees with the central
-  directory is `HeadersDisagree`, checked entry by entry
+  `SafeExtractor::check_type`). Since 9.2 an entry opens whatever its
+  method, and one with no decoder fails on the first read, so a file is
+  checked against `SUPPORTED_COMPRESSION_METHODS` before it is created,
+  which keeps `UnsupportedMethod`. A directory is never read, so it is not
+  asked; a traversal with no decoder is reported as the method, since a
+  name is judged when its file is created. A name the central directory
+  lists twice is `Duplicate`, found by reading the records, since the
+  crate keeps one entry per name; a local header that disagrees with the
+  central directory is `HeadersDisagree`, checked entry by entry
   (`enforce_header_consistency`), which also compares timestamps, sizes
-  and CRCs: every Linux zip sampled from OAS, and every zip in extras,
-  passes it. 8.x was pinned while 9 was a prerelease; RUSTSEC-2026-0367 to
-  0369 are fixed only in 9.
+  and CRCs, and since 9.3 Unicode Path fields, which can refuse a real
+  archive: every zip in extras installs under 9.3; the Linux zips sampled
+  from OAS passed before 9.3 and were not sampled again. 8.x was pinned
+  while 9 was a prerelease; RUSTSEC-2026-0367 to 0369 are fixed only in 9.
 - **`sevenz-rust2` takes no default features**, only `deflate` and
   `bzip2`, whose decoders zip already brings in (FreePats publishes
   Deflate 7z). A method still missing — PPMd, Deflate64 — is
