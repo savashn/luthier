@@ -61,7 +61,13 @@ impl Reporter {
       .iter()
       .map(|r| {
         vec![
-          r.id.clone(),
+          match &r.installed {
+            None => r.id.clone(),
+            Some(installed) if r.version.as_ref() == Some(installed) => {
+              format!("{} [installed]", r.id)
+            }
+            Some(installed) => format!("{} [installed: {installed}]", r.id),
+          },
           r.name.clone(),
           r.version.clone().unwrap_or_else(|| "-".into()),
           r.category.clone(),

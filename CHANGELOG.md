@@ -15,6 +15,20 @@ about.
 
 ## [Unreleased]
 
+### Added
+
+- **A mistyped package ID is answered with what was meant.** `install`,
+  `info`, `upgrade` and the rest add `Did you mean: virtual-playing-orchestra?`
+  under "not found" when an ID, or a display name typed for one, is a typo
+  away. A swapped pair of letters counts as one typo, and the reach is one
+  per three characters, as cargo's own suggestions use.
+- **`search` turns fuzzy when nothing contains the query**, matching IDs,
+  names and the words in them a typo away. Queries under four characters
+  stay exact.
+- **`search` marks what is installed**: `[installed]`, or
+  `[installed: <version>]` when that is not the newest release. `--json`
+  gives each result an `installed` field, the version or `null`.
+
 ## [0.7.0] — 2026-11-03
 
 ### Added

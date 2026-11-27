@@ -420,6 +420,11 @@ fn the_full_lifecycle_works() {
     "{}",
     stdout_of(&search)
   );
+  assert!(
+    !stdout_of(&search).contains("[installed"),
+    "{}",
+    stdout_of(&search)
+  );
 
   // info
   let info = fixture
@@ -458,6 +463,15 @@ fn the_full_lifecycle_works() {
   assert!(listing.contains("1.2.3"), "{listing}");
   assert!(listing.contains("clap,vst3"), "{listing}");
 
+  // search marks what is installed
+  let search = fixture
+    .luthier()
+    .args(["search", "synth"])
+    .output()
+    .unwrap();
+  let found = stdout_of(&search);
+  assert!(found.contains("testsynth [installed]"), "{found}");
+
   // verify
   let verify = fixture
     .luthier()
@@ -483,6 +497,40 @@ fn the_full_lifecycle_works() {
 
   let after = fixture.luthier().arg("list").output().unwrap();
   assert!(stdout_of(&after).contains("No packages installed"));
+}
+
+#[test]
+fn a_mistyped_package_is_answered_with_what_was_meant() {
+  let fixture = Fixture::new();
+  let artifact = fixture.make_artifact("Testsynth");
+  fixture.add_plugin("testsynth", "1.2.3", &artifact, &[]);
+
+  for command in ["install", "info"] {
+    let output = fixture
+      .luthier()
+      .args([command, "tsetsynth"])
+      .output()
+      .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{command}: {stderr}");
+    assert!(
+      stderr.contains("Did you mean: testsynth?"),
+      "{command}: {stderr}"
+    );
+  }
+  assert!(!fixture.clap_dir().join("Testsynth.clap").exists());
+
+  // search turns fuzzy when nothing contains the query
+  let search = fixture
+    .luthier()
+    .args(["search", "tsetsynth"])
+    .output()
+    .unwrap();
+  assert!(
+    stdout_of(&search).contains("testsynth"),
+    "{}",
+    stdout_of(&search)
+  );
 }
 
 #[test]

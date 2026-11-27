@@ -17,6 +17,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub trait PackageSource {
   fn manifest(&self, id: &PackageId) -> Option<&Manifest>;
   fn entry(&self, id: &PackageId) -> Option<&IndexEntry>;
+  /// IDs close enough to `id` to be what was meant, for a "did you mean".
+  fn similar(&self, _id: &PackageId) -> Vec<PackageId> {
+    Vec::new()
+  }
 }
 
 impl PackageSource for RegistryIndex {
@@ -26,6 +30,16 @@ impl PackageSource for RegistryIndex {
   fn entry(&self, id: &PackageId) -> Option<&IndexEntry> {
     self.packages.get(id)
   }
+  fn similar(&self, id: &PackageId) -> Vec<PackageId> {
+    self.similar_ids(id.as_str())
+  }
+}
+
+fn not_found(source: &impl PackageSource, id: &PackageId) -> Error {
+  Error::Resolve(ResolveError::NotFound {
+    id: id.clone(),
+    did_you_mean: source.similar(id),
+  })
 }
 
 /// What resolution decided to do about one package.
@@ -429,9 +443,7 @@ fn walk<'a, S: PackageSource>(
       held_at = Some(installed.version.clone());
     }
 
-    let manifest = source
-      .manifest(&id)
-      .ok_or_else(|| Error::Resolve(ResolveError::NotFound(id.clone())))?;
+    let manifest = source.manifest(&id).ok_or_else(|| not_found(source, &id))?;
 
     if manifest.kind == PackageKind::External {
       externals.insert(
@@ -557,9 +569,7 @@ fn walk<'a, S: PackageSource>(
     let Some(version) = chosen.get(&id) else {
       continue;
     };
-    let entry = source
-      .entry(&id)
-      .ok_or_else(|| Error::Resolve(ResolveError::NotFound(id.clone())))?;
+    let entry = source.entry(&id).ok_or_else(|| not_found(source, &id))?;
     let release = entry
       .manifest
       .release(version)
@@ -1094,7 +1104,7 @@ mod tests {
     let fixture = Fixture::new();
     let err = resolve_ids(&fixture, &["nope"]).unwrap_err();
     assert!(
-      matches!(err, Error::Resolve(ResolveError::NotFound(_))),
+      matches!(err, Error::Resolve(ResolveError::NotFound { .. })),
       "{err}"
     );
     assert!(err.hint().unwrap().contains("luthier search"));

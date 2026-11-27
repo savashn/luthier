@@ -137,8 +137,43 @@ impl RegistryIndex {
       Error::Registry(RegistryError::PackageNotFound {
         id: id.to_string(),
         registry: self.name.clone(),
+        did_you_mean: self.similar_ids(id.as_str()),
       })
     })
+  }
+
+  /// Package IDs close enough to `query` to be what was meant: a typo, a
+  /// swapped pair of letters, or the display name typed for the ID.
+  ///
+  /// Only the closest are named, at most [`MAX_SUGGESTIONS`], in ID order,
+  /// so the same typo always gets the same answer (§57). Nothing is
+  /// suggested beyond [`typo_reach`]: a guess that far off is noise.
+  pub fn similar_ids(&self, query: &str) -> Vec<PackageId> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+      return Vec::new();
+    }
+    let reach = typo_reach(&query);
+    let mut close: Vec<(usize, &PackageId)> = self
+      .packages
+      .values()
+      .filter_map(|entry| {
+        let manifest = &entry.manifest;
+        let distance = edit_distance(&query, manifest.id.as_str())
+          .min(edit_distance(&query, &as_id(&manifest.name)));
+        (distance <= reach).then_some((distance, &manifest.id))
+      })
+      .collect();
+    close.sort();
+    let Some(&(best, _)) = close.first() else {
+      return Vec::new();
+    };
+    close
+      .into_iter()
+      .take_while(|(distance, _)| *distance == best)
+      .take(MAX_SUGGESTIONS)
+      .map(|(_, id)| id.clone())
+      .collect()
   }
 
   /// Engines that play `content`, in configured order, each named once.
@@ -162,18 +197,29 @@ impl RegistryIndex {
 
   /// Ranked substring search over ID, name, category, tags and description.
   ///
+  /// When nothing contains the query, the search turns fuzzy and matches
+  /// IDs, names and the words in them that are a typo away from it
+  /// ([`fuzzy_score`]). Only then: a fuzzy hit listed beside exact ones
+  /// would be a package nobody asked about.
+  ///
   /// Ties break on package ID so the same query always prints the same
   /// order, which matters for scripted use and for tests (§57).
   pub fn search(&self, query: &str) -> Vec<SearchHit<'_>> {
     let needle = query.trim().to_lowercase();
-    let mut hits: Vec<SearchHit<'_>> = self
-      .packages
-      .values()
-      .filter_map(|entry| {
-        let score = score(entry, &needle);
-        (score > 0).then_some(SearchHit { entry, score })
-      })
-      .collect();
+    let ranked = |score: &dyn Fn(&IndexEntry, &str) -> u32| -> Vec<SearchHit<'_>> {
+      self
+        .packages
+        .values()
+        .filter_map(|entry| {
+          let score = score(entry, &needle);
+          (score > 0).then_some(SearchHit { entry, score })
+        })
+        .collect()
+    };
+    let mut hits = ranked(&score);
+    if hits.is_empty() {
+      hits = ranked(&fuzzy_score);
+    }
     hits.sort_by(|a, b| {
       b.score
         .cmp(&a.score)
@@ -197,6 +243,89 @@ impl RegistryIndex {
       })
       .collect()
   }
+}
+
+/// How many IDs a "did you mean" names at most.
+pub const MAX_SUGGESTIONS: usize = 3;
+
+/// Shorter than this, a query is matched exactly or not at all: one edit
+/// from a three-letter word is a third of it, and turns `eq` into `ep`.
+const FUZZY_MIN_CHARS: usize = 4;
+
+/// How many edits a query of this length may be from what was meant: one
+/// per three characters, at least one. The rule cargo and rustc use for
+/// their own suggestions.
+fn typo_reach(query: &str) -> usize {
+  (query.chars().count() / 3).max(1)
+}
+
+/// A display name spelled the way IDs are: `Surge XT` → `surge-xt`.
+fn as_id(name: &str) -> String {
+  name
+    .to_lowercase()
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join("-")
+}
+
+/// Edits (insert, delete, substitute, swap two neighbours) that turn `a`
+/// into `b`: the optimal string alignment distance, over characters.
+///
+/// The swap counts as one edit because it is the commonest typo there is —
+/// `orcehstra` for `orchestra` — and plain Levenshtein charges it two.
+fn edit_distance(a: &str, b: &str) -> usize {
+  let a: Vec<char> = a.chars().collect();
+  let b: Vec<char> = b.chars().collect();
+  let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+  for (i, row) in d.iter_mut().enumerate() {
+    row[0] = i;
+  }
+  for (j, cell) in d[0].iter_mut().enumerate() {
+    *cell = j;
+  }
+  for i in 1..=a.len() {
+    for j in 1..=b.len() {
+      let cost = usize::from(a[i - 1] != b[j - 1]);
+      let mut best = (d[i - 1][j] + 1)
+        .min(d[i][j - 1] + 1)
+        .min(d[i - 1][j - 1] + cost);
+      if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+        best = best.min(d[i - 2][j - 2] + 1);
+      }
+      d[i][j] = best;
+    }
+  }
+  d[a.len()][b.len()]
+}
+
+/// How close `needle` is to the ID, the name or a word of either, within
+/// [`typo_reach`]; zero when none is. Closer scores higher, and every fuzzy
+/// score is below any exact one, so the two never need comparing.
+fn fuzzy_score(entry: &IndexEntry, needle: &str) -> u32 {
+  if needle.chars().count() < FUZZY_MIN_CHARS {
+    return 0;
+  }
+  let manifest = &entry.manifest;
+  let id = manifest.id.as_str();
+  let name = as_id(&manifest.name);
+  let words = id
+    .split(|c: char| !c.is_alphanumeric())
+    .chain(name.split(|c: char| !c.is_alphanumeric()))
+    .filter(|word| !word.is_empty());
+  let reach = typo_reach(needle);
+  let distance = [id, name.as_str()]
+    .into_iter()
+    .chain(words)
+    .map(|candidate| edit_distance(needle, candidate))
+    .min()
+    .unwrap_or(usize::MAX);
+  if distance > reach {
+    return 0;
+  }
+  // 1..=reach+1, never above the 10 a description hit scores.
+  u32::try_from(reach + 1 - distance)
+    .unwrap_or(u32::MAX)
+    .min(9)
 }
 
 fn score(entry: &IndexEntry, needle: &str) -> u32 {
@@ -773,6 +902,58 @@ install = [{{ format = "clap", source = "{name}.clap", kind = "file" }}]
     let hits = index.search("hall");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].entry.manifest.id.as_str(), "dragonfly-reverb");
+  }
+
+  #[test]
+  fn a_swapped_pair_of_letters_is_one_edit() {
+    assert_eq!(edit_distance("orcehstra", "orchestra"), 1);
+    assert_eq!(edit_distance("dexed", "dexed"), 0);
+    assert_eq!(edit_distance("", "abc"), 3);
+    assert_eq!(edit_distance("kitten", "sitting"), 3);
+  }
+
+  #[test]
+  fn a_mistyped_id_is_answered_with_the_closest_ones() {
+    let (_dir, index) = fixture_registry();
+    let ids = |query: &str| -> Vec<String> {
+      index
+        .similar_ids(query)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+    };
+    assert_eq!(ids("surge-tx"), vec!["surge-xt"]);
+    assert_eq!(ids("dexd"), vec!["dexed"]);
+    assert_eq!(ids("dragonfly-revreb"), vec!["dragonfly-reverb"]);
+    // The display name typed for the ID.
+    assert_eq!(ids("Dragonfly"), vec!["dragonfly-reverb"]);
+    // Too far from anything to guess.
+    assert!(ids("vital").is_empty());
+    assert!(ids("").is_empty());
+  }
+
+  #[test]
+  fn an_unknown_package_says_what_was_meant() {
+    let (_dir, index) = fixture_registry();
+    let err = index.get(&PackageId::new("surge-tx").unwrap()).unwrap_err();
+    assert_eq!(err.hint().unwrap(), "Did you mean: surge-xt?");
+  }
+
+  #[test]
+  fn search_turns_fuzzy_only_when_nothing_matches_exactly() {
+    let (_dir, index) = fixture_registry();
+    let ids = |query: &str| -> Vec<String> {
+      index
+        .search(query)
+        .iter()
+        .map(|h| h.entry.manifest.id.to_string())
+        .collect()
+    };
+    // A word of the ID, misspelt.
+    assert_eq!(ids("revreb"), vec!["dragonfly-reverb"]);
+    assert_eq!(ids("dragonfyl-reverb"), vec!["dragonfly-reverb"]);
+    // Short queries are never fuzzy.
+    assert!(ids("dxe").is_empty());
   }
 
   #[test]

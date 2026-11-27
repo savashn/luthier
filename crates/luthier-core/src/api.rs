@@ -449,6 +449,7 @@ impl Session {
 
   pub fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
     let index = self.index()?;
+    let state = crate::state::load(&self.layout)?;
     Ok(
       index
         .search(query)
@@ -463,6 +464,7 @@ impl Session {
             tags: manifest.tags.clone(),
             description: manifest.description.clone(),
             version: manifest.latest_release().map(|r| r.version.to_string()),
+            installed: state.get(&manifest.id).map(|p| p.version.to_string()),
             formats: manifest
               .formats_for(&self.target)
               .iter()
@@ -3119,6 +3121,8 @@ pub struct SearchResult {
   pub description: Option<String>,
   pub version: Option<String>,
   pub formats: Vec<String>,
+  /// The version installed, when it is.
+  pub installed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3786,7 +3790,7 @@ impl HeldBack {
   fn of(error: &ResolveError) -> Self {
     Self {
       detail: error.to_string(),
-      not_found: matches!(error, ResolveError::NotFound(_)),
+      not_found: matches!(error, ResolveError::NotFound { .. }),
     }
   }
 }

@@ -198,12 +198,27 @@ impl Error {
   }
 }
 
+/// "Did you mean: a, b?" for a mistyped package ID, or nothing when no ID
+/// was close enough to suggest.
+fn did_you_mean_hint(ids: &[PackageId]) -> Option<String> {
+  (!ids.is_empty()).then(|| {
+    let ids: Vec<&str> = ids.iter().map(PackageId::as_str).collect();
+    format!("Did you mean: {}?", ids.join(", "))
+  })
+}
+
 // ---------------------------------------------------------------- registry --
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
   #[error("package {id} is not in the {registry} registry")]
-  PackageNotFound { id: String, registry: String },
+  PackageNotFound {
+    id: String,
+    registry: String,
+    /// IDs close enough to `id` to be what was meant
+    /// (`RegistryIndex::similar_ids`).
+    did_you_mean: Vec<PackageId>,
+  },
 
   #[error("no registry named {0:?} is configured")]
   NoSuchRegistry(String),
@@ -236,11 +251,13 @@ pub enum RegistryError {
 impl RegistryError {
   fn hint(&self) -> Option<String> {
     match self {
-      RegistryError::PackageNotFound { .. } => Some(
-        "Run `luthier update` to fetch the latest package lists, or `luthier search <term>` to find \
-                 the right package ID."
-          .into(),
-      ),
+      RegistryError::PackageNotFound { did_you_mean, .. } => {
+        did_you_mean_hint(did_you_mean).or(Some(
+          "Run `luthier update` to fetch the latest package lists, or `luthier search <term>` to \
+           find the right package ID."
+            .into(),
+        ))
+      }
       RegistryError::NotFetched(_) => Some("Run `luthier update` first.".into()),
       RegistryError::IdFilenameMismatch { .. } => {
         Some("Each manifest must be filed as <id>.toml.".into())
@@ -642,8 +659,13 @@ impl InstallError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-  #[error("package {0} not found in any configured registry")]
-  NotFound(PackageId),
+  #[error("package {id} not found in any configured registry")]
+  NotFound {
+    id: PackageId,
+    /// IDs close enough to `id` to be what was meant
+    /// (`PackageSource::similar`).
+    did_you_mean: Vec<PackageId>,
+  },
 
   #[error("no release of {id} satisfies {req}")]
   NoMatchingVersion { id: PackageId, req: VersionReq },
@@ -720,15 +742,15 @@ pub enum ResolveError {
 impl ResolveError {
   fn exit_code(&self) -> ExitCode {
     match self {
-      ResolveError::NotFound(_) => ExitCode::PackageNotFound,
+      ResolveError::NotFound { .. } => ExitCode::PackageNotFound,
       _ => ExitCode::DependencyResolutionFailed,
     }
   }
 
   fn hint(&self) -> Option<String> {
     match self {
-      ResolveError::NotFound(id) => Some(format!(
-        "Try `luthier search {id}` to find the right package ID."
+      ResolveError::NotFound { id, did_you_mean } => did_you_mean_hint(did_you_mean).or(Some(
+        format!("Try `luthier search {id}` to find the right package ID."),
       )),
       ResolveError::ExternalMissing {
         provisioning_hint, ..
@@ -876,12 +898,17 @@ mod tests {
         RegistryError::PackageNotFound {
           id: "x".into(),
           registry: "r".into(),
+          did_you_mean: Vec::new(),
         }
         .into(),
         ExitCode::PackageNotFound,
       ),
       (
-        ResolveError::NotFound(id.clone()).into(),
+        ResolveError::NotFound {
+          id: id.clone(),
+          did_you_mean: Vec::new(),
+        }
+        .into(),
         ExitCode::PackageNotFound,
       ),
       (
