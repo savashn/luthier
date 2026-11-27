@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 554 tests, fully offline
+cargo test --workspace                     # 559 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -198,10 +198,13 @@ the crate map keeps that out of `luthier-manifest`.
   may hold each package's latest version only, every file without `url`
   and `sha256` (`OasPackage::is_summary`: all files lack both; a file
   lacking one is broken, as before). Such an entry has
-  `IndexEntry::summary` and no artifact. `Session::complete_packages`,
-  called by the CLI after `refresh_due` with the packages a command names
-  (and after `update`), fetches `plugins/<org>/<name>/index.json` for those
-  and every installed package still a summary, into
+  `IndexEntry::summary` and no artifact. `Session::prepare(Prepare::<command>)`,
+  called by the CLI after `refresh_due` (and after `update`), decides in
+  core what to fetch: the packages named, with retries (warned about
+  offline), and for a resolving command the installed ones recorded as
+  from that source, impatiently; nothing for search/remove/autoremove. It
+  refuses to run once the index is built (it is built once). Documents go
+  from `plugins/<org>/<name>/index.json` into
   `<snapshot dir>/packages/`, beside the snapshot so `cache clean` keeps
   it. A kept document is used only while `is_current`: same slug, same
   latest version, same files position by position less `url`/`sha256`

@@ -384,3 +384,178 @@ async fn a_refresh_that_reached_nothing_is_an_error_though_the_extras_are_built_
   let session = reading(&client, extras_then(oas(&gone)), false);
   assert!(session.refresh().await.is_err());
 }
+
+// ------------------------------------------ packages listed in summary --
+
+/// A package's own document, as `plugins/<org>/<name>/index.json` serves it.
+fn oas_document(slug: &str, name: &str) -> serde_json::Value {
+  serde_json::json!({
+    "slug": slug, "version": "1.0.0",
+    "versions": { "1.0.0": {
+      "name": name, "license": "gpl-3.0", "type": "effect",
+      "files": [{ "systems": [{"type":"linux"}], "architectures": ["x64", "arm64"],
+        "contains": ["lv2"], "type": "archive", "size": 100,
+        "sha256": "8c79675a4379125e894416430cde82ec81734512b8b0e55c8745c939e24ddd25",
+        "url": format!("https://example.invalid/{name}.tar.xz") }] } }
+  })
+}
+
+const SUMMARISED: [(&str, &str); 2] = [
+  ("distrho/mverb", "mverb"),
+  ("wasted-audio/wstd-eq", "wstd-eq"),
+];
+
+/// A site whose listing carries both packages in summary, as
+/// open-audio-stack-registry#933 publishes it, with their own documents.
+fn oas_site_in_summary() -> (tempfile::TempDir, Url) {
+  let mut listing = serde_json::Map::new();
+  for (slug, name) in SUMMARISED {
+    let mut summary = oas_document(slug, name);
+    let file = summary["versions"]["1.0.0"]["files"][0]
+      .as_object_mut()
+      .unwrap();
+    file.remove("url");
+    file.remove("sha256");
+    listing.insert(slug.to_owned(), summary);
+  }
+  let (site, url) = oas_site(&serde_json::Value::Object(listing).to_string());
+  for (slug, name) in SUMMARISED {
+    let dir = site.path().join("plugins").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("index.json"), oas_document(slug, name).to_string()).unwrap();
+  }
+  (site, url)
+}
+
+/// Whether the document of the package named `qualified` (`org-name`) is kept.
+fn kept(client: &Client, qualified: &str) -> bool {
+  client
+    .layout
+    .registry_dir("oas")
+    .join("packages")
+    .join(format!("{qualified}.json"))
+    .is_file()
+}
+
+/// Records `ids` as installed from `registry`.
+fn installed_from(client: &Client, registry: &str, ids: &[&str]) {
+  use luthier_core::state::{InstallReason, InstalledPackage, State};
+  let mut state = State::default();
+  for id in ids {
+    let id = luthier_manifest::PackageId::new(*id).unwrap();
+    state.packages.insert(
+      id.clone(),
+      InstalledPackage {
+        name: id.to_string(),
+        id,
+        version: semver::Version::new(1, 0, 0),
+        registry: registry.to_owned(),
+        manifest_digest: luthier_manifest::Sha256Hash::from_bytes([0; 32]),
+        reason: InstallReason::Explicit,
+        pin: None,
+        installed_at: jiff::Timestamp::now(),
+        formats: Vec::new(),
+        content: Vec::new(),
+        artifacts: Vec::new(),
+        dependencies: Vec::new(),
+        files: Vec::new(),
+      },
+    );
+  }
+  let path = client.layout.state_file();
+  std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+  std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+}
+
+/// A session that has fetched the listing, as `refresh_due` leaves one.
+async fn listed(client: &Client, url: &Url) {
+  let outcomes = reading(client, oas(url), false).refresh_due().await;
+  assert_eq!(outcomes[0].failure, None, "{outcomes:?}");
+}
+
+#[tokio::test]
+async fn a_command_fetches_only_the_documents_it_will_read() {
+  use luthier_core::api::Prepare;
+  let (_site, url) = oas_site_in_summary();
+  let client = Client::new();
+  listed(&client, &url).await;
+  installed_from(&client, "oas", &["mverb"]);
+
+  // Listing and removing read no document, installed or not.
+  for command in [Prepare::Search, Prepare::Remove, Prepare::Autoremove] {
+    let warnings = reading(&client, oas(&url), false)
+      .prepare(command)
+      .await
+      .unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+  }
+  assert!(!kept(&client, "distrho-mverb"));
+
+  // `info` reads the one it names, and nothing installed.
+  let session = reading(&client, oas(&url), false);
+  session.prepare(Prepare::Info("wstd-eq")).await.unwrap();
+  assert!(kept(&client, "wasted-audio-wstd-eq"));
+  assert!(!kept(&client, "distrho-mverb"));
+  let index = session.index().unwrap();
+  let entry = &index.packages[&luthier_manifest::PackageId::new("wstd-eq").unwrap()];
+  assert_eq!(entry.summary, None);
+  assert!(!entry.manifest.releases[0].artifacts.is_empty());
+
+  // A command that resolves reads what is installed as well.
+  reading(&client, oas(&url), false)
+    .prepare(Prepare::Outdated)
+    .await
+    .unwrap();
+  assert!(kept(&client, "distrho-mverb"));
+}
+
+#[tokio::test]
+async fn an_installed_package_is_completed_only_by_the_source_it_came_from() {
+  // Extras supplies it; the summary OAS lists under the same ID is never
+  // read, so fetching it would cost a request and, failing, a false warning.
+  use luthier_core::api::Prepare;
+  let (_site, url) = oas_site_in_summary();
+  let client = Client::new();
+  listed(&client, &url).await;
+  installed_from(&client, "extras", &["wstd-eq"]);
+
+  reading(&client, oas(&url), false)
+    .prepare(Prepare::Outdated)
+    .await
+    .unwrap();
+  assert!(!kept(&client, "wasted-audio-wstd-eq"));
+}
+
+#[tokio::test]
+async fn offline_a_named_package_is_warned_about_and_an_installed_one_is_not() {
+  use luthier_core::api::Prepare;
+  let (_site, url) = oas_site_in_summary();
+  let client = Client::new();
+  listed(&client, &url).await;
+  installed_from(&client, "oas", &["mverb"]);
+
+  let named = ["wstd-eq".to_owned()];
+  let warnings = reading(&client, oas(&url), true)
+    .prepare(Prepare::Install(&named))
+    .await
+    .unwrap();
+  assert_eq!(warnings.len(), 1, "{warnings:?}");
+  assert!(warnings[0].contains("wstd-eq"), "{warnings:?}");
+  assert!(!warnings[0].contains("mverb"), "{warnings:?}");
+  assert!(!kept(&client, "wasted-audio-wstd-eq"));
+}
+
+#[tokio::test]
+async fn preparing_after_the_index_was_read_is_refused_rather_than_ignored() {
+  // The index is built once; what a late prepare fetched would not be in it,
+  // and the install would fail as if the network had.
+  use luthier_core::api::Prepare;
+  let (_site, url) = oas_site_in_summary();
+  let client = Client::new();
+  listed(&client, &url).await;
+
+  let session = reading(&client, oas(&url), false);
+  session.index().unwrap();
+  let named = ["wstd-eq".to_owned()];
+  assert!(session.prepare(Prepare::Install(&named)).await.is_err());
+}

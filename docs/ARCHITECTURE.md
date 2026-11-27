@@ -159,9 +159,12 @@ may carry only each package's latest version, with every file's `url` and
 package listed that way is an `IndexEntry` with a `summary`: searchable,
 with the formats its files declare, and with no artifact, so nothing can be
 downloaded from it. Before a command resolves anything,
-`Session::complete_packages` has `RegistryProvider::complete` fetch the own
-document of each package it names and of each one installed that is still a
-summary, and keeps it beside the snapshot. A kept document stands in for
+`Session::prepare` has `RegistryProvider::complete` fetch the own document
+of each package the command names, and, for a command that resolves, of
+each installed one recorded as from that source and still a summary; a
+front end names its command (`Prepare`) and core decides the rest. The
+documents are kept beside the snapshot, and one nothing will read again is
+deleted. A kept document stands in for
 the summary for as long as the listing names the same version with the same
 files, so a package costs a request when first needed and again only once a
 new release is listed — not one per package per refresh, which with over

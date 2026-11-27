@@ -121,8 +121,36 @@ impl OasRegistry {
 
   /// The package's own document as fetched last, if it is on disk and reads.
   fn read_document(&self, listed: &OasPackage) -> Option<OasPackage> {
-    let bytes = std::fs::read(self.document_path(&listed.slug)?).ok()?;
-    serde_json::from_slice(&bytes).ok()
+    read_document_at(&self.document_path(&listed.slug)?)
+  }
+
+  /// The documents kept, by path: listed once, so loading the index opens a
+  /// file only for a package one was fetched for, not for every summary.
+  fn kept_documents(&self) -> BTreeSet<PathBuf> {
+    std::fs::read_dir(self.snapshot_dir.join("packages"))
+      .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
+      .unwrap_or_default()
+  }
+
+  /// Deletes every kept document nothing will read again: its package left
+  /// the listing, is no longer listed in summary, or has moved past it. One
+  /// is read only while it is current, and a package is fetched again when
+  /// it is needed, so what this deletes was dead weight. Best effort.
+  fn forget_documents(&self, listing: &BTreeMap<String, OasPackage>) {
+    let by_slug: BTreeMap<&str, &OasPackage> =
+      listing.values().map(|l| (l.slug.as_str(), l)).collect();
+    for path in self.kept_documents() {
+      let wanted = read_document_at(&path).is_some_and(|document| {
+        by_slug.get(document.slug.as_str()).is_some_and(|listed| {
+          listed.is_summary()
+            && is_current(listed, &document)
+            && self.document_path(&listed.slug).as_ref() == Some(&path)
+        })
+      });
+      if !wanted {
+        let _ = std::fs::remove_file(&path);
+      }
+    }
   }
 
   /// The snapshot's packages, keyed by slug.
@@ -305,6 +333,11 @@ pub fn index_from_json(name: &str, json: &[u8]) -> Result<RegistryIndex> {
   ))
 }
 
+/// A package's own document at `path`, if it is there and reads.
+fn read_document_at(path: &Path) -> Option<OasPackage> {
+  serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
 /// The packages of an index document, keyed by slug.
 fn parse_listing(name: &str, json: &[u8]) -> Result<BTreeMap<String, OasPackage>> {
   serde_json::from_slice(json).map_err(|e| {
@@ -335,6 +368,32 @@ fn is_current(listed: &OasPackage, document: &OasPackage) -> bool {
     })
 }
 
+/// The ID each listed package goes by, by slug, and whether it had to be
+/// qualified: its name, or `org-name` where two organisations publish the
+/// same one, since dropping either would be a worse answer. One place, so
+/// the index and [`OasRegistry::complete`] cannot disagree on what an ID
+/// names. A slug that makes no usable ID has none and is not listed.
+fn listed_ids(raw: &BTreeMap<String, OasPackage>) -> BTreeMap<&str, (PackageId, bool)> {
+  let mut claimed: BTreeMap<PackageId, usize> = BTreeMap::new();
+  for entry in raw.values() {
+    if let Ok(id) = translate::id_from_slug(&entry.slug) {
+      *claimed.entry(id).or_default() += 1;
+    }
+  }
+  raw
+    .values()
+    .filter_map(|entry| {
+      let id = translate::id_from_slug(&entry.slug).ok()?;
+      let listed = if claimed[&id] > 1 {
+        (translate::qualified_id(&entry.slug).ok()?, true)
+      } else {
+        (id, false)
+      };
+      Some((entry.slug.as_str(), listed))
+    })
+    .collect()
+}
+
 /// [`index_from_json`] over a parsed listing, reading a package the listing
 /// has only in summary from its own document where `document` has one that
 /// is current ([`is_current`]).
@@ -343,16 +402,12 @@ fn index_from_listing(
   raw: &BTreeMap<String, OasPackage>,
   document: &dyn Fn(&OasPackage) -> Option<OasPackage>,
 ) -> RegistryIndex {
-  // Two organisations publishing the same name both keep it, qualified.
-  let mut claimed: BTreeMap<PackageId, usize> = BTreeMap::new();
-  for entry in raw.values() {
-    if let Ok(id) = translate::id_from_slug(&entry.slug) {
-      *claimed.entry(id).or_default() += 1;
-    }
-  }
-
+  let ids = listed_ids(raw);
   let mut packages: BTreeMap<PackageId, IndexEntry> = BTreeMap::new();
   for listed in raw.values() {
+    let Some((id, contested)) = ids.get(listed.slug.as_str()).cloned() else {
+      continue;
+    };
     // A package listed in summary is described by its own document when
     // one has been fetched and still matches the listing. One that holds
     // nothing installable stays a summary that says so, rather than
@@ -381,21 +436,14 @@ fn index_from_listing(
         Err(_) => continue,
       },
     };
-    let contested = translate::id_from_slug(&entry.slug)
-      .ok()
-      .and_then(|id| claimed.get(&id).copied())
-      .is_some_and(|count| count > 1);
     if contested {
-      let Ok(qualified) = translate::qualified_id(&entry.slug) else {
-        continue;
-      };
       translated.notes.push(format!(
         "another organisation publishes {:?} too, so this one is {}",
         translated.manifest.id.as_str(),
-        qualified.as_str()
+        id.as_str()
       ));
-      translated.manifest.id = qualified;
     }
+    translated.manifest.id = id;
 
     // Keyed on what the entry actually says, so republishing the same
     // version with different bytes is detectable exactly as it is for a
@@ -454,10 +502,17 @@ impl RegistryProvider for OasRegistry {
   }
 
   fn load_index(&self) -> Result<RegistryIndex> {
+    let kept = self.kept_documents();
     Ok(index_from_listing(
       &self.name,
       &self.listing()?,
-      &|listed| self.read_document(listed),
+      &|listed| {
+        let path = self.document_path(&listed.slug)?;
+        kept
+          .contains(&path)
+          .then(|| read_document_at(&path))
+          .flatten()
+      },
     ))
   }
 
@@ -470,23 +525,23 @@ impl RegistryProvider for OasRegistry {
       // Not fetched, or unreadable: every command already says so.
       return completion;
     };
-    let index = index_from_listing(&self.name, &listing, &|listed| self.read_document(listed));
-    // A summary that says why it is one was read in full already, and the
-    // document had nothing installable; asking again changes nothing until
-    // the listing moves.
-    let due: Vec<(PackageId, &OasPackage)> = index
-      .packages
+    self.forget_documents(&listing);
+    // Only what was asked for is looked at: a summary this build lists
+    // (one with a file for one of its targets) and no current document of.
+    // One whose current document had nothing installable was read in full
+    // already, and asking again changes nothing until the listing moves.
+    let ids = listed_ids(&listing);
+    let due: Vec<(PackageId, &OasPackage)> = listing
       .values()
-      .filter(|entry| wanted.contains(&entry.manifest.id))
-      .filter(|entry| {
-        entry
-          .summary
-          .as_ref()
-          .is_some_and(|s| s.unavailable.is_none())
+      .filter_map(|listed| {
+        let (id, _) = ids.get(listed.slug.as_str())?;
+        (wanted.contains(id) && listed.is_summary()).then(|| (id.clone(), listed))
       })
-      .filter_map(|entry| {
-        let slug = entry.path.to_str()?;
-        Some((entry.manifest.id.clone(), listing.get(slug)?))
+      .filter(|(_, listed)| translate::package(listed).is_ok())
+      .filter(|(_, listed)| {
+        !self
+          .read_document(listed)
+          .is_some_and(|document| is_current(listed, &document))
       })
       .collect();
     if due.is_empty() {
@@ -1003,6 +1058,37 @@ mod tests {
     let entry = &index.packages[&PackageId::new("wstd-eq").unwrap()];
     assert!(entry.summary.is_some());
     assert_eq!(entry.manifest.releases[0].version.to_string(), "1.1.0");
+  }
+
+  #[tokio::test]
+  async fn documents_nothing_will_read_again_are_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, registry) = served_in_summary(
+      dir.path(),
+      summary_listing("1.1.0"),
+      document("1.1.0", &["1.1.0"]),
+    )
+    .await;
+    registry.refresh().await.unwrap();
+
+    // One for a package the listing no longer carries.
+    let gone = dir.path().join("registries/oas/packages/gone-pkg.json");
+    std::fs::create_dir_all(gone.parent().unwrap()).unwrap();
+    std::fs::write(
+      &gone,
+      document("1.0.0", &["1.0.0"]).replace("wasted-audio/wstd-eq", "gone/pkg"),
+    )
+    .unwrap();
+    // And one for this package, from before the listing moved to 1.1.0.
+    let kept = registry.document_path("wasted-audio/wstd-eq").unwrap();
+    std::fs::write(&kept, document("1.0.0", &["1.0.0"])).unwrap();
+
+    let completion = registry.complete(&wstd_eq(), true).await;
+    assert!(completion.failures.is_empty(), "{completion:?}");
+    assert!(!gone.exists());
+    // Replaced by the current one, not merely deleted.
+    let current: OasPackage = serde_json::from_slice(&std::fs::read(&kept).unwrap()).unwrap();
+    assert_eq!(current.version, "1.1.0");
   }
 
   #[tokio::test]

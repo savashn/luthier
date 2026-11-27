@@ -10,7 +10,7 @@ mod render;
 
 use args::{CacheCommand, Cli, Command, GlobalArgs, LocationCommand};
 use clap::Parser;
-use luthier_core::api::{Session, Storage};
+use luthier_core::api::{Prepare, Session, Storage};
 use luthier_core::envfile::EnvFile;
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
@@ -256,26 +256,21 @@ fn read_import_file(global: &GlobalArgs, file: &std::path::Path) -> Result<EnvFi
   EnvFile::from_toml(&text, &file.display().to_string())
 }
 
-/// The packages a command names, as given: what
-/// [`Session::complete_packages`] fetches besides the installed ones. A name
-/// that is not an ID is left for the command itself to refuse.
-fn named_packages(session: &Session, cli: &Cli, import_file: Option<&EnvFile>) -> Vec<PackageId> {
-  let given: Vec<&str> = match &cli.command {
-    Command::Install { packages, .. } | Command::Upgrade { packages, .. } => {
-      packages.iter().map(String::as_str).collect()
-    }
-    Command::Info { package } => vec![package.as_str()],
-    Command::Import { .. } => {
-      return import_file
-        .map(|file| file.packages.iter().map(|p| p.id.clone()).collect())
-        .unwrap_or_default();
-    }
-    _ => Vec::new(),
-  };
-  given
-    .into_iter()
-    .filter_map(|raw| session.parse_id(raw).ok())
-    .collect()
+/// The command, as [`Session::prepare`] needs to know it; `None` for one
+/// that reads no registry.
+fn prepared<'a>(cli: &'a Cli, import_file: Option<&'a EnvFile>) -> Option<Prepare<'a>> {
+  Some(match &cli.command {
+    Command::Search { .. } => Prepare::Search,
+    Command::Info { package } => Prepare::Info(package),
+    Command::Install { packages, .. } => Prepare::Install(packages),
+    Command::Upgrade { packages, .. } => Prepare::Upgrade(packages),
+    Command::Import { .. } => Prepare::Import(import_file?),
+    Command::Outdated => Prepare::Outdated,
+    Command::Update => Prepare::Update,
+    Command::Remove { .. } => Prepare::Remove,
+    Command::Autoremove { .. } => Prepare::Autoremove,
+    _ => return None,
+  })
 }
 
 async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
@@ -358,11 +353,10 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     for outcome in session.refresh_due().await {
       reporter.automatic_refresh(&outcome);
     }
-    for warning in session
-      .complete_packages(&named_packages(&session, cli, import_file.as_ref()))
-      .await
-    {
-      reporter.warn(warning);
+    if let Some(command) = prepared(cli, import_file.as_ref()) {
+      for warning in session.prepare(command).await? {
+        reporter.warn(warning);
+      }
     }
     for problem in session.registry_problems() {
       reporter.warn(format!("registry unavailable: {problem}"));
@@ -433,7 +427,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       reporter.refresh(&outcomes);
       // What the installed packages need, for the count below and for an
       // `upgrade` made offline afterwards.
-      for warning in session.complete_packages(&[]).await {
+      for warning in session.prepare(Prepare::Update).await? {
         reporter.warn(warning);
       }
       // What the lists just fetched mean for this installation, as apt

@@ -379,32 +379,74 @@ impl Session {
     Ok(self.index.get_or_init(|| built))
   }
 
-  /// Fetches, before a command reads the index, the full description of
-  /// every package it may resolve that a source lists only in summary
-  /// ([`crate::registry::IndexEntry::summary`]): the ones `named`, and every
-  /// installed one, which `outdated`, `upgrade` and the resolver's look at
-  /// what stays installed all read. Returns a warning per failure, grouped
-  /// by reason; a package that could not be fetched stays a summary, which
-  /// the resolver refuses by name ([`ResolveError::OnlyListed`]).
+  /// Fetches what `command` will read that a source lists only in summary
+  /// ([`crate::registry::IndexEntry::summary`]), before anything reads the
+  /// index. A front end names its command; which packages that means, and
+  /// how hard to try for each, is decided here:
   ///
-  /// What was fetched is kept beside the snapshot and used for as long as
-  /// the listing still names the same version with the same files, so a
-  /// package costs a request when it is first needed and again only once a
-  /// new release of it is listed. Never under `--offline`, and never once
-  /// the index has been read this session, since it is built only once.
-  pub async fn complete_packages(&self, named: &[PackageId]) -> Vec<String> {
-    if self.offline || self.index.get().is_some() {
-      return Vec::new();
+  /// - the packages a command names, as given (a name that is not an ID is
+  ///   left for the command to refuse), with retries, since someone asked —
+  ///   and under `--offline` each is warned about rather than fetched;
+  /// - for a command that resolves, every installed package recorded as
+  ///   coming from that source: `outdated`, `upgrade` and the resolver's look
+  ///   at what stays installed read them all. A fetch no one asked for, so
+  ///   one try, given up at the first network failure, and none offline;
+  /// - nothing for `search`, `remove` and `autoremove`, which install
+  ///   nothing: a summary describes a package well enough to list or remove.
+  ///
+  /// Returns a warning per failure, grouped by reason. A package that could
+  /// not be fetched stays a summary, which the resolver refuses by name
+  /// ([`ResolveError::OnlyListed`]) and holds where it is when installed.
+  /// What was fetched is kept beside the snapshot and used while the listing
+  /// still names the same version with the same files, so a package costs a
+  /// request when first needed and again only once a new release is listed.
+  ///
+  /// An error once anything has read the index: it is built once per
+  /// session, so what this fetched would not be in it. A session is one
+  /// command; a front end that runs another builds another session.
+  pub async fn prepare(&self, command: Prepare<'_>) -> Result<Vec<String>> {
+    if self.index.get().is_some() {
+      return Err(Error::InvalidArgument(
+        "Session::prepare was called after the index was read; it must come first".into(),
+      ));
     }
-    let mut wanted: BTreeSet<PackageId> = named.iter().cloned().collect();
-    if let Ok(state) = crate::state::load(&self.layout) {
-      wanted.extend(state.packages.keys().cloned());
-    }
+    let ids = |raw: &mut dyn Iterator<Item = &str>| -> BTreeSet<PackageId> {
+      raw.filter_map(|r| PackageId::new(r).ok()).collect()
+    };
+    let (named, resolves) = match command {
+      Prepare::Search | Prepare::Remove | Prepare::Autoremove => (BTreeSet::new(), false),
+      Prepare::Info(id) => (ids(&mut std::iter::once(id)), false),
+      Prepare::Install(raw) | Prepare::Upgrade(raw) => {
+        (ids(&mut raw.iter().map(String::as_str)), true)
+      }
+      Prepare::Import(file) => (file.packages.iter().map(|p| p.id.clone()).collect(), true),
+      Prepare::Outdated | Prepare::Update => (BTreeSet::new(), true),
+    };
+    let state = if resolves && !self.offline {
+      crate::state::load(&self.layout).ok()
+    } else {
+      None
+    };
+
     let mut warnings = Vec::new();
     for provider in self.config.providers(&self.layout, self.offline) {
-      let completion = provider.complete(&wanted, true).await;
+      let mut failures = Vec::new();
+      if !named.is_empty() {
+        failures.extend(provider.complete(&named, false).await.failures);
+      }
+      if let Some(state) = &state {
+        let installed: BTreeSet<PackageId> = state
+          .packages
+          .values()
+          .filter(|p| p.registry == provider.name() && !named.contains(&p.id))
+          .map(|p| p.id.clone())
+          .collect();
+        if !installed.is_empty() {
+          failures.extend(provider.complete(&installed, true).await.failures);
+        }
+      }
       let mut by_reason: BTreeMap<String, Vec<String>> = BTreeMap::new();
-      for (id, reason) in completion.failures {
+      for (id, reason) in failures {
         by_reason.entry(reason).or_default().push(id.to_string());
       }
       for (reason, ids) in by_reason {
@@ -415,7 +457,7 @@ impl Session {
         ));
       }
     }
-    warnings
+    Ok(warnings)
   }
 
   // -------------------------------------------------------------- refresh --
@@ -3149,6 +3191,22 @@ fn published_name(url: &url::Url) -> String {
   percent_encoding::percent_decode_str(last)
     .decode_utf8_lossy()
     .into_owned()
+}
+
+/// The command a session is about to run, as [`Session::prepare`] needs to
+/// know it. Packages are as the user gave them.
+#[derive(Debug, Clone, Copy)]
+pub enum Prepare<'a> {
+  Search,
+  Info(&'a str),
+  Install(&'a [String]),
+  /// `upgrade`; the packages named, or none for everything.
+  Upgrade(&'a [String]),
+  Import(&'a EnvFile),
+  Outdated,
+  Update,
+  Remove,
+  Autoremove,
 }
 
 #[derive(Debug, Clone, Serialize)]
