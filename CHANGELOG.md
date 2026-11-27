@@ -15,6 +15,8 @@ about.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-11-27
+
 ### Added
 
 - **The Open Audio Stack registry is read in its trimmed form too.** Once
@@ -524,7 +526,8 @@ The first release: everything below is new.
 - Every artifact is verified against its manifest checksum before it is
   extracted, cache hits included.
 
-[Unreleased]: https://github.com/savashn/luthier/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/savashn/luthier/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/savashn/luthier/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/savashn/luthier/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/savashn/luthier/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/savashn/luthier/compare/v0.4.0...v0.5.0
