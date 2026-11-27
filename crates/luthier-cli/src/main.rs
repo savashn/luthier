@@ -11,6 +11,7 @@ mod render;
 use args::{CacheCommand, Cli, Command, GlobalArgs, LocationCommand};
 use clap::Parser;
 use luthier_core::api::{Session, Storage};
+use luthier_core::envfile::EnvFile;
 use luthier_core::error::{Error, ExitCode, Result};
 use luthier_core::layout::LocationKind;
 use luthier_core::{Config, Layout};
@@ -231,6 +232,52 @@ async fn upgrade_luthier(
   Ok(())
 }
 
+/// The file `import` reads, from a path or from stdin (`-`).
+fn read_import_file(global: &GlobalArgs, file: &std::path::Path) -> Result<EnvFile> {
+  // Reading the file from stdin leaves nothing to ask the confirmation on:
+  // stdin is at EOF by the time the question is put, so a pipe is refused as
+  // non-interactive and a terminal reads an empty answer as no. Said here,
+  // before the file is read, rather than discovered after the work.
+  if file.as_os_str() == "-" && !global.yes {
+    return Err(Error::InvalidArgument(
+      "reading the file from stdin leaves nothing to confirm on; \
+         pass --yes, or give the file a path"
+        .into(),
+    ));
+  }
+  let text = if file.as_os_str() == "-" {
+    let mut buffer = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+      .map_err(|e| Error::io("read the file to import", file, e))?;
+    buffer
+  } else {
+    std::fs::read_to_string(file).map_err(|e| Error::io("read the file to import", file, e))?
+  };
+  EnvFile::from_toml(&text, &file.display().to_string())
+}
+
+/// The packages a command names, as given: what
+/// [`Session::complete_packages`] fetches besides the installed ones. A name
+/// that is not an ID is left for the command itself to refuse.
+fn named_packages(session: &Session, cli: &Cli, import_file: Option<&EnvFile>) -> Vec<PackageId> {
+  let given: Vec<&str> = match &cli.command {
+    Command::Install { packages, .. } | Command::Upgrade { packages, .. } => {
+      packages.iter().map(String::as_str).collect()
+    }
+    Command::Info { package } => vec![package.as_str()],
+    Command::Import { .. } => {
+      return import_file
+        .map(|file| file.packages.iter().map(|p| p.id.clone()).collect())
+        .unwrap_or_default();
+    }
+    _ => Vec::new(),
+  };
+  given
+    .into_iter()
+    .filter_map(|raw| session.parse_id(raw).ok())
+    .collect()
+}
+
 async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
   let global = &cli.global;
 
@@ -276,6 +323,14 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
   );
   let session = build_session(global)?.keep_going(keep_going);
 
+  // Read before anything is fetched, so the packages it names are among
+  // those whose descriptions are, and only once: a file from stdin cannot
+  // be read twice.
+  let import_file = match &cli.command {
+    Command::Import { file, .. } => Some(read_import_file(global, file)?),
+    _ => None,
+  };
+
   // A registry that could not be read is reported before the command
   // answers, so a half-configured setup never looks like a complete one.
   //
@@ -303,6 +358,12 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     for outcome in session.refresh_due().await {
       reporter.automatic_refresh(&outcome);
     }
+    for warning in session
+      .complete_packages(&named_packages(&session, cli, import_file.as_ref()))
+      .await
+    {
+      reporter.warn(warning);
+    }
     for problem in session.registry_problems() {
       reporter.warn(format!("registry unavailable: {problem}"));
     }
@@ -326,30 +387,12 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
     }
 
-    Command::Import { file, prune, .. } => {
-      // Reading the file from stdin leaves nothing to ask the confirmation
-      // on: stdin is at EOF by the time the question is put, so a pipe is
-      // refused as non-interactive and a terminal reads an empty answer as
-      // no. Said here, before the file is read, rather than discovered
-      // after the work.
-      if file.as_os_str() == "-" && !global.yes {
-        return Err(Error::InvalidArgument(
-          "reading the file from stdin leaves nothing to confirm on; \
-             pass --yes, or give the file a path"
-            .into(),
-        ));
-      }
-      let text = if file.as_os_str() == "-" {
-        let mut buffer = String::new();
-        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
-          .map_err(|e| Error::io("read the file to import", file, e))?;
-        buffer
-      } else {
-        std::fs::read_to_string(file).map_err(|e| Error::io("read the file to import", file, e))?
-      };
-      let env_file = luthier_core::envfile::EnvFile::from_toml(&text, &file.display().to_string())?;
+    Command::Import { prune, .. } => {
+      let env_file = import_file
+        .as_ref()
+        .expect("read before the session's registries were");
 
-      let plan = session.plan_import(&env_file, *prune)?;
+      let plan = session.plan_import(env_file, *prune)?;
       // The plan says what the prune removes, and why it removes nothing
       // when a source could not be read.
       reporter.prune_withheld(plan.prune_withheld.as_deref());
@@ -378,7 +421,7 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
       }
 
       let mut bar = progress(global);
-      let outcome = session.import(&env_file, *prune, &plan, &mut bar).await?;
+      let outcome = session.import(env_file, *prune, &plan, &mut bar).await?;
       reporter.import_outcome(&outcome, &plan);
       if let Some(error) = outcome.installed.incomplete() {
         return Err(error);
@@ -388,6 +431,11 @@ async fn run(cli: &Cli, reporter: &Reporter) -> Result<()> {
     Command::Update => {
       let outcomes = session.refresh().await?;
       reporter.refresh(&outcomes);
+      // What the installed packages need, for the count below and for an
+      // `upgrade` made offline afterwards.
+      for warning in session.complete_packages(&[]).await {
+        reporter.warn(warning);
+      }
       // What the lists just fetched mean for this installation, as apt
       // says after its own `update`. The fetch has succeeded by now, so
       // what goes wrong here is a warning rather than the command failing.

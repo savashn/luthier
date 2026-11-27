@@ -6,7 +6,7 @@ software. Not a DAW: no audio engine, no plugin host, no MIDI, no GUI.
 ## Commands
 
 ```console
-cargo test --workspace                     # 542 tests, fully offline
+cargo test --workspace                     # 554 tests, fully offline
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p luthier-registry-tool -- schema > schemas/package-v1.json   # after type changes
@@ -193,6 +193,26 @@ the crate map keeps that out of `luthier-manifest`.
   nothing a later call could see that the first did not. The two detection
   scans memoise for the same reason: `install` ran each twice, and a session is
   one command.
+- **The OAS listing may be summaries; a package's own document is fetched
+  when needed.** Since open-audio-stack-registry#933, `plugins/index.json`
+  may hold each package's latest version only, every file without `url`
+  and `sha256` (`OasPackage::is_summary`: all files lack both; a file
+  lacking one is broken, as before). Such an entry has
+  `IndexEntry::summary` and no artifact. `Session::complete_packages`,
+  called by the CLI after `refresh_due` with the packages a command names
+  (and after `update`), fetches `plugins/<org>/<name>/index.json` for those
+  and every installed package still a summary, into
+  `<snapshot dir>/packages/`, beside the snapshot so `cache clean` keeps
+  it. A kept document is used only while `is_current`: same slug, same
+  latest version, same files position by position less `url`/`sha256`
+  (the spec guarantees the order). Never fetch every document on refresh:
+  that is 400+ requests a day and undoes the PR's point. The listing
+  over-counts — whether a file is an archive this build reads is in the
+  URL — so a package can turn out uninstallable once read; it stays a
+  summary saying so (`unavailable`) and is not fetched again until the
+  listing moves. `import` reads its file before the session fetches, since
+  stdin can be read once. `298f922` once refused such a listing as an
+  index of nothing; a truly reshaped one still is.
 - **Extras is built in; the OAS index refreshes itself.** `build.rs` embeds
   every manifest `manifest_files` finds in `extras/` (`registry/builtin.rs`,
   `RegistrySource::BuiltIn`, named `extras`), so a binary reads exactly the

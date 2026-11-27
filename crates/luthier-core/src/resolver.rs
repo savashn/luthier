@@ -155,6 +155,11 @@ pub enum Frozen {
   NotCarried,
   /// A source carries it, and no release of it is built for this target.
   NoReleaseForTarget,
+  /// A source lists it only in summary, and its full description, which
+  /// says what its releases are built for, could not be fetched
+  /// ([`crate::registry::IndexEntry::summary`]). Not [`Frozen::NoReleaseForTarget`]:
+  /// nothing says there is none.
+  Unread,
   /// `upgrade` holds it back: its own upgrade cannot be resolved.
   HeldBack,
   /// A package nothing can upgrade any more needs it, so it stays at the
@@ -185,8 +190,13 @@ pub fn frozen<S: PackageSource>(
 ) -> BTreeMap<PackageId, Frozen> {
   let mut frozen = BTreeMap::new();
   for package in state.packages.values() {
+    let unread = source
+      .entry(&package.id)
+      .and_then(|e| e.summary.as_ref())
+      .is_some_and(|s| s.unavailable.is_none());
     let why = match source.manifest(&package.id) {
       None => Frozen::NotCarried,
+      Some(_) if unread => Frozen::Unread,
       // A pack has no artifacts to be built for anything.
       Some(manifest) if manifest.kind == PackageKind::Pack => continue,
       Some(manifest) if newest_installable(manifest, target).is_none() => {
@@ -265,6 +275,7 @@ fn kept_conflict(id: &PackageId, version: &Version, requirement: String, why: &F
 fn held_because(why: &Frozen) -> String {
   match why {
     Frozen::NotCarried => "no source that could be read carries it".to_string(),
+    Frozen::Unread => "what its source says of it could not be fetched".to_string(),
     Frozen::NoReleaseForTarget => "no release of it is built for this machine any more".to_string(),
     Frozen::NeededBy(by) => format!("{by} needs it, and can no longer be upgraded"),
     Frozen::HeldBack => "its own upgrade is held back".to_string(),
@@ -431,7 +442,7 @@ fn walk<'a, S: PackageSource>(
               "{id} {} cannot be reinstalled: {}",
               installed.version,
               match why {
-                Frozen::NotCarried => held_because(why),
+                Frozen::NotCarried | Frozen::Unread => held_because(why),
                 _ => "that version is no longer published for this machine".to_string(),
               }
             ),
@@ -444,6 +455,19 @@ fn walk<'a, S: PackageSource>(
     }
 
     let manifest = source.manifest(&id).ok_or_else(|| not_found(source, &id))?;
+    // Listed only in summary: there is nothing to fetch, and saying "no
+    // release for this machine" would blame the package for what this
+    // build has not read yet.
+    if let Some(summary) = source.entry(&id).and_then(|e| e.summary.as_ref()) {
+      return Err(Error::Resolve(ResolveError::OnlyListed {
+        id: id.clone(),
+        reason: summary
+          .unavailable
+          .clone()
+          .unwrap_or_else(|| "it has not been fetched".to_owned()),
+        unread: summary.unavailable.is_none(),
+      }));
+    }
 
     if manifest.kind == PackageKind::External {
       externals.insert(
@@ -884,6 +908,7 @@ mod tests {
           unknown_fields: vec![],
           registry: "test".into(),
           notes: Vec::new(),
+          summary: None,
         },
       );
       self
@@ -923,6 +948,7 @@ mod tests {
           unknown_fields: vec![],
           registry: "test".into(),
           notes: Vec::new(),
+          summary: None,
         },
       );
       self
@@ -1097,6 +1123,23 @@ mod tests {
     .unwrap();
     // Declaration order in the file must not matter.
     assert_eq!(resolution.order[0].version, Version::new(1, 3, 4));
+  }
+
+  #[test]
+  fn a_package_listed_only_in_summary_is_refused_by_name() {
+    let mut fixture = Fixture::new().add("wstd-eq", &[("1.1.0", &[])]);
+    let id = PackageId::new("wstd-eq").unwrap();
+    fixture.packages.get_mut(&id).unwrap().summary = Some(crate::registry::Summary {
+      formats: Vec::new(),
+      unavailable: Some("the network is down".into()),
+    });
+
+    let err = resolve_ids(&fixture, &["wstd-eq"]).unwrap_err();
+    assert!(
+      matches!(&err, Error::Resolve(ResolveError::OnlyListed { id: named, .. }) if *named == id),
+      "{err}"
+    );
+    assert!(err.to_string().contains("the network is down"), "{err}");
   }
 
   #[test]
@@ -1640,6 +1683,26 @@ mod tests {
     assert_eq!(frozen.get(&id("alpha")), Some(&Frozen::HeldBack));
     assert_eq!(frozen.get(&id("zeta")), Some(&Frozen::NotCarried));
     assert_eq!(frozen.get(&id("d")), Some(&Frozen::NeededBy(id("zeta"))));
+  }
+
+  #[test]
+  fn an_installed_package_listed_only_in_summary_is_held_as_unread() {
+    // Its document could not be fetched: nothing says it has no build here,
+    // so it is not reported as if it had none.
+    let mut fixture = Fixture::new().add("foo", &[("1.0.0", &[])]);
+    let entry = fixture.packages.get_mut(&id("foo")).unwrap();
+    entry.manifest.releases[0].artifacts.clear();
+    entry.summary = Some(crate::registry::Summary::default());
+    let state = installed(&[("foo", "1.0.0", &[])]);
+    let none = BTreeSet::new();
+    let held = frozen(&fixture, &state, &linux(), &none, &[], &none);
+    assert_eq!(held.get(&id("foo")), Some(&Frozen::Unread));
+
+    // Read, and found to hold nothing installable: that one has no build.
+    let entry = fixture.packages.get_mut(&id("foo")).unwrap();
+    entry.summary.as_mut().unwrap().unavailable = Some("no file".into());
+    let held = frozen(&fixture, &state, &linux(), &none, &[], &none);
+    assert_eq!(held.get(&id("foo")), Some(&Frozen::NoReleaseForTarget));
   }
 
   #[test]

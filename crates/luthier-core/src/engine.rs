@@ -225,6 +225,7 @@ plays = ["drumgizmo"]
           unknown_fields: Vec::new(),
           registry: "test".into(),
           notes: Vec::new(),
+          summary: None,
         },
       );
     }

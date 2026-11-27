@@ -17,6 +17,15 @@ about.
 
 ### Added
 
+- **The Open Audio Stack registry is read in its trimmed form too.** Once
+  open-audio-stack-registry#933 is merged, the package list carries only
+  each package's latest version, without download URLs or checksums.
+  Luthier lists every package from it as before, and fetches a package's
+  own description — its whole history, with what to download — when a
+  command needs it: the packages named, and the ones installed. It is kept
+  until a new release is listed, so a package costs one request when first
+  needed. A package whose description cannot be fetched is refused by name,
+  never installed from the list. Today's full list is read as before.
 - **A mistyped package ID is answered with what was meant.** `install`,
   `info`, `upgrade` and the rest add `Did you mean: virtual-playing-orchestra?`
   under "not found" when an ID, or a display name typed for one, is a typo

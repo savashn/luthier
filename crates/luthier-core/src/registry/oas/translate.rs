@@ -13,6 +13,7 @@
 //! worse than one that never appeared.
 
 use super::license;
+use crate::registry::Summary;
 use luthier_manifest::{
   Arch, ArchiveFormat, Artifact, Category, Checksum, Content, Format, License, Manifest, Os,
   PackageId, PackageKind, Release, Sha256Hash, Source, SourceType, Target,
@@ -87,6 +88,40 @@ pub struct OasSystem {
 pub struct Translated {
   pub manifest: Manifest,
   pub notes: Vec<String>,
+  /// Set for an entry the index lists only in summary ([`OasPackage::is_summary`]):
+  /// its releases carry no artifact, and this says what the files are for.
+  pub summary: Option<Summary>,
+}
+
+impl OasPackage {
+  /// Whether the index lists this package only in summary: every file it
+  /// carries has lost its `url` and `sha256`. The registry root and the
+  /// per-type listings publish packages that way, latest version only,
+  /// and the package's own document (`plugins/<org>/<name>/index.json`)
+  /// still carries everything (open-audio-stack-registry#933).
+  ///
+  /// A file missing only one of the two is not a summary but a broken
+  /// file, and is skipped as one, as before.
+  pub fn is_summary(&self) -> bool {
+    let mut files = self.versions.values().flat_map(|v| &v.files).peekable();
+    files.peek().is_some() && files.all(|f| f.url.is_empty() && f.sha256.is_empty())
+  }
+}
+
+impl OasFile {
+  /// What, in the summary listing, says a file is still the same file in
+  /// the package's own document: everything but the two fields the listing
+  /// leaves out. The registry keeps a version's files in the same order at
+  /// every tier, so the lists compare position by position.
+  pub fn listed(&self) -> (Vec<&str>, &[String], &[String], &str, u64) {
+    (
+      self.systems.iter().map(|s| s.kind.as_str()).collect(),
+      &self.architectures,
+      &self.contains,
+      &self.kind,
+      self.size,
+    )
+  }
 }
 
 /// Turns one index entry into a manifest, or explains why it cannot be one.
@@ -103,10 +138,16 @@ pub fn package(entry: &OasPackage) -> Result<Translated, String> {
   // A version that cannot be translated costs that version, not the package.
   // An old release whose files have gone missing upstream is common; it is
   // not a reason to withhold the ones that are still there.
+  let summarised = entry.is_summary();
   let mut built: Vec<(Release, &OasVersion)> = Vec::new();
   let mut refusals: Vec<String> = Vec::new();
   for (key, version) in &entry.versions {
-    match release_for(key, version) {
+    let release = if summarised {
+      summary_release_for(key, version)
+    } else {
+      release_for(key, version)
+    };
+    match release {
       Ok((release, version_notes)) => {
         notes.extend(version_notes.into_iter().map(|n| format!("{key}: {n}")));
         built.push((release, version));
@@ -198,7 +239,98 @@ pub fn package(entry: &OasPackage) -> Result<Translated, String> {
     extra: Default::default(),
   };
 
-  Ok(Translated { manifest, notes })
+  let summary = summarised.then(|| Summary {
+    formats: summary_formats(&version.files),
+    unavailable: None,
+  });
+  Ok(Translated {
+    manifest,
+    notes,
+    summary,
+  })
+}
+
+/// One version of a package listed only in summary: a release with nothing
+/// to fetch, which is what keeps it from being installed until the
+/// package's own document has been read. Refused, as [`release_for`]
+/// refuses one, when no file is for a target this build has.
+///
+/// Whether the files are archives this build reads cannot be told here —
+/// that is in the URL — so a package listed here can still turn out to have
+/// nothing installable once its document is read.
+fn summary_release_for(key: &str, version: &OasVersion) -> Result<(Release, Vec<String>), String> {
+  let semver = Version::parse(key).map_err(|e| format!("version {key:?} is not semver: {e}"))?;
+  if summary_formats(&version.files).is_empty() {
+    return Err("no file this build can install".to_owned());
+  }
+  Ok((
+    Release {
+      version: semver,
+      release_notes: None,
+      dependencies: Vec::new(),
+      optional_dependencies: Vec::new(),
+      artifacts: Vec::new(),
+      yanked: None,
+      extra: Default::default(),
+    },
+    Vec::new(),
+  ))
+}
+
+/// What the files of a version listed in summary provide, per target this
+/// build has, by the same reading of systems, architectures and type as
+/// [`artifacts_for_file`].
+fn summary_formats(files: &[OasFile]) -> Vec<(Target, Vec<Format>)> {
+  let mut by_target: BTreeMap<Target, Vec<Format>> = BTreeMap::new();
+  for file in files {
+    for target in targets_of(file) {
+      by_target
+        .entry(target)
+        .or_default()
+        .extend(declared_formats(&file.contains));
+    }
+  }
+  by_target
+    .into_iter()
+    .map(|(target, mut formats)| {
+      formats.sort();
+      formats.dedup();
+      (target, formats)
+    })
+    .collect()
+}
+
+/// Every target this build has that one file serves: the product of its
+/// systems and architectures, and only for an archive. Empty for a file
+/// meant for platforms there is no target for.
+fn targets_of(file: &OasFile) -> Vec<Target> {
+  if file.kind != "archive" {
+    return Vec::new();
+  }
+  let systems = file.systems.iter().filter_map(|s| match s.kind.as_str() {
+    "linux" => Some(Os::Linux),
+    "mac" => Some(Os::Macos),
+    "win" => Some(Os::Windows),
+    _ => None,
+  });
+  // 32-bit and arm64ec have no target in this schema.
+  let arches: Vec<Arch> = file
+    .architectures
+    .iter()
+    .filter_map(|a| match a.as_str() {
+      "x64" => Some(Arch::X86_64),
+      "arm64" => Some(Arch::Aarch64),
+      _ => None,
+    })
+    .collect();
+  systems
+    .flat_map(|os| {
+      arches.iter().map(move |arch| Target {
+        os: os.clone(),
+        arch: arch.clone(),
+      })
+    })
+    .collect()
 }
 
 /// One version of one package, with whatever had to be skipped to build it.
@@ -331,27 +463,8 @@ fn content_value(raw: &str) -> Option<Content> {
 /// An empty result means the file is for platforms this build has no target
 /// for. `Err` means it is for one of ours and still unusable.
 fn artifacts_for_file(file: &OasFile) -> Result<Vec<Artifact>, String> {
-  let systems: Vec<Os> = file
-    .systems
-    .iter()
-    .filter_map(|s| match s.kind.as_str() {
-      "linux" => Some(Os::Linux),
-      "mac" => Some(Os::Macos),
-      "win" => Some(Os::Windows),
-      _ => None,
-    })
-    .collect();
-  // 32-bit and arm64ec have no target in this schema.
-  let arches: Vec<Arch> = file
-    .architectures
-    .iter()
-    .filter_map(|a| match a.as_str() {
-      "x64" => Some(Arch::X86_64),
-      "arm64" => Some(Arch::Aarch64),
-      _ => None,
-    })
-    .collect();
-  if systems.is_empty() || arches.is_empty() || file.kind != "archive" {
+  let targets = targets_of(file);
+  if targets.is_empty() {
     return Ok(Vec::new());
   }
 
@@ -363,14 +476,11 @@ fn artifacts_for_file(file: &OasFile) -> Result<Vec<Artifact>, String> {
   let sha256 =
     Sha256Hash::parse(&file.sha256).map_err(|e| format!("{}: unusable checksum: {e}", file.url))?;
 
-  let mut out = Vec::new();
-  for os in &systems {
-    for arch in &arches {
-      out.push(Artifact {
-        target: Target {
-          os: os.clone(),
-          arch: arch.clone(),
-        },
+  Ok(
+    targets
+      .into_iter()
+      .map(|target| Artifact {
+        target,
         source: Source {
           kind: SourceType::Http,
           url: url.clone(),
@@ -388,10 +498,9 @@ fn artifacts_for_file(file: &OasFile) -> Result<Vec<Artifact>, String> {
         install: Vec::new(),
         derive_install: true,
         extra: Default::default(),
-      });
-    }
-  }
-  Ok(out)
+      })
+      .collect(),
+  )
 }
 
 /// The subset of upstream's `contains` this schema has a format for.
@@ -451,6 +560,71 @@ mod tests {
         ]
       }}
     }"#;
+
+  /// [`WSTD_EQ`] as the registry root and type listings publish it since
+  /// open-audio-stack-registry#933: no file carries `url` or `sha256`.
+  fn summarised(json: &str) -> OasPackage {
+    let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+    for version in value["versions"].as_object_mut().unwrap().values_mut() {
+      for file in version["files"].as_array_mut().unwrap() {
+        let file = file.as_object_mut().unwrap();
+        file.remove("url");
+        file.remove("sha256");
+      }
+    }
+    serde_json::from_value(value).unwrap()
+  }
+
+  #[test]
+  fn a_package_listed_in_summary_is_described_and_has_nothing_to_fetch() {
+    let listed = summarised(WSTD_EQ);
+    assert!(listed.is_summary());
+    assert!(!entry(WSTD_EQ).is_summary());
+
+    let translated = package(&listed).unwrap();
+    // Still named, versioned and classified, so `search` finds it...
+    assert_eq!(translated.manifest.name, "WSTD EQ");
+    assert_eq!(translated.manifest.category, Category::Effect);
+    assert_eq!(translated.manifest.releases.len(), 1);
+    // ...and nothing anyone could download.
+    assert!(translated.manifest.releases[0].artifacts.is_empty());
+
+    // What the listing says the files hold, for this build's targets only:
+    // the macOS file is an installer, not an archive.
+    let summary = translated.summary.expect("a summary entry");
+    let linux = Target {
+      os: Os::Linux,
+      arch: Arch::X86_64,
+    };
+    assert_eq!(
+      summary.formats,
+      vec![(linux, vec![Format::Clap, Format::Vst3, Format::Lv2])]
+    );
+    assert_eq!(summary.unavailable, None);
+  }
+
+  #[test]
+  fn a_file_missing_one_of_url_and_sha256_is_broken_not_a_summary() {
+    let mut value: serde_json::Value = serde_json::from_str(WSTD_EQ).unwrap();
+    value["versions"]["1.1.1"]["files"][0]
+      .as_object_mut()
+      .unwrap()
+      .remove("sha256");
+    let listed: OasPackage = serde_json::from_value(value).unwrap();
+    assert!(!listed.is_summary());
+    // Read in full, and the one Linux file refused for its checksum.
+    assert!(package(&listed).is_err());
+  }
+
+  #[test]
+  fn a_summary_with_no_file_for_this_build_is_refused_like_a_full_entry() {
+    let mut value: serde_json::Value = serde_json::from_str(WSTD_EQ).unwrap();
+    let files = value["versions"]["1.1.1"]["files"].as_array_mut().unwrap();
+    files.remove(0);
+    let listed = summarised(&value.to_string());
+    assert!(listed.is_summary());
+    assert!(package(&listed).is_err());
+  }
 
   #[test]
   fn an_artifact_carries_no_rules_and_asks_for_them_to_be_derived() {

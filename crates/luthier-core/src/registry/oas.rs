@@ -18,13 +18,15 @@
 pub mod license;
 pub mod translate;
 
-use super::{IndexEntry, RefreshOutcome, RegistryIndex, RegistryProvider, provenance};
+use super::{Completion, IndexEntry, RefreshOutcome, RegistryIndex, RegistryProvider, provenance};
 use crate::download::{Conditional, Downloader, Validators};
 use crate::error::{Error, RegistryError, Result};
 use crate::fsutil;
 use jiff::{SignedDuration, Timestamp};
+#[cfg(test)]
+use luthier_manifest::Target;
 use luthier_manifest::{PackageId, Sha256Hash};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use translate::OasPackage;
 use url::Url;
@@ -34,6 +36,10 @@ const PLUGINS_INDEX: &str = "plugins/index.json";
 
 /// The most the index may be. It is under two megabytes (2026-10).
 const INDEX_LIMIT: u64 = 64 * 1024 * 1024;
+
+/// The most one package's own document may be. LSP Plugins, with eleven
+/// versions of four files each, is under 40 KiB (2026-11).
+const DOCUMENT_LIMIT: u64 = 4 * 1024 * 1024;
 
 pub struct OasRegistry {
   name: String,
@@ -66,6 +72,104 @@ impl OasRegistry {
 
   fn snapshot_path(&self) -> PathBuf {
     self.snapshot_dir.join("plugins.json")
+  }
+
+  /// Where a package's own document is kept once fetched: beside the
+  /// snapshot, not in the cache, so `cache clean` cannot take what an
+  /// installed package needs to be reinstalled offline. Named by the
+  /// qualified ID, which is a plain file name whatever the slug holds; two
+  /// slugs that normalise alike share a file, and each then reads the other's
+  /// document as not current ([`is_current`] compares slugs) and fetches its
+  /// own.
+  fn document_path(&self, slug: &str) -> Option<PathBuf> {
+    let stem = translate::qualified_id(slug).ok()?;
+    Some(
+      self
+        .snapshot_dir
+        .join("packages")
+        .join(format!("{stem}.json")),
+    )
+  }
+
+  /// `plugins/<org>/<name>/index.json`, the package's own document. The slug
+  /// comes from upstream's data, so it must be exactly two plain segments: a
+  /// `..` or an empty segment would have the URL resolve somewhere else.
+  fn document_url(&self, slug: &str) -> Result<Url> {
+    let plain = |segment: &str| {
+      !segment.is_empty()
+        && segment != "."
+        && segment != ".."
+        && segment
+          .chars()
+          .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    };
+    let segments: Vec<&str> = slug.split('/').collect();
+    if segments.len() != 2 || !segments.iter().all(|s| plain(s)) {
+      return Err(Error::Registry(RegistryError::Malformed {
+        registry: self.name.clone(),
+        reason: format!("slug {slug:?} cannot name a document"),
+      }));
+    }
+    let index = self.index_url()?;
+    index.join(&format!("{slug}/index.json")).map_err(|e| {
+      Error::Registry(RegistryError::Malformed {
+        registry: self.name.clone(),
+        reason: e.to_string(),
+      })
+    })
+  }
+
+  /// The package's own document as fetched last, if it is on disk and reads.
+  fn read_document(&self, listed: &OasPackage) -> Option<OasPackage> {
+    let bytes = std::fs::read(self.document_path(&listed.slug)?).ok()?;
+    serde_json::from_slice(&bytes).ok()
+  }
+
+  /// The snapshot's packages, keyed by slug.
+  fn listing(&self) -> Result<BTreeMap<String, OasPackage>> {
+    let path = self.snapshot_path();
+    if !path.exists() {
+      return Err(Error::Registry(RegistryError::NotFetched(
+        self.name.clone(),
+      )));
+    }
+    parse_listing(&self.name, &read_snapshot(&path)?)
+  }
+
+  /// Fetches one package's own document and keeps it, if it describes what
+  /// the listing names. One that does not is not kept: it would never be
+  /// read, and a CDN still serving the old document is the likely reason.
+  async fn fetch_document(&self, downloader: &Downloader, listed: &OasPackage) -> Result<()> {
+    let url = self.document_url(&listed.slug)?;
+    let body = match downloader
+      .get_if_changed(&url, DOCUMENT_LIMIT, None)
+      .await?
+    {
+      Conditional::Changed { body, .. } => body,
+      // Nothing was named for the server to compare against.
+      Conditional::Unchanged => unreachable!("a request without validators is answered in full"),
+    };
+    let malformed = |reason: String| {
+      Error::Registry(RegistryError::Malformed {
+        registry: self.name.clone(),
+        reason,
+      })
+    };
+    let document: OasPackage = serde_json::from_slice(&body)
+      .map_err(|e| malformed(format!("{url} is not a package document: {e}")))?;
+    if !is_current(listed, &document) {
+      return Err(malformed(format!(
+        "{url} does not describe {} {} as the package list does yet",
+        listed.slug, listed.version
+      )));
+    }
+    let path = self
+      .document_path(&listed.slug)
+      .ok_or_else(|| malformed(format!("slug {:?} cannot name a file", listed.slug)))?;
+    if let Some(dir) = path.parent() {
+      fsutil::ensure_dir(dir)?;
+    }
+    fsutil::write_atomic(&path, &body)
   }
 
   fn index_url(&self) -> Result<Url> {
@@ -194,13 +298,51 @@ impl OasRegistry {
 /// whole load: one malformed upstream entry must not cost the user the other
 /// five hundred.
 pub fn index_from_json(name: &str, json: &[u8]) -> Result<RegistryIndex> {
-  let raw: BTreeMap<String, OasPackage> = serde_json::from_slice(json).map_err(|e| {
+  Ok(index_from_listing(
+    name,
+    &parse_listing(name, json)?,
+    &|_| None,
+  ))
+}
+
+/// The packages of an index document, keyed by slug.
+fn parse_listing(name: &str, json: &[u8]) -> Result<BTreeMap<String, OasPackage>> {
+  serde_json::from_slice(json).map_err(|e| {
     Error::Registry(RegistryError::Malformed {
       registry: name.to_owned(),
       reason: e.to_string(),
     })
-  })?;
+  })
+}
 
+/// Whether `document`, a package's own document, describes what `listed`,
+/// its entry in a summary listing, names: the same package at the same
+/// latest version, with the same files where the listing has them. One that
+/// does not is older or newer than the listing and is not used — an install
+/// from it would fetch something other than what `search` showed.
+fn is_current(listed: &OasPackage, document: &OasPackage) -> bool {
+  document.slug == listed.slug
+    && document.version == listed.version
+    && listed.versions.iter().all(|(key, version)| {
+      document.versions.get(key).is_some_and(|full| {
+        full.files.len() == version.files.len()
+          && full
+            .files
+            .iter()
+            .zip(&version.files)
+            .all(|(a, b)| a.listed() == b.listed())
+      })
+    })
+}
+
+/// [`index_from_json`] over a parsed listing, reading a package the listing
+/// has only in summary from its own document where `document` has one that
+/// is current ([`is_current`]).
+fn index_from_listing(
+  name: &str,
+  raw: &BTreeMap<String, OasPackage>,
+  document: &dyn Fn(&OasPackage) -> Option<OasPackage>,
+) -> RegistryIndex {
   // Two organisations publishing the same name both keep it, qualified.
   let mut claimed: BTreeMap<PackageId, usize> = BTreeMap::new();
   for entry in raw.values() {
@@ -210,9 +352,34 @@ pub fn index_from_json(name: &str, json: &[u8]) -> Result<RegistryIndex> {
   }
 
   let mut packages: BTreeMap<PackageId, IndexEntry> = BTreeMap::new();
-  for entry in raw.values() {
-    let Ok(mut translated) = translate::package(entry) else {
-      continue;
+  for listed in raw.values() {
+    // A package listed in summary is described by its own document when
+    // one has been fetched and still matches the listing. One that holds
+    // nothing installable stays a summary that says so, rather than
+    // vanishing from `search` — and is not fetched again until the
+    // listing moves.
+    let full = listed
+      .is_summary()
+      .then(|| document(listed))
+      .flatten()
+      .filter(|full| is_current(listed, full));
+    let (entry, mut translated) = match &full {
+      Some(full) => match translate::package(full) {
+        Ok(translated) => (full, translated),
+        Err(reason) => {
+          let Ok(mut translated) = translate::package(listed) else {
+            continue;
+          };
+          if let Some(summary) = &mut translated.summary {
+            summary.unavailable = Some(format!("its own document has {reason}"));
+          }
+          (listed, translated)
+        }
+      },
+      None => match translate::package(listed) {
+        Ok(translated) => (listed, translated),
+        Err(_) => continue,
+      },
     };
     let contested = translate::id_from_slug(&entry.slug)
       .ok()
@@ -256,16 +423,17 @@ pub fn index_from_json(name: &str, json: &[u8]) -> Result<RegistryIndex> {
         unknown_fields: Vec::new(),
         registry: name.to_owned(),
         notes: translated.notes,
+        summary: translated.summary,
       },
     );
   }
 
-  Ok(RegistryIndex {
+  RegistryIndex {
     name: name.to_owned(),
     packages,
     problems: Vec::new(),
     engines: Vec::new(),
-  })
+  }
 }
 
 #[async_trait::async_trait]
@@ -286,14 +454,82 @@ impl RegistryProvider for OasRegistry {
   }
 
   fn load_index(&self) -> Result<RegistryIndex> {
-    let path = self.snapshot_path();
-    if !path.exists() {
-      return Err(Error::Registry(RegistryError::NotFetched(
-        self.name.clone(),
-      )));
+    Ok(index_from_listing(
+      &self.name,
+      &self.listing()?,
+      &|listed| self.read_document(listed),
+    ))
+  }
+
+  async fn complete(&self, wanted: &BTreeSet<PackageId>, impatient: bool) -> Completion {
+    let mut completion = Completion::default();
+    if wanted.is_empty() {
+      return completion;
     }
-    let body = read_snapshot(&path)?;
-    index_from_json(&self.name, &body)
+    let Ok(listing) = self.listing() else {
+      // Not fetched, or unreadable: every command already says so.
+      return completion;
+    };
+    let index = index_from_listing(&self.name, &listing, &|listed| self.read_document(listed));
+    // A summary that says why it is one was read in full already, and the
+    // document had nothing installable; asking again changes nothing until
+    // the listing moves.
+    let due: Vec<(PackageId, &OasPackage)> = index
+      .packages
+      .values()
+      .filter(|entry| wanted.contains(&entry.manifest.id))
+      .filter(|entry| {
+        entry
+          .summary
+          .as_ref()
+          .is_some_and(|s| s.unavailable.is_none())
+      })
+      .filter_map(|entry| {
+        let slug = entry.path.to_str()?;
+        Some((entry.manifest.id.clone(), listing.get(slug)?))
+      })
+      .collect();
+    if due.is_empty() {
+      return completion;
+    }
+    if self.offline {
+      completion.failures = due
+        .into_iter()
+        .map(|(id, _)| (id, "not fetched under --offline".to_owned()))
+        .collect();
+      return completion;
+    }
+
+    let mut downloader = Downloader::new(&self.cache_dir);
+    if impatient {
+      downloader = downloader.impatient();
+    }
+    let mut due = due.into_iter();
+    while let Some((id, listed)) = due.next() {
+      match self.fetch_document(&downloader, listed).await {
+        Ok(()) => completion.fetched.push(id),
+        Err(error) => {
+          let reason = error.to_string();
+          // A fetch no one asked for gives up at the first failure that
+          // says nothing about the package: with the network gone, every
+          // other one would wait out its own timeout to say the same.
+          let transport = matches!(
+            error,
+            Error::Download(
+              crate::error::DownloadError::Transport { .. }
+                | crate::error::DownloadError::NoHttpClient { .. }
+            )
+          );
+          completion.failures.push((id, reason.clone()));
+          if impatient && transport {
+            completion
+              .failures
+              .extend(due.by_ref().map(|(id, _)| (id, reason.clone())));
+          }
+        }
+      }
+    }
+    completion
   }
 }
 
@@ -520,16 +756,19 @@ mod tests {
     assert_eq!(registry.load_index().unwrap().len(), 2);
   }
 
-  /// A listing with `url` and `sha256` gone from every file, as
-  /// open-audio-stack-registry#933 proposes: the right shape to the parser,
-  /// and not one package this build can install.
+  /// A listing reshaped under the parser: `files` renamed, which every field
+  /// being optional reads as a version with no files — the right shape, and
+  /// not one package this build can install. (A listing whose files only
+  /// lost `url` and `sha256` is not this: that is a summary, and is read.)
   const NOTHING_TO_INSTALL: &str = r#"{
       "distrho/mverb": { "slug": "distrho/mverb", "version": "1.0.0", "versions": { "1.0.0": {
         "name": "MVerb", "author": "DISTRHO", "description": "Reverb.",
         "license": "gpl-3.0", "type": "effect", "tags": ["reverb"],
         "url": "https://example.invalid/a",
-        "files": [{ "systems": [{"type":"linux"}], "architectures": ["x64"],
-          "contains": ["lv2"], "type": "archive", "size": 100 }] }}}
+        "assets": [{ "systems": [{"type":"linux"}], "architectures": ["x64"],
+          "contains": ["lv2"], "type": "archive", "size": 100,
+          "sha256": "8c79675a4379125e894416430cde82ec81734512b8b0e55c8745c939e24ddd25",
+          "url": "https://example.invalid/a.tar.xz" }] }}}
     }"#;
 
   #[tokio::test]
@@ -583,6 +822,353 @@ mod tests {
       registry.load_index(),
       Err(Error::Registry(RegistryError::NotFetched(_)))
     ));
+  }
+
+  /// One package's own document, version by version: each version has one
+  /// Linux file, whose URL and checksum say which version it is.
+  fn document(version: &str, versions: &[&str]) -> String {
+    let versions: Vec<String> = versions
+      .iter()
+      .map(|v| {
+        format!(
+          r#""{v}": {{ "name": "WSTD EQ", "author": "Wasted Audio", "license": "gpl-3.0",
+            "type": "effect", "url": "https://example.invalid/home",
+            "files": [{{ "systems": [{{"type":"linux"}}], "architectures": ["x64"],
+              "contains": ["clap"], "type": "archive", "size": 100,
+              "sha256": "8c79675a4379125e894416430cde82ec81734512b8b0e55c8745c939e24ddd25",
+              "url": "https://example.invalid/wstd-eq-{v}.tar.xz" }}] }}"#
+        )
+      })
+      .collect();
+    format!(
+      r#"{{ "slug": "wasted-audio/wstd-eq", "version": "{version}", "downloads": 7,
+        "versions": {{ {} }} }}"#,
+      versions.join(",")
+    )
+  }
+
+  /// The type listing as open-audio-stack-registry#933 publishes it: the
+  /// latest version alone, its files without `url` or `sha256`.
+  fn summary_listing(version: &str) -> String {
+    let mut package: serde_json::Value =
+      serde_json::from_str(&document(version, &[version])).unwrap();
+    for file in package["versions"][version]["files"]
+      .as_array_mut()
+      .unwrap()
+    {
+      let file = file.as_object_mut().unwrap();
+      file.remove("url");
+      file.remove("sha256");
+    }
+    serde_json::json!({ "wasted-audio/wstd-eq": package }).to_string()
+  }
+
+  /// A server publishing `listing` and, at the package's own path,
+  /// `document`, and a registry reading it into `dir`.
+  async fn served_in_summary(
+    dir: &Path,
+    listing: String,
+    document: String,
+  ) -> (wiremock::MockServer, OasRegistry) {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+      .and(path("/plugins/index.json"))
+      .respond_with(ResponseTemplate::new(200).set_body_string(listing))
+      .mount(&server)
+      .await;
+    Mock::given(method("GET"))
+      .and(path("/plugins/wasted-audio/wstd-eq/index.json"))
+      .respond_with(ResponseTemplate::new(200).set_body_string(document))
+      .mount(&server)
+      .await;
+    let registry = OasRegistry::new(
+      "oas",
+      Url::parse(&format!("{}/", server.uri())).unwrap(),
+      dir.join("registries/oas"),
+      dir.join("cache"),
+    );
+    (server, registry)
+  }
+
+  fn wstd_eq() -> BTreeSet<PackageId> {
+    BTreeSet::from([PackageId::new("wstd-eq").unwrap()])
+  }
+
+  async fn document_requests(server: &wiremock::MockServer) -> usize {
+    server
+      .received_requests()
+      .await
+      .unwrap()
+      .iter()
+      .filter(|r| r.url.path().ends_with("wstd-eq/index.json"))
+      .count()
+  }
+
+  #[tokio::test]
+  async fn a_package_listed_in_summary_is_fetched_once_when_it_is_needed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, registry) = served_in_summary(
+      dir.path(),
+      summary_listing("1.1.0"),
+      document("1.1.0", &["1.0.0", "1.1.0"]),
+    )
+    .await;
+
+    // A listing of summaries is not an index of nothing: it is kept.
+    let outcome = registry.refresh().await.unwrap();
+    assert_eq!(outcome.packages, 1);
+
+    // Searchable, and nothing to download until it is completed.
+    let index = registry.load_index().unwrap();
+    let entry = &index.packages[&PackageId::new("wstd-eq").unwrap()];
+    assert!(entry.summary.is_some());
+    assert!(
+      entry
+        .manifest
+        .releases
+        .iter()
+        .all(|r| r.artifacts.is_empty())
+    );
+
+    // Nothing is fetched for what nobody asked for.
+    let unrelated = BTreeSet::from([PackageId::new("surge-xt").unwrap()]);
+    assert_eq!(
+      registry.complete(&unrelated, true).await,
+      Completion::default()
+    );
+    assert_eq!(document_requests(&server).await, 0);
+
+    let completion = registry.complete(&wstd_eq(), true).await;
+    assert_eq!(
+      completion.fetched,
+      wstd_eq().into_iter().collect::<Vec<_>>()
+    );
+    assert!(completion.failures.is_empty(), "{completion:?}");
+
+    // Described in full now: every version, each with what to download.
+    let index = registry.load_index().unwrap();
+    let entry = &index.packages[&PackageId::new("wstd-eq").unwrap()];
+    assert_eq!(entry.summary, None);
+    let versions: Vec<String> = entry
+      .manifest
+      .releases
+      .iter()
+      .map(|r| r.version.to_string())
+      .collect();
+    assert_eq!(versions, vec!["1.0.0", "1.1.0"]);
+    assert!(
+      entry
+        .manifest
+        .releases
+        .iter()
+        .all(|r| !r.artifacts.is_empty())
+    );
+
+    // And kept: asking again costs nothing while the listing stands still.
+    assert_eq!(
+      registry.complete(&wstd_eq(), true).await,
+      Completion::default()
+    );
+    assert_eq!(document_requests(&server).await, 1);
+  }
+
+  #[tokio::test]
+  async fn a_document_the_listing_has_moved_past_is_not_used() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, registry) = served_in_summary(
+      dir.path(),
+      summary_listing("1.0.0"),
+      document("1.0.0", &["1.0.0"]),
+    )
+    .await;
+    registry.refresh().await.unwrap();
+    registry.complete(&wstd_eq(), true).await;
+    assert!(
+      registry.load_index().unwrap().packages[&PackageId::new("wstd-eq").unwrap()]
+        .summary
+        .is_none()
+    );
+
+    // 1.1.0 is listed; the document kept describes 1.0.0, and installing
+    // from it would fetch something other than what `search` shows.
+    fsutil::write_atomic(
+      &registry.snapshot_path(),
+      summary_listing("1.1.0").as_bytes(),
+    )
+    .unwrap();
+    let index = registry.load_index().unwrap();
+    let entry = &index.packages[&PackageId::new("wstd-eq").unwrap()];
+    assert!(entry.summary.is_some());
+    assert_eq!(entry.manifest.releases[0].version.to_string(), "1.1.0");
+  }
+
+  #[tokio::test]
+  async fn a_document_behind_the_listing_is_a_failure_and_is_not_kept() {
+    // A CDN still serving the document from before the release.
+    let dir = tempfile::tempdir().unwrap();
+    let (_server, registry) = served_in_summary(
+      dir.path(),
+      summary_listing("1.1.0"),
+      document("1.0.0", &["1.0.0"]),
+    )
+    .await;
+    registry.refresh().await.unwrap();
+
+    let completion = registry.complete(&wstd_eq(), true).await;
+    assert!(completion.fetched.is_empty());
+    assert_eq!(completion.failures.len(), 1);
+    assert!(
+      completion.failures[0].1.contains("does not describe"),
+      "{completion:?}"
+    );
+    assert!(
+      !registry
+        .document_path("wasted-audio/wstd-eq")
+        .unwrap()
+        .exists()
+    );
+  }
+
+  #[tokio::test]
+  async fn a_document_with_nothing_installable_says_so_and_is_not_asked_for_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let listing = summary_listing("1.1.0");
+    // The listing cannot show it, but the file is a .pkg.
+    let document = document("1.1.0", &["1.1.0"]).replace(".tar.xz", ".pkg");
+    let (server, registry) = served_in_summary(dir.path(), listing, document).await;
+    registry.refresh().await.unwrap();
+
+    registry.complete(&wstd_eq(), true).await;
+    let index = registry.load_index().unwrap();
+    let summary = index.packages[&PackageId::new("wstd-eq").unwrap()]
+      .summary
+      .clone()
+      .expect("still a summary");
+    assert!(
+      summary
+        .unavailable
+        .as_deref()
+        .is_some_and(|why| why.contains("no file this build can install")),
+      "{summary:?}"
+    );
+
+    assert_eq!(
+      registry.complete(&wstd_eq(), true).await,
+      Completion::default()
+    );
+    assert_eq!(document_requests(&server).await, 1);
+  }
+
+  #[tokio::test]
+  async fn nothing_is_fetched_offline() {
+    let dir = tempfile::tempdir().unwrap();
+    let (server, registry) = served_in_summary(
+      dir.path(),
+      summary_listing("1.1.0"),
+      document("1.1.0", &["1.1.0"]),
+    )
+    .await;
+    registry.refresh().await.unwrap();
+
+    let offline = OasRegistry::new(
+      "oas",
+      Url::parse(&format!("{}/", server.uri())).unwrap(),
+      dir.path().join("registries/oas"),
+      dir.path().join("cache"),
+    )
+    .offline(true);
+    let completion = offline.complete(&wstd_eq(), true).await;
+    assert!(completion.fetched.is_empty());
+    assert_eq!(completion.failures.len(), 1);
+    assert_eq!(document_requests(&server).await, 0);
+  }
+
+  /// Against a copy of the published registry laid out as on the site:
+  /// `$LUTHIER_OAS_MIRROR/plugins/index.json`, and the documents of the
+  /// packages named in `$LUTHIER_OAS_MIRROR_PACKAGES` (comma-separated IDs)
+  /// under `plugins/<org>/<name>/index.json`. Skipped unless both are set,
+  /// like [`the_published_index_translates`], so the suite never needs the
+  /// network (§55). Run it on a listing in summary to see that every
+  /// package is listed and the named ones complete.
+  #[tokio::test]
+  async fn the_published_listing_completes() {
+    let (Ok(mirror), Ok(named)) = (
+      std::env::var("LUTHIER_OAS_MIRROR"),
+      std::env::var("LUTHIER_OAS_MIRROR_PACKAGES"),
+    ) else {
+      return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let registry = OasRegistry::new(
+      "oas",
+      Url::from_directory_path(&mirror).unwrap(),
+      dir.path().join("registries/oas"),
+      dir.path().join("cache"),
+    );
+    registry.refresh().await.unwrap();
+    let wanted: BTreeSet<PackageId> = named
+      .split(',')
+      .map(|id| PackageId::new(id.trim()).unwrap())
+      .collect();
+
+    let before = registry.load_index().unwrap();
+    let linux = Target::host().unwrap();
+    let listed = before
+      .packages
+      .values()
+      .filter(|e| !e.formats_for(&linux).is_empty())
+      .count();
+    let summaries = before
+      .packages
+      .values()
+      .filter(|e| e.summary.is_some())
+      .count();
+    eprintln!(
+      "{} packages, {summaries} in summary, {listed} for {linux}",
+      before.len()
+    );
+
+    let completion = registry.complete(&wanted, false).await;
+    assert!(completion.failures.is_empty(), "{completion:?}");
+    let after = registry.load_index().unwrap();
+    for id in &wanted {
+      let entry = &after.packages[id];
+      assert_eq!(entry.summary, None, "{id}");
+      let newest = crate::resolver::newest_installable(&entry.manifest, &linux)
+        .unwrap_or_else(|| panic!("{id} has nothing for {linux}"));
+      eprintln!(
+        "{id}: {} releases, newest installable {}, {:?}",
+        entry.manifest.releases.len(),
+        newest.version,
+        entry.formats_for(&linux)
+      );
+    }
+  }
+
+  #[test]
+  fn a_slug_that_is_not_two_plain_segments_names_no_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let registry = OasRegistry::new(
+      "oas",
+      Url::parse("https://example.invalid/registry/").unwrap(),
+      dir.path().join("registries/oas"),
+      dir.path().join("cache"),
+    );
+    assert_eq!(
+      registry
+        .document_url("wasted-audio/wstd-eq")
+        .unwrap()
+        .as_str(),
+      "https://example.invalid/registry/plugins/wasted-audio/wstd-eq/index.json"
+    );
+    for slug in [
+      "../x", "a/..", "a/b/c", "a", "a//b", "a/b?c", "a/./b", "/a/b",
+    ] {
+      assert!(registry.document_url(slug).is_err(), "{slug}");
+    }
   }
 
   #[test]

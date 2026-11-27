@@ -379,6 +379,45 @@ impl Session {
     Ok(self.index.get_or_init(|| built))
   }
 
+  /// Fetches, before a command reads the index, the full description of
+  /// every package it may resolve that a source lists only in summary
+  /// ([`crate::registry::IndexEntry::summary`]): the ones `named`, and every
+  /// installed one, which `outdated`, `upgrade` and the resolver's look at
+  /// what stays installed all read. Returns a warning per failure, grouped
+  /// by reason; a package that could not be fetched stays a summary, which
+  /// the resolver refuses by name ([`ResolveError::OnlyListed`]).
+  ///
+  /// What was fetched is kept beside the snapshot and used for as long as
+  /// the listing still names the same version with the same files, so a
+  /// package costs a request when it is first needed and again only once a
+  /// new release of it is listed. Never under `--offline`, and never once
+  /// the index has been read this session, since it is built only once.
+  pub async fn complete_packages(&self, named: &[PackageId]) -> Vec<String> {
+    if self.offline || self.index.get().is_some() {
+      return Vec::new();
+    }
+    let mut wanted: BTreeSet<PackageId> = named.iter().cloned().collect();
+    if let Ok(state) = crate::state::load(&self.layout) {
+      wanted.extend(state.packages.keys().cloned());
+    }
+    let mut warnings = Vec::new();
+    for provider in self.config.providers(&self.layout, self.offline) {
+      let completion = provider.complete(&wanted, true).await;
+      let mut by_reason: BTreeMap<String, Vec<String>> = BTreeMap::new();
+      for (id, reason) in completion.failures {
+        by_reason.entry(reason).or_default().push(id.to_string());
+      }
+      for (reason, ids) in by_reason {
+        warnings.push(format!(
+          "{}: could not fetch what installing {} needs: {reason}",
+          provider.name(),
+          ids.join(", ")
+        ));
+      }
+    }
+    warnings
+  }
+
   // -------------------------------------------------------------- refresh --
 
   /// Updates every registry (§31; the `update` command).
@@ -465,7 +504,8 @@ impl Session {
             description: manifest.description.clone(),
             version: manifest.latest_release().map(|r| r.version.to_string()),
             installed: state.get(&manifest.id).map(|p| p.version.to_string()),
-            formats: manifest
+            formats: hit
+              .entry
               .formats_for(&self.target)
               .iter()
               .map(Format::to_string)
@@ -504,7 +544,7 @@ impl Session {
         .iter()
         .map(|r| r.version.to_string())
         .collect(),
-      formats: manifest
+      formats: entry
         .formats_for(&self.target)
         .iter()
         .map(Format::to_string)
@@ -1730,7 +1770,7 @@ impl Session {
         Some(resolver::Frozen::NotCarried) if complete => {
           (Some(UnavailableReason::NotCarried), None, None)
         }
-        Some(resolver::Frozen::NotCarried) => {
+        Some(resolver::Frozen::NotCarried | resolver::Frozen::Unread) => {
           (Some(UnavailableReason::SourceUnreadable), None, None)
         }
         Some(resolver::Frozen::NoReleaseForTarget) => {

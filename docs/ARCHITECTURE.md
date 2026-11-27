@@ -151,6 +151,26 @@ archive by `install::derive`, the same code behind `luthier-registry inspect`.
 rules someone reviewed. See [SECURITY.md](../SECURITY.md) for why that
 distinction is the one that matters.
 
+The OAS site lists every plugin in one document, `plugins/index.json`, which
+is all a refresh fetches. Since open-audio-stack-registry#933 that listing
+may carry only each package's latest version, with every file's `url` and
+`sha256` left out; the package's own document,
+`plugins/<org>/<name>/index.json`, still carries its whole history. A
+package listed that way is an `IndexEntry` with a `summary`: searchable,
+with the formats its files declare, and with no artifact, so nothing can be
+downloaded from it. Before a command resolves anything,
+`Session::complete_packages` has `RegistryProvider::complete` fetch the own
+document of each package it names and of each one installed that is still a
+summary, and keeps it beside the snapshot. A kept document stands in for
+the summary for as long as the listing names the same version with the same
+files, so a package costs a request when first needed and again only once a
+new release is listed — not one per package per refresh, which with over
+four hundred Linux packages would undo what the trimmed listing saves. One
+that could not be fetched stays a summary: the resolver refuses it by name
+(`ResolveError::OnlyListed`), and an installed one is held where it is as
+`Frozen::Unread`, never reported as having no build. A listing in full, as
+before #933, is read as it always was.
+
 An artifact whose rules must be derived can promise no more than
 `install::derive::DERIVABLE_FORMATS` covers, and `install::installable` checks
 that *before* a download: a release declaring nothing on the list — a VST2

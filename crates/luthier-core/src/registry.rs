@@ -46,6 +46,39 @@ pub struct IndexEntry {
   /// Open Audio Stack registry's single `gpl-3.0` for two different grants —
   /// leaves a note here rather than presenting the guess as fact.
   pub notes: Vec<String>,
+  /// Set when the source listed this package only in summary: its latest
+  /// version and what the files are for, but not where they are or what
+  /// they hash to. Such an entry is searchable and has no artifact, so
+  /// nothing can be downloaded from it; [`RegistryProvider::complete`] fetches
+  /// what installing it needs before a command resolves it.
+  pub summary: Option<Summary>,
+}
+
+/// What a source's listing says of a package it does not describe in full.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+  /// What the listed files provide, per target. Upstream's claim, as an
+  /// artifact's `provides` is, kept so `search` and `info` can say it.
+  pub formats: Vec<(Target, Vec<luthier_manifest::Format>)>,
+  /// Why the full description is not here: it could not be fetched, or did
+  /// not hold anything installable. `None` when it was never asked for.
+  pub unavailable: Option<String>,
+}
+
+impl IndexEntry {
+  /// The formats this package offers on `target`: from its artifacts, or,
+  /// listed only in summary, from what the listing says the files hold.
+  pub fn formats_for(&self, target: &Target) -> Vec<luthier_manifest::Format> {
+    match &self.summary {
+      None => self.manifest.formats_for(target),
+      Some(summary) => summary
+        .formats
+        .iter()
+        .find(|(t, _)| t == target)
+        .map(|(_, formats)| formats.clone())
+        .unwrap_or_default(),
+    }
+  }
 }
 
 /// Every package a registry offers.
@@ -433,6 +466,29 @@ pub trait RegistryProvider: Send + Sync {
 
   /// Parses the local snapshot. Does not touch the network.
   fn load_index(&self) -> Result<RegistryIndex>;
+
+  /// Fetches the full description of every package in `wanted` that the
+  /// snapshot lists only in summary ([`IndexEntry::summary`]), so the next
+  /// [`RegistryProvider::load_index`] describes them in full. IDs it does
+  /// not list in summary are not its business and are ignored. Nothing is
+  /// fetched for a source that describes every package in its snapshot,
+  /// which is every source but the Open Audio Stack registry.
+  ///
+  /// `impatient` for a fetch no one asked for, as with
+  /// [`RegistryProvider::refresh_if_due`].
+  async fn complete(&self, _wanted: &BTreeSet<PackageId>, _impatient: bool) -> Completion {
+    Completion::default()
+  }
+}
+
+/// What [`RegistryProvider::complete`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Completion {
+  /// Packages whose full description was fetched.
+  pub fetched: Vec<PackageId>,
+  /// Packages it could not be fetched for, and why. The entry stays a
+  /// summary, which nothing can be installed from.
+  pub failures: Vec<(PackageId, String)>,
 }
 
 /// Reads every manifest under `root` into an index.
@@ -525,6 +581,7 @@ pub(crate) fn index_of(
         unknown_fields: parsed.unknown_fields,
         registry: name.to_owned(),
         notes: Vec::new(),
+        summary: None,
       },
     );
   }
@@ -629,6 +686,7 @@ mod tests {
           unknown_fields: Vec::new(),
           registry: name.to_owned(),
           notes: Vec::new(),
+          summary: None,
         },
       );
     }

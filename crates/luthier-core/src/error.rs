@@ -737,6 +737,17 @@ pub enum ResolveError {
   /// A reinstall was asked of a package no published release can replace.
   #[error("{detail}")]
   NotReinstallable { id: PackageId, detail: String },
+
+  /// The source lists the package only in summary, and its full
+  /// description, which says what to download, could not be read.
+  #[error("{id} is listed, but what installing it needs is not here: {reason}")]
+  OnlyListed {
+    id: PackageId,
+    reason: String,
+    /// Whether it was never read, so a run with the network may read it;
+    /// false when it was, and holds nothing installable.
+    unread: bool,
+  },
 }
 
 impl ResolveError {
@@ -759,6 +770,13 @@ impl ResolveError {
                      it but cannot install it."
           .into(),
       )),
+      ResolveError::OnlyListed { unread: false, .. } => None,
+      ResolveError::OnlyListed { unread: true, .. } => Some(
+        "The Open Audio Stack registry lists packages in summary, and Luthier fetches a \
+         package's own description when a command needs it. Run the command again with the \
+         network available."
+          .into(),
+      ),
       ResolveError::NothingInstallable { declared, .. } => Some(match declared.as_slice() {
         [] => "Its metadata does not say what the archive holds, so the install rules \
                would have to be read out of it — and a release that says nothing is \
